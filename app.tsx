@@ -14,6 +14,8 @@ import {
   useRpc,
   useSdk,
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
+  useBbContext,
+  useSidebarSplitLayout,
   useSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
 import type {
@@ -1269,6 +1271,46 @@ function MigrationSettings() {
   );
 }
 
+// --- focus reporter ------------------------------------------------------------------
+// Tells the server which thread this window has focused, so `bb jb-flow focused`
+// (used by the Stream Deck) can target it. Split layouts report the focused pane.
+
+function FocusReporter() {
+  const rpc = useRpc<typeof rpcContract>();
+  const { threadId: routeThreadId } = useBbContext();
+  const split = useSidebarSplitLayout();
+  const threadId = split?.panes.find((pane) => pane.isFocused)?.threadId ?? routeThreadId;
+  const [clientId] = useState(() => {
+    const existing = sessionStorage.getItem("jb-flow:client");
+    if (existing) return existing;
+    const created = Math.random().toString(36).slice(2, 12);
+    sessionStorage.setItem("jb-flow:client", created);
+    return created;
+  });
+
+  useEffect(() => {
+    const send = () => {
+      void rpc
+        .call("focus_report", { clientId, threadId, windowFocused: document.hasFocus() })
+        .catch(() => undefined);
+    };
+    send();
+    window.addEventListener("focus", send);
+    window.addEventListener("blur", send);
+    document.addEventListener("visibilitychange", send);
+    const heartbeat = window.setInterval(() => {
+      if (document.hasFocus()) send();
+    }, 60_000);
+    return () => {
+      window.removeEventListener("focus", send);
+      window.removeEventListener("blur", send);
+      document.removeEventListener("visibilitychange", send);
+      window.clearInterval(heartbeat);
+    };
+  }, [rpc, clientId, threadId]);
+  return null;
+}
+
 // --- plan review banners -----------------------------------------------------------
 // BB renders a plan awaiting approval in a banner that starts collapsed and caps
 // the plan body at 288px. Core renderers can't be replaced, so this content script
@@ -1313,6 +1355,7 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 
 export default definePluginApp((app) => {
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
+  app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
   app.slots.experimental_threadList({
     id: "triage",
     title: "Triage",

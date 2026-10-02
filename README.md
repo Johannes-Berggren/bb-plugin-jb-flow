@@ -50,6 +50,16 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 - Plans awaiting approval open expanded and can use up to 75% of the window height instead of 288px.
 - This is a content script, so it depends on bb's plan-banner markup.
 
+### Focus tracking (for Stream Deck and scripts)
+- Every BB window reports which thread is focused, including the focused pane in a split view.
+- External controllers can then act on the focused thread without simulating keystrokes:
+  - `bb jb-flow focused` prints the focused thread
+  - `bb jb-flow tell <text>` sends a message to it
+  - `bb jb-flow stop` stops its run
+  - `bb jb-flow needs-me` lists threads waiting on you
+  - `bb jb-flow next` opens the next waiting thread
+- Built for [streamdeck-controller](https://github.com/Johannes-Berggren/streamdeck-controller), a private repo.
+
 ## Install
 
 ```sh
@@ -80,6 +90,11 @@ bb jb-flow snooze <thread-id|--self> <when> [--note <text>]
 bb jb-flow unsnooze <thread-id|--self>
 bb jb-flow snoozed [--json]
 bb jb-flow digest [--refresh] [--json]
+bb jb-flow focused [--json]
+bb jb-flow tell <text…> [--thread <id>]
+bb jb-flow stop [<thread-id>|--focused]
+bb jb-flow needs-me [--json]
+bb jb-flow next
 bb jb-flow repo [--self|<thread-id>]
 bb jb-flow repo-run <command-id|script:<name>> [--self|<thread-id>]
 bb jb-flow repo-stop <command-id|script:<name>> [--self|<thread-id>]

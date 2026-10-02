@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { createFocus, focusReportSchema } from "./focus";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
 
@@ -104,6 +105,10 @@ export const rpcContract = defineRpcContract({
   archive: {
     input: z.object({ threadIds: z.array(z.string()).min(1).max(500) }),
     output: z.object({ archived: z.number(), failed: z.array(z.string()) }),
+  },
+  focus_report: {
+    input: focusReportSchema,
+    output: z.object({ ok: z.boolean() }),
   },
   repo_status: {
     input: z.object({ threadId: z.string() }),
@@ -362,6 +367,7 @@ export default async function plugin(bb: BbPluginApi) {
     return { archived: threadIds.length - failed.length, failed };
   }
 
+  const focus = createFocus(bb);
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
 
   // --- RPC ------------------------------------------------------------------
@@ -395,6 +401,10 @@ export default async function plugin(bb: BbPluginApi) {
       return { kept: threadIds.length };
     },
     archive: ({ threadIds }) => archive(threadIds),
+    focus_report: (input) => {
+      focus.report(input);
+      return { ok: true };
+    },
     repo_status: ({ threadId }) => repo.status(threadId),
     repo_run: ({ threadId, commandId }) => repo.run(threadId, commandId),
     repo_stop: async ({ threadId, commandId }) => ({ stopped: await repo.stop(threadId, commandId) }),
@@ -471,6 +481,11 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb jb-flow snoozed [--json]",
     "  bb jb-flow wake-now",
     "  bb jb-flow digest [--refresh] [--json]",
+    "  bb jb-flow focused [--json]                          The thread focused in BB",
+    "  bb jb-flow stop [<thread-id>|--focused]",
+    "  bb jb-flow tell <text…> [--thread <id>]              Send a message (default: focused thread)",
+    "  bb jb-flow needs-me [--json]                         Threads waiting on you",
+    "  bb jb-flow next                                      Open the next thread that needs you",
     "  bb jb-flow repo [--self|<thread-id>]                 List repo commands and runs",
     "  bb jb-flow repo-run <command-id> [--self|<thread-id>]",
     "  bb jb-flow repo-stop <command-id> [--self|<thread-id>]",
@@ -495,6 +510,11 @@ export default async function plugin(bb: BbPluginApi) {
       },
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
+      { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
+      { name: "stop", summary: "Stop a thread's run (default: focused)", usage: "bb jb-flow stop [<thread-id>|--focused]" },
+      { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
+      { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
+      { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
       { name: "repo", summary: "List repo commands and runs for a thread", usage: "bb jb-flow repo [--self|<thread-id>]" },
       { name: "repo-run", summary: "Run a repo command in the thread's terminal", usage: "bb jb-flow repo-run <command-id> [--self|<thread-id>]" },
       { name: "repo-stop", summary: "Stop a running repo command", usage: "bb jb-flow repo-stop <command-id> [--self|<thread-id>]" },
@@ -515,7 +535,7 @@ export default async function plugin(bb: BbPluginApi) {
       );
       const [command, ...args] = positional;
       const resolveThread = (value: string | undefined) =>
-        value === "--self" ? ctx.threadId : value;
+        value === "--self" ? ctx.threadId : value === "--focused" ? focus.focusedThreadId() ?? undefined : value;
       try {
         switch (command) {
           case "snooze": {
@@ -549,6 +569,58 @@ export default async function plugin(bb: BbPluginApi) {
               }),
             );
             return { exitCode: 0, stdout: lines.length === 0 ? "Nothing snoozed." : lines.join("\n") };
+          }
+          case "focused": {
+            const threadId = focus.focusedThreadId();
+            if (threadId === null) return { exitCode: 1, stderr: "No focused thread." };
+            const thread = await bb.sdk.threads.get({ threadId });
+            return {
+              exitCode: 0,
+              stdout: json
+                ? JSON.stringify({ threadId, projectId: thread.projectId, title: thread.title, status: thread.status })
+                : `${threadId}  ${thread.title ?? ""}`,
+            };
+          }
+          case "stop": {
+            const threadId = resolveThread(args[0] ?? "--focused");
+            if (threadId === undefined) return { exitCode: 1, stderr: "No focused thread." };
+            await bb.sdk.threads.stop({ threadId });
+            return { exitCode: 0, stdout: `Stopped ${threadId}.` };
+          }
+          case "tell": {
+            const flag = args.indexOf("--thread");
+            const target = flag === -1 ? await focus.requireFocused() : args[flag + 1];
+            const text = (flag === -1 ? args : args.slice(0, flag)).join(" ").trim();
+            if (target === undefined || text === "") break;
+            await bb.sdk.threads.send({
+              threadId: target,
+              mode: "queue-if-active",
+              input: [{ type: "text", text, mentions: [] }],
+            });
+            return { exitCode: 0, stdout: `Sent to ${target}.` };
+          }
+          case "needs-me": {
+            const threads = await focus.needsMe();
+            if (json) {
+              return {
+                exitCode: 0,
+                stdout: JSON.stringify({
+                  count: threads.length,
+                  threads: threads.map((thread) => ({ id: thread.id, title: thread.title, status: thread.status })),
+                }),
+              };
+            }
+            return {
+              exitCode: 0,
+              stdout: threads.length === 0 ? "Nothing needs you." : threads.map((thread) => `${thread.id}  ${thread.title ?? ""}`).join("\n"),
+            };
+          }
+          case "next": {
+            const focused = focus.focusedThreadId();
+            const next = (await focus.needsMe()).find((thread) => thread.id !== focused);
+            if (next === undefined) return { exitCode: 0, stdout: "Nothing needs you." };
+            await bb.sdk.threads.open({ threadId: next.id, file: null });
+            return { exitCode: 0, stdout: `Opened ${next.id}  ${next.title ?? ""}` };
           }
           case "repo": {
             const threadId = resolveThread(args[0] ?? "--self");
