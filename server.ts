@@ -1,0 +1,616 @@
+// jb-flow: snooze threads until a date, a daily stale-thread digest, and the
+// state behind the Triage thread list in app.tsx.
+//
+// State lives in bb.storage.kv because thread plugin metadata is not part of
+// thread list rows; the sidebar needs every snooze and tag in one read.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
+import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
+import { formatWhen, parseWhen } from "./when";
+
+const SNOOZED_SECTION_NAME = "😴 Snoozed";
+const CHANGED = "jb-flow-changed";
+const DAY_MS = 86_400_000;
+
+const snoozeSchema = z.object({
+  until: z.number(),
+  note: z.string().nullable(),
+  fromSectionId: z.string().nullable(),
+  snoozedAt: z.number(),
+});
+export type Snooze = z.infer<typeof snoozeSchema>;
+
+const digestItemSchema = z.object({
+  threadId: z.string(),
+  projectId: z.string(),
+  title: z.string(),
+  idleDays: z.number(),
+  summary: z.string(),
+});
+export type DigestItem = z.infer<typeof digestItemSchema>;
+type Digest = { generatedAt: number; items: DigestItem[] };
+
+// Personal, machine-local setup that stays out of git: pinned repo commands and
+// how project names are shortened in the sidebar. See local.config.example.json.
+const localConfigSchema = z.object({
+  repoCommands: z.record(z.string(), z.array(repoCommandSchema)).default({}),
+  projectShortNames: z.record(z.string(), z.string()).default({}),
+  stripProjectPrefixes: z.array(z.string()).default([]),
+});
+type LocalConfig = z.infer<typeof localConfigSchema>;
+
+function loadLocalConfig(bb: BbPluginApi): LocalConfig {
+  // The bundle may run from the plugin root or from dist/, so try both.
+  for (const relative of ["./local.config.json", "../local.config.json"]) {
+    const path = fileURLToPath(new URL(relative, import.meta.url));
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    try {
+      return localConfigSchema.parse(JSON.parse(text));
+    } catch (error) {
+      bb.log.warn(`ignoring invalid ${path}: ${String(error)}`);
+    }
+  }
+  return localConfigSchema.parse({});
+}
+
+const stateSchema = z.object({
+  projectShortNames: z.record(z.string(), z.string()),
+  stripProjectPrefixes: z.array(z.string()),
+  snoozedSectionId: z.string(),
+  snoozes: z.record(z.string(), snoozeSchema),
+  tags: z.record(z.string(), z.array(z.string())),
+});
+export type FlowState = z.infer<typeof stateSchema>;
+
+export const rpcContract = defineRpcContract({
+  state_get: { input: z.null(), output: stateSchema },
+  snooze: {
+    input: z.object({
+      threadId: z.string(),
+      when: z.string().min(1).max(64),
+      note: z.string().max(2000).nullable(),
+    }),
+    output: snoozeSchema,
+  },
+  unsnooze: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ removed: z.boolean() }),
+  },
+  tags_set: {
+    input: z.object({
+      threadId: z.string(),
+      tags: z.array(z.string().trim().min(1).max(40)).max(10),
+    }),
+    output: z.object({ tags: z.array(z.string()) }),
+  },
+  digest_list: {
+    input: z.object({ refresh: z.boolean() }),
+    output: z.object({ generatedAt: z.number(), items: z.array(digestItemSchema) }),
+  },
+  digest_keep: {
+    input: z.object({
+      threadIds: z.array(z.string()).max(500),
+      days: z.number().int().min(1).max(90),
+    }),
+    output: z.object({ kept: z.number() }),
+  },
+  archive: {
+    input: z.object({ threadIds: z.array(z.string()).min(1).max(500) }),
+    output: z.object({ archived: z.number(), failed: z.array(z.string()) }),
+  },
+  repo_status: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({
+      projectName: z.string(),
+      commands: z.array(repoCommandSchema),
+      scripts: z.array(repoScriptSchema),
+      scriptsError: z.string().nullable(),
+      runs: z.array(devRunSchema),
+    }),
+  },
+  repo_run: {
+    input: z.object({ threadId: z.string(), commandId: z.string() }),
+    output: devRunSchema,
+  },
+  repo_stop: {
+    input: z.object({ threadId: z.string(), commandId: z.string() }),
+    output: z.object({ stopped: z.boolean() }),
+  },
+  repo_config_get: {
+    input: z.null(),
+    output: z.object({
+      defaults: z.record(z.string(), z.array(repoCommandSchema)),
+      overrides: z.record(z.string(), z.array(repoCommandSchema)),
+    }),
+  },
+  repo_config_set: {
+    input: z.object({ projectName: z.string(), commands: z.array(repoCommandSchema).nullable() }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  migrate_areas: {
+    input: z.object({
+      sectionIds: z.array(z.string()).max(20),
+      moveToSectionId: z.string().nullable(),
+    }),
+    output: z.object({ tagged: z.number() }),
+  },
+});
+
+type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
+
+export default async function plugin(bb: BbPluginApi) {
+  const settings = bb.settings.define({
+    staleDays: {
+      type: "number",
+      label: "Stale after (days)",
+      description: "Unsectioned threads idle this long show up in the daily digest.",
+      default: 7,
+    },
+  });
+  const { staleDays } = await settings.get();
+  const localConfig = loadLocalConfig(bb);
+
+  // --- storage --------------------------------------------------------------
+
+  async function getSnoozes(): Promise<Record<string, Snooze>> {
+    return (await bb.storage.kv.get<Record<string, Snooze>>("snoozes")) ?? {};
+  }
+  async function getTags(): Promise<Record<string, string[]>> {
+    return (await bb.storage.kv.get<Record<string, string[]>>("tags")) ?? {};
+  }
+  async function getKept(): Promise<Record<string, number>> {
+    return (await bb.storage.kv.get<Record<string, number>>("kept")) ?? {};
+  }
+  function changed() {
+    bb.realtime.publish(CHANGED, {});
+  }
+
+  let snoozedSectionId: string | null = null;
+  async function ensureSnoozedSection(): Promise<string> {
+    if (snoozedSectionId !== null) return snoozedSectionId;
+    const sections = await bb.sdk.threadSections.list();
+    const existing = sections.find((section) => section.name === SNOOZED_SECTION_NAME);
+    snoozedSectionId =
+      existing?.id ?? (await bb.sdk.threadSections.create({ name: SNOOZED_SECTION_NAME })).id;
+    return snoozedSectionId;
+  }
+
+  async function listAllActiveThreads(): Promise<Thread[]> {
+    const threads: Thread[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const page = await bb.sdk.threads.list({ limit: 500, offset });
+      threads.push(...page);
+      if (page.length < 500) return threads;
+    }
+  }
+
+  // --- snooze ---------------------------------------------------------------
+
+  async function snooze(threadId: string, when: string, note: string | null): Promise<Snooze> {
+    const until = parseWhen(when);
+    const sectionId = await ensureSnoozedSection();
+    const thread = await bb.sdk.threads.get({ threadId });
+    const snoozes = await getSnoozes();
+    const previous = snoozes[threadId];
+    const record: Snooze = {
+      until,
+      note: note?.trim() || null,
+      // Re-snoozing keeps the section the thread originally came from.
+      fromSectionId:
+        previous?.fromSectionId ?? (thread.sectionId === sectionId ? null : thread.sectionId),
+      snoozedAt: Date.now(),
+    };
+    await bb.sdk.threads.update({ threadId, sectionId });
+    await bb.storage.kv.set("snoozes", { ...snoozes, [threadId]: record });
+    changed();
+    return record;
+  }
+
+  async function wake(threadId: string, record: Snooze, reason: "due" | "manual"): Promise<void> {
+    const sections = await bb.sdk.threadSections.list();
+    const restoreTo =
+      record.fromSectionId !== null &&
+      sections.some((section) => section.id === record.fromSectionId)
+        ? record.fromSectionId
+        : null;
+    await bb.sdk.threads.update({ threadId, sectionId: restoreTo });
+    if (reason === "due") {
+      await bb.sdk.threads.markUnread({ threadId });
+      if (record.note !== null) {
+        await bb.sdk.threads.send({
+          threadId,
+          mode: "queue-if-active",
+          input: [{ type: "text", text: `⏰ Snooze reminder: ${record.note}`, mentions: [] }],
+        });
+      }
+    }
+  }
+
+  async function unsnooze(threadId: string): Promise<boolean> {
+    const snoozes = await getSnoozes();
+    const record = snoozes[threadId];
+    if (record === undefined) return false;
+    await wake(threadId, record, "manual");
+    delete snoozes[threadId];
+    await bb.storage.kv.set("snoozes", snoozes);
+    changed();
+    return true;
+  }
+
+  async function wakeDue(): Promise<number> {
+    const sectionId = await ensureSnoozedSection();
+    const snoozes = await getSnoozes();
+    let woken = 0;
+    let dirty = false;
+    for (const [threadId, record] of Object.entries(snoozes)) {
+      let thread: { sectionId: string | null; archivedAt: number | null };
+      try {
+        thread = await bb.sdk.threads.get({ threadId });
+      } catch {
+        delete snoozes[threadId];
+        dirty = true;
+        continue;
+      }
+      // Moved out of Snoozed by hand, or archived: the snooze no longer applies.
+      if (thread.sectionId !== sectionId || thread.archivedAt !== null) {
+        delete snoozes[threadId];
+        dirty = true;
+        continue;
+      }
+      if (record.until > Date.now()) continue;
+      try {
+        await wake(threadId, record, "due");
+        delete snoozes[threadId];
+        dirty = true;
+        woken += 1;
+      } catch (error) {
+        bb.log.warn(`wake ${threadId} failed: ${String(error)}`);
+      }
+    }
+    if (dirty) {
+      await bb.storage.kv.set("snoozes", snoozes);
+      changed();
+    }
+    return woken;
+  }
+
+  // --- digest ---------------------------------------------------------------
+
+  async function summarize(threadId: string): Promise<string> {
+    try {
+      const outline = await bb.sdk.threads.conversationOutline({ threadId });
+      const last =
+        [...outline.items].reverse().find((item) => item.role === "assistant") ??
+        outline.items.at(-1);
+      return (last?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    } catch {
+      return "";
+    }
+  }
+
+  async function buildDigest(): Promise<Digest> {
+    const now = Date.now();
+    const kept = await getKept();
+    const snoozes = await getSnoozes();
+    const stale = (await listAllActiveThreads())
+      .filter(
+        (thread) =>
+          thread.sectionId === null &&
+          thread.parentThreadId === null &&
+          thread.pinnedAt === null &&
+          thread.status !== "active" &&
+          snoozes[thread.id] === undefined &&
+          (kept[thread.id] ?? 0) < now &&
+          now - thread.updatedAt > staleDays * DAY_MS,
+      )
+      .sort((a, b) => a.updatedAt - b.updatedAt);
+
+    const items: DigestItem[] = [];
+    // Small batches keep the outline reads from hammering the server.
+    for (let index = 0; index < stale.length; index += 8) {
+      const batch = stale.slice(index, index + 8);
+      const summaries = await Promise.all(batch.map((thread) => summarize(thread.id)));
+      batch.forEach((thread, offset) => {
+        items.push({
+          threadId: thread.id,
+          projectId: thread.projectId,
+          title: thread.title ?? thread.titleFallback ?? "Untitled",
+          idleDays: Math.floor((now - thread.updatedAt) / DAY_MS),
+          summary: summaries[offset] ?? "",
+        });
+      });
+    }
+    const digest = { generatedAt: now, items };
+    await bb.storage.kv.set("digest", digest);
+    changed();
+    return digest;
+  }
+
+  async function readDigest(refresh: boolean): Promise<Digest> {
+    const cached = await bb.storage.kv.get<Digest>("digest");
+    if (refresh || cached === null || cached === undefined) return buildDigest();
+    const kept = await getKept();
+    const now = Date.now();
+    return { ...cached, items: cached.items.filter((item) => (kept[item.threadId] ?? 0) < now) };
+  }
+
+  async function archive(threadIds: string[]) {
+    const failed: string[] = [];
+    for (const threadId of threadIds) {
+      try {
+        await bb.sdk.threads.archive({ threadId });
+      } catch {
+        failed.push(threadId);
+      }
+    }
+    const cached = await bb.storage.kv.get<Digest>("digest");
+    if (cached) {
+      const archived = new Set(threadIds.filter((id) => !failed.includes(id)));
+      await bb.storage.kv.set("digest", {
+        ...cached,
+        items: cached.items.filter((item) => !archived.has(item.threadId)),
+      });
+    }
+    changed();
+    return { archived: threadIds.length - failed.length, failed };
+  }
+
+  const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
+
+  // --- RPC ------------------------------------------------------------------
+
+  bb.rpc.register(rpcContract, {
+    state_get: async () => ({
+      projectShortNames: localConfig.projectShortNames,
+      stripProjectPrefixes: localConfig.stripProjectPrefixes,
+      snoozedSectionId: await ensureSnoozedSection(),
+      snoozes: await getSnoozes(),
+      tags: await getTags(),
+    }),
+    snooze: ({ threadId, when, note }) => snooze(threadId, when, note),
+    unsnooze: async ({ threadId }) => ({ removed: await unsnooze(threadId) }),
+    tags_set: async ({ threadId, tags }) => {
+      const all = await getTags();
+      const unique = [...new Set(tags)];
+      if (unique.length === 0) delete all[threadId];
+      else all[threadId] = unique;
+      await bb.storage.kv.set("tags", all);
+      changed();
+      return { tags: unique };
+    },
+    digest_list: ({ refresh }) => readDigest(refresh),
+    digest_keep: async ({ threadIds, days }) => {
+      const kept = await getKept();
+      const until = Date.now() + days * DAY_MS;
+      for (const threadId of threadIds) kept[threadId] = until;
+      await bb.storage.kv.set("kept", kept);
+      changed();
+      return { kept: threadIds.length };
+    },
+    archive: ({ threadIds }) => archive(threadIds),
+    repo_status: ({ threadId }) => repo.status(threadId),
+    repo_run: ({ threadId, commandId }) => repo.run(threadId, commandId),
+    repo_stop: async ({ threadId, commandId }) => ({ stopped: await repo.stop(threadId, commandId) }),
+    repo_config_get: () => repo.allCommands(),
+    repo_config_set: async ({ projectName, commands }) => {
+      await repo.setCommands(projectName, commands);
+      return { ok: true };
+    },
+    migrate_areas: async ({ sectionIds, moveToSectionId }) => {
+      const sections = await bb.sdk.threadSections.list();
+      const tags = await getTags();
+      let tagged = 0;
+      for (const sectionId of sectionIds) {
+        const section = sections.find((candidate) => candidate.id === sectionId);
+        if (section === undefined) continue;
+        const tag = section.name.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+        for (const thread of await bb.sdk.threads.list({ sectionId, limit: 500 })) {
+          tags[thread.id] = [...new Set([...(tags[thread.id] ?? []), tag])];
+          await bb.sdk.threads.update({ threadId: thread.id, sectionId: moveToSectionId });
+          tagged += 1;
+        }
+      }
+      await bb.storage.kv.set("tags", tags);
+      changed();
+      return { tagged };
+    },
+  });
+
+  // --- schedules ------------------------------------------------------------
+
+  bb.background.schedule("wake-snoozed", "* * * * *", async () => {
+    const woken = await wakeDue();
+    if (woken > 0) bb.log.info(`woke ${woken} snoozed thread(s)`);
+  });
+  bb.background.schedule("stale-digest", "0 8 * * 1-5", async () => {
+    const digest = await buildDigest();
+    bb.log.info(`digest: ${digest.items.length} stale thread(s)`);
+  });
+
+  // --- agent tool -----------------------------------------------------------
+
+  bb.agents.registerTool({
+    name: "snooze_thread",
+    description:
+      'Snooze the current BB thread until a later time. The thread leaves the user\'s active list and comes back unread when due. If a note is given it is sent to this thread as a prompt at wake time, so write it as an instruction to your future self (e.g. "Check whether Martin replied in #billing and summarize").',
+    instructions:
+      "When work in this thread is blocked on someone else or on a future date, offer to call snooze_thread (when: 2h, 3d, 1w, tomorrow, mon, next-week, or YYYY-MM-DD) with a note describing what to check on wake-up.",
+    parameters: z.object({
+      when: z
+        .string()
+        .describe("When to wake: 2h, 3d, 1w, tomorrow, mon…sun, next-week, or YYYY-MM-DD"),
+      note: z.string().optional().describe("Instruction sent to this thread when it wakes"),
+    }),
+    async execute({ when, note }, ctx) {
+      try {
+        const record = await snooze(ctx.threadId, when, note ?? null);
+        return `Snoozed until ${formatWhen(record.until)}${record.note ? ` with reminder: ${record.note}` : ""}.`;
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+        };
+      }
+    },
+  });
+  bb.agents.configure(() => ({ tools: ["snooze_thread"], skills: [] }));
+
+  // --- CLI ------------------------------------------------------------------
+
+  const usage = [
+    "Usage:",
+    "  bb jb-flow snooze <thread-id|--self> <when> [--note <text>]",
+    "  bb jb-flow unsnooze <thread-id|--self>",
+    "  bb jb-flow snoozed [--json]",
+    "  bb jb-flow wake-now",
+    "  bb jb-flow digest [--refresh] [--json]",
+    "  bb jb-flow repo [--self|<thread-id>]                 List repo commands and runs",
+    "  bb jb-flow repo-run <command-id> [--self|<thread-id>]",
+    "  bb jb-flow repo-stop <command-id> [--self|<thread-id>]",
+    "  bb jb-flow repo-config <project-name> <json|reset>",
+    "",
+    "<when>: 30m, 2h, 3d, 1w, today, tonight, tomorrow, mon…sun, next-week, YYYY-MM-DD, YYYY-MM-DDTHH:MM",
+  ].join("\n");
+
+  bb.cli.register({
+    name: "jb-flow",
+    summary: "Snooze threads and review the stale-thread digest",
+    commands: [
+      {
+        name: "snooze",
+        summary: "Snooze a thread until a time",
+        usage: "bb jb-flow snooze <thread-id|--self> <when> [--note <text>]",
+      },
+      {
+        name: "unsnooze",
+        summary: "Wake a snoozed thread now",
+        usage: "bb jb-flow unsnooze <thread-id|--self>",
+      },
+      { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
+      { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
+      { name: "repo", summary: "List repo commands and runs for a thread", usage: "bb jb-flow repo [--self|<thread-id>]" },
+      { name: "repo-run", summary: "Run a repo command in the thread's terminal", usage: "bb jb-flow repo-run <command-id> [--self|<thread-id>]" },
+      { name: "repo-stop", summary: "Stop a running repo command", usage: "bb jb-flow repo-stop <command-id> [--self|<thread-id>]" },
+      { name: "repo-config", summary: "Set or reset a project's repo commands", usage: "bb jb-flow repo-config <project-name> <json|reset>" },
+      {
+        name: "digest",
+        summary: "List stale unsectioned threads",
+        usage: "bb jb-flow digest [--refresh] [--json]",
+      },
+    ],
+    async run(argv, ctx) {
+      const json = argv.includes("--json");
+      const refresh = argv.includes("--refresh");
+      const noteIndex = argv.indexOf("--note");
+      const note = noteIndex === -1 ? null : argv.slice(noteIndex + 1).join(" ");
+      const positional = (noteIndex === -1 ? argv : argv.slice(0, noteIndex)).filter(
+        (arg) => arg !== "--json" && arg !== "--refresh",
+      );
+      const [command, ...args] = positional;
+      const resolveThread = (value: string | undefined) =>
+        value === "--self" ? ctx.threadId : value;
+      try {
+        switch (command) {
+          case "snooze": {
+            const threadId = resolveThread(args[0]);
+            const when = args.slice(1).join(" ");
+            if (threadId === undefined || when === "") break;
+            const record = await snooze(threadId, when, note);
+            return {
+              exitCode: 0,
+              stdout: json
+                ? JSON.stringify(record)
+                : `Snoozed ${threadId} until ${formatWhen(record.until)}.`,
+            };
+          }
+          case "unsnooze": {
+            const threadId = resolveThread(args[0]);
+            if (threadId === undefined) break;
+            return (await unsnooze(threadId))
+              ? { exitCode: 0, stdout: `Woke ${threadId}.` }
+              : { exitCode: 1, stderr: `${threadId} is not snoozed.` };
+          }
+          case "snoozed": {
+            const snoozes = Object.entries(await getSnoozes()).sort(
+              (a, b) => a[1].until - b[1].until,
+            );
+            if (json) return { exitCode: 0, stdout: JSON.stringify(Object.fromEntries(snoozes)) };
+            const lines = await Promise.all(
+              snoozes.map(async ([threadId, record]) => {
+                const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
+                return `${formatWhen(record.until).padEnd(16)} ${threadId}  ${thread?.title ?? ""}${record.note ? `  — ${record.note}` : ""}`;
+              }),
+            );
+            return { exitCode: 0, stdout: lines.length === 0 ? "Nothing snoozed." : lines.join("\n") };
+          }
+          case "repo": {
+            const threadId = resolveThread(args[0] ?? "--self");
+            if (threadId === undefined) break;
+            const result = await repo.status(threadId);
+            if (json) return { exitCode: 0, stdout: JSON.stringify(result) };
+            const lines = result.commands.map((command) => {
+              const run = result.runs.find((candidate) => candidate.commandId === command.id);
+              return `${command.id.padEnd(12)} ${command.label}${run ? `  [${run.status}${run.url ? ` ${run.url}` : ""}]` : ""}`;
+            });
+            return { exitCode: 0, stdout: `${result.projectName}\n${lines.join("\n") || "No commands configured."}` };
+          }
+          case "repo-run":
+          case "repo-stop": {
+            const threadId = resolveThread(args[1] ?? "--self");
+            if (args[0] === undefined || threadId === undefined) break;
+            if (command === "repo-stop") {
+              return (await repo.stop(threadId, args[0]))
+                ? { exitCode: 0, stdout: `Stopped ${args[0]}.` }
+                : { exitCode: 1, stderr: `${args[0]} is not running in ${threadId}.` };
+            }
+            const run = await repo.run(threadId, args[0]);
+            return {
+              exitCode: 0,
+              stdout: json ? JSON.stringify(run) : `Started ${run.label} (terminal ${run.terminalId})${run.url ? `; browser opens at ${run.url} once the port is up` : ""}.`,
+            };
+          }
+          case "repo-config": {
+            const [projectNameArg, ...rest] = args;
+            const value = rest.join(" ");
+            if (projectNameArg === undefined || value === "") break;
+            const commands = value === "reset" ? null : z.array(repoCommandSchema).parse(JSON.parse(value));
+            await repo.setCommands(projectNameArg, commands);
+            return { exitCode: 0, stdout: commands === null ? "Reset." : `Saved ${commands.length} command(s).` };
+          }
+          case "wake-now":
+            return { exitCode: 0, stdout: `Woke ${await wakeDue()} thread(s).` };
+          case "digest": {
+            const digest = await readDigest(refresh);
+            if (json) return { exitCode: 0, stdout: JSON.stringify(digest) };
+            const lines = digest.items
+              .slice(0, 100)
+              .map((item) => `${String(item.idleDays).padStart(3)}d  ${item.threadId}  ${item.title}`);
+            const more =
+              digest.items.length > 100 ? `\n… and ${digest.items.length - 100} more` : "";
+            return {
+              exitCode: 0,
+              stdout: `${digest.items.length} stale thread(s), generated ${new Date(digest.generatedAt).toLocaleString()}\n${lines.join("\n")}${more}`,
+            };
+          }
+          case undefined:
+          case "help":
+          case "--help":
+            return { exitCode: 0, stdout: usage };
+        }
+      } catch (error) {
+        return { exitCode: 1, stderr: error instanceof Error ? error.message : String(error) };
+      }
+      return { exitCode: 1, stderr: usage };
+    },
+  });
+
+  await ensureSnoozedSection();
+  bb.log.info("loaded");
+}

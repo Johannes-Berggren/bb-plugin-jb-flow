@@ -1,0 +1,1363 @@
+// jb-flow frontend: the Triage thread list, a snooze control in the thread
+// header, the stale-thread digest on the homepage, and the area-tag migration
+// in settings. All plugin state comes from server.ts over RPC and refreshes on
+// the "jb-flow-changed" realtime signal.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
+import {
+  definePluginApp,
+  experimental_ProviderIcon as ProviderIcon,
+  experimental_useSidebarThreadActions as useSidebarThreadActions,
+  experimental_useSidebarThreads as useSidebarThreads,
+  ThreadTitle,
+  useRealtime,
+  useRpc,
+  useSdk,
+  experimental_useSidebarThreadSplit as useSidebarThreadSplit,
+  useSidebarThreadShortcut,
+} from "@get-bb/plugin-sdk/app";
+import type {
+  PluginSidebarProject,
+  PluginSidebarSection,
+  PluginSidebarThread,
+  PluginThreadListProps,
+} from "@get-bb/plugin-sdk/app";
+import type { DigestItem, FlowState, rpcContract } from "./server";
+import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
+import { formatWhen } from "./when";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { Icon } from "@/components/ui/icon";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+
+const DAY_MS = 86_400_000;
+const SNOOZE_PRESETS = [
+  { label: "Later today", when: "today" },
+  { label: "Tomorrow", when: "tomorrow" },
+  { label: "Monday", when: "mon" },
+  { label: "In 1 week", when: "1w" },
+  { label: "In 2 weeks", when: "2w" },
+] as const;
+
+// --- shared state -------------------------------------------------------------
+
+function useFlowState() {
+  const rpc = useRpc<typeof rpcContract>();
+  const [state, setState] = useState<FlowState | null>(null);
+  const refetch = useCallback(() => {
+    rpc.call("state_get", null).then((next) => {
+      projectNaming = next;
+      setState(next);
+    }, () => undefined);
+  }, [rpc]);
+  useEffect(refetch, [refetch]);
+  useRealtime("jb-flow-changed", refetch);
+  return { rpc, state };
+}
+
+function errorText(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+// --- lanes --------------------------------------------------------------------
+
+type LaneId = "priority" | "active" | "waiting" | "later" | "low";
+type Lane = {
+  id: LaneId;
+  title: string;
+  sectionId: string | null;
+  key: string;
+};
+
+/** Maps the existing sections onto lanes by name, so renames are tolerated. */
+function resolveLanes(sections: readonly PluginSidebarSection[]): Lane[] {
+  const find = (pattern: RegExp) =>
+    sections.find((section) => pattern.test(section.name))?.id ?? null;
+  const lanes: Lane[] = [
+    {
+      id: "priority",
+      title: "Priority",
+      sectionId: find(/^\W*priority/i),
+      key: "1",
+    },
+    { id: "active", title: "Active", sectionId: null, key: "2" },
+    {
+      id: "waiting",
+      title: "Waiting for others",
+      sectionId: find(/waiting/i),
+      key: "3",
+    },
+    {
+      id: "later",
+      title: "Pick up later",
+      sectionId: find(/pick up later/i),
+      key: "4",
+    },
+    {
+      id: "low",
+      title: "Low priority",
+      sectionId: find(/low priority/i),
+      key: "5",
+    },
+  ];
+  // A lane whose section is missing is dropped; Active is the unsectioned bucket.
+  return lanes.filter(
+    (lane) => lane.id === "active" || lane.sectionId !== null,
+  );
+}
+
+function needsMe(thread: PluginSidebarThread): boolean {
+  return (
+    thread.hasPendingInteraction ||
+    thread.indicator === "waiting-for-input" ||
+    thread.indicator === "unread-error" ||
+    (thread.isUnread && thread.status === "idle")
+  );
+}
+
+// --- project chips ------------------------------------------------------------
+
+function projectHue(projectId: string): number {
+  let hash = 0;
+  for (const char of projectId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % 360;
+}
+
+// Filled from local.config.json via state_get; chips re-render with the list.
+let projectNaming: Pick<FlowState, "projectShortNames" | "stripProjectPrefixes"> = {
+  projectShortNames: {},
+  stripProjectPrefixes: [],
+};
+
+function shortProjectName(name: string): string {
+  const known = projectNaming.projectShortNames[name];
+  if (known) return known;
+  const prefix = projectNaming.stripProjectPrefixes.find((candidate) => name.startsWith(candidate));
+  return (prefix ? name.slice(prefix.length) : name).slice(0, 10);
+}
+
+function ProjectChip({
+  project,
+}: {
+  project: PluginSidebarProject | undefined;
+}) {
+  if (project === undefined || project.isPersonal) return null;
+  const hue = projectHue(project.id);
+  return (
+    <span
+      className="shrink-0 rounded px-1 text-[10px] font-medium leading-4"
+      style={{
+        backgroundColor: `hsl(${hue} 70% 50% / 0.16)`,
+        color: `hsl(${hue} 60% 45%)`,
+      }}
+      title={project.name}
+    >
+      {shortProjectName(project.name)}
+    </span>
+  );
+}
+
+// --- dialogs --------------------------------------------------------------------
+
+function SnoozeDialog({
+  threadId,
+  open,
+  onOpenChange,
+}: {
+  threadId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { rpc, state } = useFlowState();
+  const current = state?.snoozes[threadId];
+  const [note, setNote] = useState("");
+  const [custom, setCustom] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setNote(current?.note ?? "");
+      setCustom("");
+      setError(null);
+    }
+  }, [open, current?.note]);
+
+  const run = async (action: () => Promise<unknown>) => {
+    setPending(true);
+    setError(null);
+    try {
+      await action();
+      onOpenChange(false);
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+  const snooze = (when: string) =>
+    run(() =>
+      rpc.call("snooze", {
+        threadId,
+        when,
+        note: note.trim() === "" ? null : note,
+      }),
+    );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Snooze thread</DialogTitle>
+          <DialogDescription>
+            {current
+              ? `Snoozed until ${formatWhen(current.until)}.`
+              : "Hide it until later. It comes back unread."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-2">
+          {SNOOZE_PRESETS.map((preset) => (
+            <Button
+              key={preset.when}
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={() => snooze(preset.when)}
+            >
+              {preset.label}
+            </Button>
+          ))}
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (custom.trim() !== "") void snooze(custom.trim());
+          }}
+        >
+          <Input
+            value={custom}
+            onChange={(event) => setCustom(event.target.value)}
+            placeholder="3d, fri, 2026-10-12…"
+            aria-label="Custom snooze time"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={pending || custom.trim() === ""}
+          >
+            Snooze
+          </Button>
+        </form>
+        <Input
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="Optional: prompt to send on wake-up"
+          aria-label="Wake-up prompt"
+        />
+        {error === null ? null : (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {current ? (
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={pending}
+              onClick={() => run(() => rpc.call("unsnooze", { threadId }))}
+            >
+              Wake now
+            </Button>
+          </DialogFooter>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TagDialog({
+  threadId,
+  tags,
+  knownTags,
+  onClose,
+}: {
+  threadId: string;
+  tags: readonly string[];
+  knownTags: readonly string[];
+  onClose: () => void;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [draft, setDraft] = useState<string[]>([...tags]);
+  const [input, setInput] = useState("");
+  const toggle = (tag: string) =>
+    setDraft((current) =>
+      current.includes(tag)
+        ? current.filter((value) => value !== tag)
+        : [...current, tag],
+    );
+  const save = async () => {
+    const next =
+      input.trim() === "" ? draft : [...new Set([...draft, input.trim()])];
+    await rpc.call("tags_set", { threadId, tags: next });
+    onClose();
+  };
+  const options = [...new Set([...knownTags, ...draft])].sort();
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Tags</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-wrap gap-1.5">
+          {options.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => toggle(tag)}
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-xs",
+                draft.includes(tag)
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-muted-foreground",
+              )}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <Input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder="New tag"
+            aria-label="New tag"
+          />
+          <Button type="submit" size="sm">
+            Save
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- thread header action --------------------------------------------------------
+
+function SnoozeHeaderAction({ threadId }: { threadId: string }) {
+  const { state } = useFlowState();
+  const [open, setOpen] = useState(false);
+  const snoozed = state?.snoozes[threadId];
+  const label = snoozed
+    ? `Snoozed until ${formatWhen(snoozed.until)}`
+    : "Snooze thread";
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn(
+          "size-7",
+          snoozed ? "text-foreground" : "text-muted-foreground",
+        )}
+        aria-label={label}
+        onClick={() => setOpen(true)}
+      >
+        <Icon
+          name={snoozed ? "AlarmClockCheck" : "AlarmClock"}
+          className="size-4"
+        />
+      </Button>
+      <SnoozeDialog threadId={threadId} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
+// --- triage thread list ----------------------------------------------------------
+
+type Group = {
+  id: string;
+  title: string;
+  threads: PluginSidebarThread[];
+  defaultCollapsed?: boolean;
+  limit?: number;
+};
+
+function ThreadRow({
+  thread,
+  project,
+  active,
+  tags,
+  snoozeUntil,
+  lanes,
+  otherSections,
+  onNavigate,
+  onSnooze,
+  onUnsnooze,
+  onTag,
+  onRename,
+}: {
+  thread: PluginSidebarThread;
+  project: PluginSidebarProject | undefined;
+  active: boolean;
+  tags: readonly string[];
+  snoozeUntil: number | undefined;
+  lanes: readonly Lane[];
+  otherSections: readonly PluginSidebarSection[];
+  onNavigate: () => void;
+  onSnooze: () => void;
+  onUnsnooze: () => void;
+  onTag: () => void;
+  onRename: () => void;
+}) {
+  const actions = useSidebarThreadActions();
+  const sdk = useSdk();
+  const split = useSidebarThreadSplit(thread.id);
+  const moveTo = (sectionId: string | null) => {
+    void sdk.threads.update({ threadId: thread.id, sectionId });
+  };
+  const copy = (text: string) => {
+    void navigator.clipboard.writeText(text);
+  };
+  const shortcut = useSidebarThreadShortcut(thread.id);
+  const idleDays = (Date.now() - thread.updatedAt) / DAY_MS;
+  const busy = thread.status === "active" || thread.status === "starting";
+
+  const onKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const lane = lanes.find((candidate) => candidate.key === event.key);
+    if (lane) {
+      event.preventDefault();
+      void sdk.threads.update({
+        threadId: thread.id,
+        sectionId: lane.sectionId,
+      });
+    } else if (event.key === "e") {
+      event.preventDefault();
+      actions.archive(thread.id);
+    } else if (event.key === "s") {
+      event.preventDefault();
+      onSnooze();
+    } else if (event.key === "t") {
+      event.preventDefault();
+      onTag();
+    } else if (event.key === "u") {
+      event.preventDefault();
+      void actions.setRead(thread.id, thread.isUnread);
+    } else if (event.key === "j" || event.key === "k") {
+      event.preventDefault();
+      const rows = Array.from(
+        document.querySelectorAll<HTMLAnchorElement>("[data-jb-flow-row]"),
+      );
+      const index = rows.indexOf(event.currentTarget);
+      rows[index + (event.key === "j" ? 1 : -1)]?.focus();
+    }
+  };
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <a
+          href={thread.href}
+          {...split.splitProps}
+          data-jb-flow-row=""
+          data-sidebar-thread-shortcut-target=""
+          aria-current={active ? "page" : undefined}
+          aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
+          onClick={(event) => {
+            if (
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.button !== 0
+            )
+              return;
+            event.preventDefault();
+            actions.open(thread.id);
+            onNavigate();
+          }}
+          onKeyDown={onKeyDown}
+          className={cn(
+            "group flex h-8 items-center gap-2 rounded-md px-2 text-sm outline-none",
+            "hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
+            active && "bg-accent",
+          )}
+          style={{
+            opacity: active ? 1 : idleDays > 14 ? 0.5 : idleDays > 7 ? 0.7 : 1,
+          }}
+        >
+          <span className="relative flex size-4 shrink-0 items-center justify-center">
+            <ProviderIcon
+              providerKind="agent"
+              provider={{ id: thread.providerId }}
+            />
+            {busy ? (
+              <span className="absolute -right-0.5 -top-0.5 size-1.5 animate-pulse rounded-full bg-blue-500" />
+            ) : null}
+          </span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              thread.isUnread && "font-semibold",
+            )}
+          >
+            <ThreadTitle threadId={thread.id} />
+          </span>
+          {tags.slice(0, 2).map((tag) => (
+            <span
+              key={tag}
+              className="shrink-0 text-[10px] text-muted-foreground"
+            >
+              #{tag}
+            </span>
+          ))}
+          <ProjectChip project={project} />
+          {snoozeUntil !== undefined ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              {formatWhen(snoozeUntil)}
+            </span>
+          ) : thread.indicator === "waiting-for-input" ||
+            thread.hasPendingInteraction ? (
+            <span
+              className="size-2 shrink-0 rounded-full bg-amber-500"
+              aria-label={thread.indicatorLabel ?? "Needs input"}
+            />
+          ) : thread.indicator === "unread-error" ? (
+            <span
+              className="size-2 shrink-0 rounded-full bg-red-500"
+              aria-label={thread.indicatorLabel ?? "Error"}
+            />
+          ) : thread.isUnread ? (
+            <span
+              className="size-2 shrink-0 rounded-full bg-foreground/60"
+              aria-label="Unread"
+            />
+          ) : shortcut ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              {shortcut.label}
+            </span>
+          ) : null}
+        </a>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        <ContextMenuItem
+          onSelect={() => {
+            actions.open(thread.id);
+            onNavigate();
+          }}
+        >
+          <Icon name="MessageSquare" className="size-4" /> Open
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!split.isAvailable}
+          onSelect={() => {
+            actions.open(thread.id, { split: true });
+            onNavigate();
+          }}
+        >
+          <Icon name="Columns2" className="size-4" /> Open in split view
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onSelect={() => void actions.setPinned(thread.id, !thread.isPinned)}
+        >
+          <Icon name={thread.isPinned ? "PinOff" : "Pin"} className="size-4" />
+          {thread.isPinned ? "Unpin" : "Pin"}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={() => void actions.setRead(thread.id, thread.isUnread)}
+        >
+          <Icon
+            name={thread.isUnread ? "MailOpen" : "Mail"}
+            className="size-4"
+          />
+          {thread.isUnread ? "Mark as read" : "Mark as unread"}
+          <ContextMenuShortcut>U</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onRename}>
+          <Icon name="Pencil" className="size-4" /> Rename…
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <Icon name="FolderInput" className="size-4" /> Move to
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent className="w-52">
+            {lanes.map((lane) => (
+              <ContextMenuItem
+                key={lane.id}
+                disabled={thread.sectionId === lane.sectionId}
+                onSelect={() => moveTo(lane.sectionId)}
+              >
+                {lane.title}
+                <ContextMenuShortcut>{lane.key}</ContextMenuShortcut>
+              </ContextMenuItem>
+            ))}
+            {otherSections.length > 0 ? <ContextMenuSeparator /> : null}
+            {otherSections.map((section) => (
+              <ContextMenuItem
+                key={section.id}
+                disabled={thread.sectionId === section.id}
+                onSelect={() => moveTo(section.id)}
+              >
+                {section.name}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        {snoozeUntil !== undefined ? (
+          <ContextMenuItem onSelect={onUnsnooze}>
+            <Icon name="AlarmClockOff" className="size-4" /> Wake now
+          </ContextMenuItem>
+        ) : null}
+        <ContextMenuItem onSelect={onSnooze}>
+          <Icon name="AlarmClock" className="size-4" />{" "}
+          {snoozeUntil !== undefined ? "Change snooze…" : "Snooze…"}
+          <ContextMenuShortcut>S</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onTag}>
+          <Icon name="Tag" className="size-4" /> Tags…
+          <ContextMenuShortcut>T</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onSelect={() =>
+            copy(new URL(thread.href, window.location.origin).toString())
+          }
+        >
+          <Icon name="Link" className="size-4" /> Copy link
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => copy(thread.id)}>
+          <Icon name="Copy" className="size-4" /> Copy thread ID
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => actions.archive(thread.id)}>
+          <Icon name="Archive" className="size-4" /> Archive
+          <ContextMenuShortcut>E</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem
+          className="text-destructive focus:text-destructive"
+          onSelect={() => actions.requestDelete(thread.id)}
+        >
+          <Icon name="Trash2" className="size-4" /> Delete…
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function RenameDialog({
+  thread,
+  onClose,
+}: {
+  thread: PluginSidebarThread;
+  onClose: () => void;
+}) {
+  const actions = useSidebarThreadActions();
+  const [title, setTitle] = useState(thread.title ?? thread.displayTitle);
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Rename thread</DialogTitle>
+        </DialogHeader>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (title.trim() === "") return;
+            void actions.rename(thread.id, title.trim()).then(onClose);
+          }}
+        >
+          <Input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            aria-label="Thread title"
+            autoFocus
+          />
+          <Button type="submit" size="sm" disabled={title.trim() === ""}>
+            Save
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GroupHeader({
+  title,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  title: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className="flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground hover:text-foreground"
+    >
+      <Icon
+        name={collapsed ? "ChevronRight" : "ChevronDown"}
+        className="size-3"
+      />
+      <span className="truncate">{title}</span>
+      <span className="ml-auto tabular-nums">{count}</span>
+    </button>
+  );
+}
+
+const COLLAPSE_KEY = "jb-flow:collapsed";
+
+function useCollapsed(defaults: Record<string, boolean>) {
+  const [stored, setStored] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? "{}") as Record<
+        string,
+        boolean
+      >;
+    } catch {
+      return {};
+    }
+  });
+  const isCollapsed = (id: string) => stored[id] ?? defaults[id] ?? false;
+  const toggle = (id: string) =>
+    setStored((current) => {
+      const next = {
+        ...current,
+        [id]: !(current[id] ?? defaults[id] ?? false),
+      };
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      return next;
+    });
+  return { isCollapsed, toggle };
+}
+
+function TriageThreadList({
+  activeThreadId,
+  onNavigate,
+}: PluginThreadListProps) {
+  const { threads, projects, sections, status } = useSidebarThreads();
+  const { rpc, state } = useFlowState();
+  const [renameTarget, setRenameTarget] = useState<PluginSidebarThread | null>(
+    null,
+  );
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [snoozeTarget, setSnoozeTarget] = useState<string | null>(null);
+  const [tagTarget, setTagTarget] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const projectById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects],
+  );
+  const lanes = useMemo(() => resolveLanes(sections), [sections]);
+  const otherSections = useMemo(() => {
+    const laneIds = new Set(lanes.map((lane) => lane.sectionId));
+    return sections.filter(
+      (section) =>
+        !laneIds.has(section.id) && section.id !== state?.snoozedSectionId,
+    );
+  }, [sections, lanes, state?.snoozedSectionId]);
+  const tags = useMemo(() => state?.tags ?? {}, [state]);
+  const knownTags = useMemo(
+    () => [...new Set(Object.values(tags).flat())].sort(),
+    [tags],
+  );
+
+  const groups = useMemo<Group[]>(() => {
+    const snoozedSectionId = state?.snoozedSectionId ?? null;
+    const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
+    const visible = threads
+      .filter(
+        (thread) =>
+          !thread.isHidden &&
+          !thread.isArchived &&
+          thread.parentThreadId === null,
+      )
+      .filter(
+        (thread) =>
+          tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter),
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+
+    const snoozed = visible.filter(
+      (thread) => thread.sectionId === snoozedSectionId,
+    );
+    const awake = visible.filter(
+      (thread) => thread.sectionId !== snoozedSectionId,
+    );
+    const pinned = awake.filter((thread) => thread.isPinned);
+    const attention = awake.filter(
+      (thread) => !thread.isPinned && needsMe(thread),
+    );
+    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread));
+
+    const result: Group[] = [];
+    if (pinned.length > 0)
+      result.push({ id: "pinned", title: "Pinned", threads: pinned });
+    result.push({ id: "needs-me", title: "Needs me", threads: attention });
+    for (const lane of lanes) {
+      result.push({
+        id: `lane:${lane.id}`,
+        title: `${lane.title}  ·  ${lane.key}`,
+        threads: rest.filter((thread) => thread.sectionId === lane.sectionId),
+        defaultCollapsed: lane.id === "low" || lane.id === "later",
+        limit: lane.id === "active" ? 25 : 15,
+      });
+    }
+    for (const section of sections) {
+      if (section.id === snoozedSectionId || laneSectionIds.has(section.id))
+        continue;
+      const inSection = rest.filter(
+        (thread) => thread.sectionId === section.id,
+      );
+      if (inSection.length === 0) continue;
+      result.push({
+        id: `section:${section.id}`,
+        title: section.name,
+        threads: inSection,
+        defaultCollapsed: true,
+      });
+    }
+    result.push({
+      id: "snoozed",
+      title: "😴 Snoozed",
+      threads: snoozed.sort(
+        (a, b) =>
+          (state?.snoozes[a.id]?.until ?? 0) -
+          (state?.snoozes[b.id]?.until ?? 0),
+      ),
+      defaultCollapsed: true,
+    });
+    return result;
+  }, [threads, sections, lanes, state, tags, tagFilter]);
+
+  const defaults = useMemo(
+    () =>
+      Object.fromEntries(
+        groups.map((group) => [group.id, group.defaultCollapsed ?? false]),
+      ),
+    [groups],
+  );
+  const { isCollapsed, toggle } = useCollapsed(defaults);
+
+  if (status === "loading") {
+    return (
+      <p className="px-3 py-2 text-xs text-muted-foreground">
+        Loading threads…
+      </p>
+    );
+  }
+
+  return (
+    <nav
+      aria-label="Triage"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
+    >
+      {knownTags.length > 0 ? (
+        <div className="flex flex-wrap gap-1 px-2 pt-2">
+          {knownTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() =>
+                setTagFilter((current) => (current === tag ? null : tag))
+              }
+              className={cn(
+                "rounded-full border px-2 text-[11px] leading-5",
+                tagFilter === tag
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              #{tag}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {groups.map((group) => {
+        if (group.threads.length === 0 && group.id !== "needs-me") return null;
+        const collapsed = isCollapsed(group.id);
+        const limit = expanded[group.id] ? Infinity : (group.limit ?? Infinity);
+        return (
+          <section key={group.id}>
+            <GroupHeader
+              title={group.title}
+              count={group.threads.length}
+              collapsed={collapsed}
+              onToggle={() => toggle(group.id)}
+            />
+            {collapsed ? null : group.threads.length === 0 ? (
+              <p className="px-2 py-1 text-xs text-muted-foreground">
+                Inbox zero ✨
+              </p>
+            ) : (
+              <>
+                {group.threads.slice(0, limit).map((thread) => (
+                  <ThreadRow
+                    key={thread.id}
+                    thread={thread}
+                    project={projectById.get(thread.projectId)}
+                    active={thread.id === activeThreadId}
+                    tags={tags[thread.id] ?? []}
+                    snoozeUntil={state?.snoozes[thread.id]?.until}
+                    lanes={lanes}
+                    otherSections={otherSections}
+                    onNavigate={onNavigate}
+                    onSnooze={() => setSnoozeTarget(thread.id)}
+                    onUnsnooze={() =>
+                      void rpc.call("unsnooze", { threadId: thread.id })
+                    }
+                    onTag={() => setTagTarget(thread.id)}
+                    onRename={() => setRenameTarget(thread)}
+                  />
+                ))}
+                {group.threads.length > limit ? (
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() =>
+                      setExpanded((current) => ({
+                        ...current,
+                        [group.id]: true,
+                      }))
+                    }
+                  >
+                    Show {group.threads.length - limit} more
+                  </button>
+                ) : null}
+              </>
+            )}
+          </section>
+        );
+      })}
+      <p className="px-2 pt-4 text-[10px] leading-4 text-muted-foreground">
+        Keys on a focused row: 1–5 lane · s snooze · t tag · e archive · u
+        unread · j/k move
+      </p>
+      {snoozeTarget === null ? null : (
+        <SnoozeDialog
+          threadId={snoozeTarget}
+          open
+          onOpenChange={(open) => (open ? undefined : setSnoozeTarget(null))}
+        />
+      )}
+      {renameTarget === null ? null : (
+        <RenameDialog
+          thread={renameTarget}
+          onClose={() => setRenameTarget(null)}
+        />
+      )}
+      {tagTarget === null ? null : (
+        <TagDialog
+          threadId={tagTarget}
+          tags={tags[tagTarget] ?? []}
+          knownTags={knownTags}
+          onClose={() => setTagTarget(null)}
+        />
+      )}
+    </nav>
+  );
+}
+
+// --- homepage digest ---------------------------------------------------------------
+
+function EmptyState({ children }: { children: ReactNode }) {
+  return (
+    <div
+      role="status"
+      className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground"
+    >
+      {children}
+    </div>
+  );
+}
+
+function DigestSection() {
+  const rpc = useRpc<typeof rpcContract>();
+  const actions = useSidebarThreadActions();
+  const { projects } = useSidebarThreads();
+  const projectById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects],
+  );
+  const [digest, setDigest] = useState<{
+    generatedAt: number;
+    items: DigestItem[];
+  } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+
+  const load = useCallback(
+    (refresh: boolean) => {
+      if (refresh) setPending(true);
+      rpc
+        .call("digest_list", { refresh })
+        .then(
+          (result) => {
+            setDigest(result);
+            setSelected((current) => {
+              const ids = new Set(result.items.map((item) => item.threadId));
+              return new Set([...current].filter((id) => ids.has(id)));
+            });
+            setError(null);
+          },
+          (cause: unknown) => setError(errorText(cause)),
+        )
+        .finally(() => {
+          if (refresh) setPending(false);
+        });
+    },
+    [rpc],
+  );
+  useEffect(() => load(false), [load]);
+  useRealtime("jb-flow-changed", () => load(false));
+
+  const act = async (action: () => Promise<unknown>) => {
+    setPending(true);
+    try {
+      await action();
+      setSelected(new Set());
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+  const ids = [...selected];
+  const items = digest?.items ?? [];
+  const shown = showAll ? items : items.slice(0, 15);
+  const allSelected =
+    items.length > 0 && items.every((item) => selected.has(item.threadId));
+  const toggleOne = (threadId: string, checked: boolean) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(threadId);
+      else next.delete(threadId);
+      return next;
+    });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted-foreground">
+          {digest === null
+            ? "Loading…"
+            : `${items.length} idle unsectioned thread(s) · updated ${formatWhen(digest.generatedAt)}`}
+        </span>
+        <div className="ml-auto flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pending}
+            onClick={() => load(true)}
+          >
+            <Icon name="RefreshCw" className="size-3.5" /> Refresh
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pending || ids.length === 0}
+            onClick={() =>
+              act(() => rpc.call("digest_keep", { threadIds: ids, days: 14 }))
+            }
+          >
+            Keep 14d
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pending || ids.length === 0}
+            onClick={() =>
+              act(() =>
+                Promise.all(
+                  ids.map((threadId) =>
+                    rpc.call("snooze", { threadId, when: "1w", note: null }),
+                  ),
+                ),
+              )
+            }
+          >
+            Snooze 1w
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={pending || ids.length === 0}
+            onClick={() => act(() => rpc.call("archive", { threadIds: ids }))}
+          >
+            Archive{ids.length > 0 ? ` ${ids.length}` : ""}
+          </Button>
+        </div>
+      </div>
+      {error === null ? null : (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      {digest === null ? null : items.length === 0 ? (
+        <EmptyState>Nothing stale. Nice.</EmptyState>
+      ) : (
+        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+          <li className="flex items-center gap-3 px-3 py-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={allSelected}
+              onCheckedChange={(checked) =>
+                setSelected(
+                  checked === true
+                    ? new Set(items.map((item) => item.threadId))
+                    : new Set(),
+                )
+              }
+              aria-label="Select all"
+            />
+            Select all
+          </li>
+          {shown.map((item) => (
+            <li
+              key={item.threadId}
+              className="flex items-start gap-3 px-3 py-2 text-sm"
+            >
+              <Checkbox
+                className="mt-0.5"
+                checked={selected.has(item.threadId)}
+                onCheckedChange={(checked) =>
+                  toggleOne(item.threadId, checked === true)
+                }
+                aria-label={`Select "${item.title}"`}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="truncate text-left font-medium hover:underline"
+                    onClick={() => actions.open(item.threadId)}
+                  >
+                    {item.title}
+                  </button>
+                  <ProjectChip project={projectById.get(item.projectId)} />
+                  <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {item.idleDays}d
+                  </span>
+                </div>
+                {item.summary ? (
+                  <p className="truncate text-xs text-muted-foreground">
+                    {item.summary}
+                  </p>
+                ) : null}
+              </div>
+            </li>
+          ))}
+          {items.length > shown.length ? (
+            <li className="px-3 py-2">
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setShowAll(true)}
+              >
+                Show all {items.length}
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// --- settings: area-section → tag migration ---------------------------------------
+
+function MigrationSettings() {
+  const rpc = useRpc<typeof rpcContract>();
+  const { sections } = useSidebarThreads();
+  const lanes = useMemo(() => resolveLanes(sections), [sections]);
+  const laneIds = new Set(lanes.map((lane) => lane.sectionId));
+  const candidates = sections.filter(
+    (section) =>
+      !laneIds.has(section.id) &&
+      !/snoozed|agents|commands/i.test(section.name),
+  );
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [result, setResult] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-muted-foreground">
+        Turn "area" sections into tags. Their threads get the tag and move to
+        the Active lane, so one thread can be both #Commercial and Waiting. The
+        sections themselves are kept.
+      </p>
+      <div className="space-y-1.5">
+        {candidates.map((section) => (
+          <label key={section.id} className="flex items-center gap-2">
+            <Checkbox
+              checked={selected.has(section.id)}
+              onCheckedChange={(checked) =>
+                setSelected((current) => {
+                  const next = new Set(current);
+                  if (checked === true) next.add(section.id);
+                  else next.delete(section.id);
+                  return next;
+                })
+              }
+            />
+            {section.name}
+          </label>
+        ))}
+      </div>
+      <Button
+        size="sm"
+        disabled={pending || selected.size === 0}
+        onClick={async () => {
+          setPending(true);
+          try {
+            const { tagged } = await rpc.call("migrate_areas", {
+              sectionIds: [...selected],
+              moveToSectionId: null,
+            });
+            setResult(`Tagged and moved ${tagged} thread(s).`);
+            setSelected(new Set());
+          } catch (cause) {
+            setResult(errorText(cause));
+          } finally {
+            setPending(false);
+          }
+        }}
+      >
+        Convert to tags
+      </Button>
+      {result === null ? null : (
+        <p className="text-muted-foreground">{result}</p>
+      )}
+    </div>
+  );
+}
+
+// --- plan review banners -----------------------------------------------------------
+// BB renders a plan awaiting approval in a banner that starts collapsed and caps
+// the plan body at 288px. Core renderers can't be replaced, so this content script
+// expands each banner once when it appears (a manual collapse sticks) and lifts
+// the height cap. Selectors are BB's own test ids.
+
+const PLAN_BANNER = 'section[data-testid="plan-review-banner"]';
+const PLAN_STYLE = `
+${PLAN_BANNER} [data-testid="plan-review-request"] > div:first-child {
+  max-height: 75vh !important;
+}
+${PLAN_BANNER} [data-testid="plan-review-request"] .text-xs {
+  font-size: 0.8125rem;
+}
+`;
+
+function mountPlanExpander({ signal }: { signal: AbortSignal }) {
+  const style = document.createElement("style");
+  style.dataset.jbFlow = "plan-expander";
+  style.textContent = PLAN_STYLE;
+  document.head.append(style);
+
+  const seen = new WeakSet<Element>();
+  const expand = () => {
+    for (const banner of Array.from(document.querySelectorAll<HTMLElement>(PLAN_BANNER))) {
+      if (seen.has(banner)) continue;
+      seen.add(banner);
+      if (banner.hasAttribute("data-expanded")) continue;
+      const toggle = banner.querySelector('button[aria-expanded="false"]') as HTMLButtonElement | null;
+      toggle?.click();
+    }
+  };
+  expand();
+  const observer = new MutationObserver(expand);
+  observer.observe(document.body, { childList: true, subtree: true });
+  signal.addEventListener("abort", () => observer.disconnect(), { once: true });
+  return () => {
+    observer.disconnect();
+    style.remove();
+  };
+}
+
+export default definePluginApp((app) => {
+  app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
+  app.slots.experimental_threadList({
+    id: "triage",
+    title: "Triage",
+    description:
+      "Needs me on top, then lanes, project chips, tags, snooze and keyboard triage.",
+    component: TriageThreadList,
+  });
+  app.slots.experimental_threadHeaderAction({
+    id: "snooze",
+    title: "Snooze",
+    component: ({ threadId }) => <SnoozeHeaderAction threadId={threadId} />,
+  });
+  app.slots.threadPanelAction({
+    id: "dev-servers",
+    title: "Start dev servers",
+    icon: "Rocket",
+    component: RepoCommandsPanel,
+    run: ({ openPanel }) => {
+      openPanel({ title: "Scripts", params: { autorun: "dev" } });
+    },
+  });
+  app.slots.threadPanelAction({
+    id: "repo-commands",
+    title: "Scripts",
+    icon: "SquareTerminal",
+    component: RepoCommandsPanel,
+    run: ({ openPanel }) => {
+      openPanel({ title: "Scripts" });
+    },
+  });
+  app.slots.settingsSection({
+    id: "repo-commands",
+    title: "Repo commands",
+    description: "Per-project buttons for the thread side panel.",
+    component: RepoCommandsSettings,
+  });
+  app.slots.homepageSection({
+    id: "stale-digest",
+    title: "Stale threads",
+    component: DigestSection,
+  });
+  app.slots.settingsSection({
+    id: "area-tags",
+    title: "Area tags",
+    description: "Convert area sections into multi-valued tags.",
+    component: MigrationSettings,
+  });
+});

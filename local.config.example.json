@@ -1,0 +1,21 @@
+{
+  "repoCommands": {
+    "my-app": [
+      {
+        "id": "dev",
+        "label": "Start dev servers",
+        "slots": [
+          { "command": "pnpm dev", "url": "http://localhost:3000", "ports": [3000, 9000] },
+          { "command": "pnpm dev:2", "url": "http://localhost:3100", "ports": [3100, 9100] }
+        ]
+      },
+      {
+        "id": "install",
+        "label": "pnpm install",
+        "slots": [{ "command": "pnpm install", "url": null, "ports": [] }]
+      }
+    ]
+  },
+  "projectShortNames": { "my-very-long-project-name": "short" },
+  "stripProjectPrefixes": ["company-"]
+}
