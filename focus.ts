@@ -58,7 +58,14 @@ export function createFocus(bb: BbPluginApi) {
       if (page.length < 500) break;
     }
     return threads
-      .filter((thread) => thread.parentThreadId === null && needsAttention(thread))
+      .filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          thread.deletedAt === null &&
+          thread.visibility === "visible" &&
+          thread.parentThreadId === null &&
+          needsAttention(thread),
+      )
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));
   }
 

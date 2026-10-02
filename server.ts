@@ -191,7 +191,12 @@ export default async function plugin(bb: BbPluginApi) {
     const threads: Thread[] = [];
     for (let offset = 0; ; offset += 500) {
       const page = await bb.sdk.threads.list({ limit: 500, offset });
-      threads.push(...page);
+      // Filter as well: archived/hidden rows must never reach the digest.
+      threads.push(
+        ...page.filter(
+          (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible",
+        ),
+      );
       if (page.length < 500) return threads;
     }
   }
@@ -421,7 +426,8 @@ export default async function plugin(bb: BbPluginApi) {
         const section = sections.find((candidate) => candidate.id === sectionId);
         if (section === undefined) continue;
         const tag = section.name.replace(/^[^\p{L}\p{N}]+/u, "").trim();
-        for (const thread of await bb.sdk.threads.list({ sectionId, limit: 500 })) {
+        const inSection = await bb.sdk.threads.list({ sectionId, limit: 500 });
+        for (const thread of inSection.filter((candidate) => candidate.archivedAt === null)) {
           tags[thread.id] = [...new Set([...(tags[thread.id] ?? []), tag])];
           await bb.sdk.threads.update({ threadId: thread.id, sectionId: moveToSectionId });
           tagged += 1;
