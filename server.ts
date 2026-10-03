@@ -488,6 +488,7 @@ export default async function plugin(bb: BbPluginApi) {
         text
           .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
           .replace(/[*_`>#]+/g, "")
+          .replace(/[\u2580-\u259F\u2500-\u257F]+/g, "")
           .replace(/\s+/g, " ")
           .trim();
       // The user's Status template: "**Goal:** …", "**Next:** …", etc.

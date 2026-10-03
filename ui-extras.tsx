@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Glyph } from "@/components/ui/glyph";
 import type { GlyphName } from "@/components/ui/glyph";
 import { Input } from "@/components/ui/input";
+import { usePortalScopeProps } from "@/lib/portal-scope";
 import { cn } from "@/lib/utils";
 
 export const STUCK_AFTER_MS = 15 * 60_000;
@@ -172,9 +173,9 @@ type Preview = { goal: string; done: string; next: string; blocked: string; late
 
 function Field({ label, children, tone }: { label: string; children: ReactNode; tone?: string }) {
   return (
-    <div className="grid grid-cols-[3.25rem_1fr] gap-2 text-xs leading-snug">
-      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span className={cn("line-clamp-3", tone)}>{children}</span>
+    <div className="flex gap-2 text-xs leading-snug">
+      <span className="w-12 shrink-0 pt-px text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className={cn("line-clamp-2 min-w-0 flex-1", tone)}>{children}</span>
     </div>
   );
 }
@@ -191,6 +192,8 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
   ref,
 ) {
   const rpc = useRpc<typeof rpcContract>();
+  // Portaled to <body>: these attributes put the card inside the plugin's CSS scope.
+  const portalScope = usePortalScopeProps();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   useEffect(() => {
@@ -203,7 +206,7 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
 
   const shownPrs = prs.slice(0, 4);
   const details = [
-    projectName,
+    projectName === "Personal" ? null : projectName,
     sectionName,
     thread.environment?.branchName ? `⎇ ${thread.environment.branchName}` : null,
     `updated ${duration(Date.now() - thread.updatedAt)} ago`,
@@ -218,6 +221,7 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
       </HoverCard.Trigger>
       <HoverCard.Portal>
         <HoverCard.Content
+          {...portalScope}
           side="right"
           align="start"
           sideOffset={10}
@@ -277,7 +281,7 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
             </div>
           ) : null}
 
-          <div className="truncate text-[10.5px] text-muted-foreground">{details.join(" · ")}</div>
+          <div className="truncate border-t border-border pt-2 text-[10px] text-muted-foreground">{details.join(" · ")}</div>
         </HoverCard.Content>
       </HoverCard.Portal>
     </HoverCard.Root>

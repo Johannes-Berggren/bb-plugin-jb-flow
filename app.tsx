@@ -476,7 +476,7 @@ function rowStatus(
   if (busy && run?.stuck) {
     return { glyph: "alert", tone: "text-amber-500", label: `Possibly stuck: no output for ${duration(run.silent)}` };
   }
-  if (busy) return { glyph: "spinner", tone: "text-sky-500", label: run ? `Working for ${duration(run.elapsed)}` : "Working", spin: true };
+  if (busy) return { glyph: "spinner", tone: "text-sky-500", label: run && run.elapsed >= 60_000 ? `Working for ${duration(run.elapsed)}` : "Working", spin: true };
   if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };
   if (watching?.kind === "release") return { glyph: "rocket", tone: "text-violet-500", label: watching.label };
   if (watching?.kind === "continue") return { glyph: "alarm", tone: "text-amber-500", label: watching.label };
