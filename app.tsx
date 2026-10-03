@@ -457,6 +457,8 @@ type Group = {
   dynamic?: { glyph: GlyphName; tone: string };
   /** First of your own sections: draws the "Your sections" divider above it. */
   firstUserGroup?: boolean;
+  /** Your section behind this group (null = the unsectioned Active lane). */
+  section?: { id: string | null; name: string; isLane: boolean };
 };
 
 // --- row status icon ---------------------------------------------------------------
@@ -842,6 +844,7 @@ function GroupHeader({
   action,
   hint,
   dynamic,
+  menu,
 }: {
   title: string;
   count: number;
@@ -852,8 +855,10 @@ function GroupHeader({
   hint?: string;
   /** Computed group (not a section you made): accent styling. */
   dynamic?: { glyph: GlyphName; tone: string };
+  /** Right-click menu items for this group. */
+  menu?: ReactNode;
 }) {
-  return (
+  const header = (
     <div className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground">
       <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground">
         {dynamic ? (
@@ -873,6 +878,93 @@ function GroupHeader({
       ) : null}
       <span className="tabular-nums">{count}</span>
     </div>
+  );
+  if (!menu) return header;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{header}</ContextMenuTrigger>
+      <ContextMenuContent className="w-56">{menu}</ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function SectionNameDialog({
+  initial,
+  title,
+  onSave,
+  onClose,
+}: {
+  initial: string;
+  title: string;
+  onSave: (name: string) => Promise<unknown>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (name.trim() === "") return;
+            onSave(name.trim()).then(onClose, (cause: unknown) => setError(errorText(cause)));
+          }}
+        >
+          <Input value={name} onChange={(event) => setName(event.target.value)} aria-label="Section name" autoFocus />
+          <Button type="submit" size="sm" disabled={name.trim() === ""}>
+            Save
+          </Button>
+        </form>
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onConfirm: () => Promise<unknown>;
+  onClose: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{body}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={pending}
+            onClick={() => {
+              setPending(true);
+              onConfirm().finally(onClose);
+            }}
+          >
+            {confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -948,6 +1040,91 @@ function TriageThreadList({
   );
 
   const [smart, setSmart] = useState<SmartId | null>(null);
+  const [sectionDialog, setSectionDialog] = useState<{ mode: "create" | "rename"; id?: string; name: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
+  const sdk = useSdk();
+  const actions = useSidebarThreadActions();
+
+  const orderedSections = useMemo(() => {
+    const order = state?.sectionOrder ?? [];
+    const rank = (id: string) => {
+      const index = order.indexOf(id);
+      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+    };
+    return otherSections
+      .map((section, index) => ({ section, index }))
+      .sort((a, b) => rank(a.section.id) - rank(b.section.id) || a.index - b.index)
+      .map(({ section }) => section);
+  }, [otherSections, state?.sectionOrder]);
+
+  const moveSection = (id: string, delta: -1 | 1) => {
+    const ids = orderedSections.map((section) => section.id);
+    const from = ids.indexOf(id);
+    const to = from + delta;
+    if (from === -1 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to]!, ids[from]!];
+    void rpc.call("section_order_set", { order: ids });
+  };
+
+  const sectionMenu = (group: Group) => {
+    const section = group.section;
+    if (!section) return undefined;
+    const ids = group.threads.map((thread) => thread.id);
+    const index = section.id === null ? -1 : orderedSections.findIndex((candidate) => candidate.id === section.id);
+    return (
+      <>
+        <ContextMenuItem onSelect={() => actions.openNewThread({ ...(section.id ? { sectionId: section.id } : {}), focusPrompt: true })}>
+          <Icon name="Plus" className="size-4" /> New thread here
+        </ContextMenuItem>
+        <ContextMenuItem disabled={ids.length === 0} onSelect={() => ids.forEach((id) => void actions.setRead(id, true))}>
+          <Icon name="MailOpen" className="size-4" /> Mark all as read
+        </ContextMenuItem>
+        {!section.isLane && section.id !== null ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => setSectionDialog({ mode: "rename", id: section.id!, name: section.name })}>
+              <Glyph name="pencil" className="size-4" /> Rename…
+            </ContextMenuItem>
+            <ContextMenuItem disabled={index <= 0} onSelect={() => moveSection(section.id!, -1)}>
+              <Icon name="ArrowUp" className="size-4" /> Move up
+            </ContextMenuItem>
+            <ContextMenuItem disabled={index === -1 || index >= orderedSections.length - 1} onSelect={() => moveSection(section.id!, 1)}>
+              <Icon name="ArrowDown" className="size-4" /> Move down
+            </ContextMenuItem>
+          </>
+        ) : null}
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          disabled={ids.length === 0}
+          onSelect={() =>
+            setConfirm({
+              title: `Archive ${ids.length} thread${ids.length === 1 ? "" : "s"}?`,
+              body: `Everything in ${section.name} will be archived. You can unarchive threads later.`,
+              label: "Archive all",
+              run: () => rpc.call("archive", { threadIds: ids }),
+            })
+          }
+        >
+          <Icon name="Archive" className="size-4" /> Archive all threads…
+        </ContextMenuItem>
+        {!section.isLane && section.id !== null ? (
+          <ContextMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={() =>
+              setConfirm({
+                title: `Delete "${section.name}"?`,
+                body: `The section is removed and its ${ids.length} thread${ids.length === 1 ? "" : "s"} move back to Active. Threads are not deleted.`,
+                label: "Delete section",
+                run: () => sdk.threadSections.delete({ id: section.id! }),
+              })
+            }
+          >
+            <Icon name="Trash2" className="size-4" /> Delete section…
+          </ContextMenuItem>
+        ) : null}
+      </>
+    );
+  };
 
   const { groups, smartCounts } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
@@ -1022,17 +1199,20 @@ function TriageThreadList({
         threads: rest.filter((thread) => thread.sectionId === lane.sectionId),
         defaultCollapsed: lane.id === "low" || lane.id === "later",
         limit: lane.id === "active" ? 25 : 15,
+        section: { id: lane.sectionId, name: lane.title, isLane: true },
       });
     }
-    for (const section of sections) {
-      if (section.id === snoozedSectionId || laneSectionIds.has(section.id)) continue;
+    for (const section of orderedSections) {
       const inSection = rest.filter((thread) => thread.sectionId === section.id);
-      if (inSection.length === 0) continue;
-      result.push({ id: `section:${section.id}`, title: section.name, threads: inSection, defaultCollapsed: true });
+      result.push({
+        id: `section:${section.id}`,
+        title: section.name,
+        threads: inSection,
+        defaultCollapsed: true,
+        section: { id: section.id, name: section.name, isLane: false },
+      });
     }
-    const firstUser = result.find(
-      (group) => (group.id.startsWith("lane:") || group.id.startsWith("section:")) && group.threads.length > 0,
-    );
+    const firstUser = result.find((group) => group.section !== undefined);
     if (firstUser) firstUser.firstUserGroup = true;
     result.push({
       id: "snoozed",
@@ -1042,7 +1222,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts };
-  }, [threads, sections, lanes, state, tags, tagFilter, smart, rpc]);
+  }, [threads, sections, lanes, state, tags, tagFilter, smart, rpc, orderedSections]);
 
   const defaults = useMemo(
     () =>
@@ -1112,15 +1292,25 @@ function TriageThreadList({
         </div>
       ) : null}
       {groups.map((group) => {
-        if (group.threads.length === 0 && group.id !== "needs-me" && !group.id.startsWith("smart:")) return null;
+        const keepEmpty =
+          group.id === "needs-me" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
+        if (group.threads.length === 0 && !keepEmpty) return null;
         const collapsed = group.id.startsWith("smart:") ? false : isCollapsed(group.id);
         const limit = expanded[group.id] ? Infinity : (group.limit ?? Infinity);
         return (
           <section key={group.id}>
             {group.firstUserGroup ? (
-              <div className="mx-2 mt-4 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              <div className="group/divider mx-2 mt-4 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
                 Your sections
                 <span className="h-px flex-1 bg-border" />
+                <button
+                  type="button"
+                  onClick={() => setSectionDialog({ mode: "create", name: "" })}
+                  className="rounded px-1 normal-case tracking-normal text-muted-foreground hover:bg-accent hover:text-foreground"
+                  title="New section"
+                >
+                  + New section
+                </button>
               </div>
             ) : null}
             <GroupHeader
@@ -1131,6 +1321,7 @@ function TriageThreadList({
               action={group.action}
               hint={group.hint}
               dynamic={group.dynamic}
+              menu={sectionMenu(group)}
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="px-2 py-1 text-xs text-muted-foreground">
@@ -1185,6 +1376,27 @@ function TriageThreadList({
           threadId={snoozeTarget}
           open
           onOpenChange={(open) => (open ? undefined : setSnoozeTarget(null))}
+        />
+      )}
+      {sectionDialog === null ? null : (
+        <SectionNameDialog
+          title={sectionDialog.mode === "create" ? "New section" : "Rename section"}
+          initial={sectionDialog.name}
+          onSave={(name) =>
+            sectionDialog.mode === "create"
+              ? sdk.threadSections.create({ name })
+              : sdk.threadSections.update({ id: sectionDialog.id!, name })
+          }
+          onClose={() => setSectionDialog(null)}
+        />
+      )}
+      {confirm === null ? null : (
+        <ConfirmDialog
+          title={confirm.title}
+          body={confirm.body}
+          confirmLabel={confirm.label}
+          onConfirm={confirm.run}
+          onClose={() => setConfirm(null)}
         />
       )}
       {renameTarget === null ? null : (

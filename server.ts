@@ -69,6 +69,8 @@ function loadLocalConfig(bb: BbPluginApi): LocalConfig {
 const stateSchema = z.object({
   projectShortNames: z.record(z.string(), z.string()),
   stripProjectPrefixes: z.array(z.string()),
+  /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
+  sectionOrder: z.array(z.string()),
   /** Per thread: every PR it created (any repo), stack-ordered. */
   threadPrs: z.record(z.string(), z.array(prStatusSchema)),
   /** Running threads: run start and last event, for elapsed time and stuck detection. */
@@ -141,6 +143,10 @@ export const rpcContract = defineRpcContract({
   next_needs_me: {
     input: z.object({ archiveThreadId: z.string().nullable() }),
     output: z.object({ opened: z.string().nullable() }),
+  },
+  section_order_set: {
+    input: z.object({ order: z.array(z.string()).max(200) }),
+    output: z.object({ ok: z.boolean() }),
   },
   focus_report: {
     input: focusReportSchema,
@@ -447,6 +453,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     state_get: async () => ({
+      sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),
       watching: await watchingByThread(),
@@ -535,6 +542,11 @@ export default async function plugin(bb: BbPluginApi) {
       if (next === undefined) return { opened: null };
       await bb.sdk.threads.open({ threadId: next.id, file: null });
       return { opened: next.id };
+    },
+    section_order_set: async ({ order }) => {
+      await bb.storage.kv.set("sectionOrder", order);
+      changed();
+      return { ok: true };
     },
     focus_report: (input) => {
       focus.report(input);
