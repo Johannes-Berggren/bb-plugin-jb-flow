@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
+import { createAwaiting } from "./awaiting";
 import { createFocus, focusReportSchema } from "./focus";
 import { createPrTracker, prStatusSchema } from "./prs";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
@@ -69,6 +70,8 @@ function loadLocalConfig(bb: BbPluginApi): LocalConfig {
 const stateSchema = z.object({
   projectShortNames: z.record(z.string(), z.string()),
   stripProjectPrefixes: z.array(z.string()),
+  /** Idle threads whose last agent message hands the next move to you (thread id → since). */
+  awaiting: z.record(z.string(), z.number()),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Per thread: every PR it created (any repo), stack-ordered. */
@@ -418,6 +421,7 @@ export default async function plugin(bb: BbPluginApi) {
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed);
   const prTracker = createPrTracker(bb, changed);
   const activity = createActivity(bb, changed);
+  const awaiting = createAwaiting(bb, changed);
 
   /** Watch every open PR the thread created; fall back to its branch PR. */
   async function watchThreadCi(
@@ -453,6 +457,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     state_get: async () => ({
+      awaiting: await awaiting.all(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),

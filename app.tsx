@@ -2,8 +2,8 @@
 // header, the stale-thread digest on the homepage, and the area-tag migration
 // in settings. All plugin state comes from server.ts over RPC and refreshes on
 // the "jb-flow-changed" realtime signal.
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   definePluginApp,
   experimental_useSidebarThreadActions as useSidebarThreadActions,
@@ -541,6 +541,7 @@ function ThreadRow({
   const actions = useSidebarThreadActions();
   const sdk = useSdk();
   const split = useSidebarThreadSplit(thread.id);
+  const drag = useContext(DragContext);
   const moveTo = (sectionId: string | null) => {
     void sdk.threads.update({ threadId: thread.id, sectionId });
   };
@@ -605,6 +606,10 @@ function ThreadRow({
         <a
           href={thread.href}
           {...split.splitProps}
+          onPointerDown={(event) => {
+            split.splitProps.onPointerDown?.(event);
+            drag.start(thread, event);
+          }}
           data-jb-flow-row=""
           data-sidebar-thread-shortcut-target=""
           aria-current={active ? "page" : undefined}
@@ -628,7 +633,7 @@ function ThreadRow({
             active && "bg-accent",
           )}
           style={{
-            opacity: active ? 1 : idleDays > 14 ? 0.5 : idleDays > 7 ? 0.7 : 1,
+            opacity: drag.dragging?.threadId === thread.id ? 0.4 : active ? 1 : idleDays > 14 ? 0.5 : idleDays > 7 ? 0.7 : 1,
           }}
         >
           <StatusIcon status={status} />
@@ -968,11 +973,72 @@ function ConfirmDialog({
   );
 }
 
+// --- drag threads between sections ---------------------------------------------------
+// Pointer-based (not HTML5 drag) so bb's own drag-to-split keeps working: a
+// drop inside the sidebar moves the thread; leaving the sidebar cancels ours
+// and bb's split gesture takes over.
+
+const DROP_ATTR = "data-jb-drop-section";
+const ACTIVE_DROP = "__active";
+
+type DragState = { threadId: string; title: string; x: number; y: number; over: string | null };
+const DragContext = createContext<{
+  start: (thread: PluginSidebarThread, event: ReactPointerEvent<HTMLElement>) => void;
+  dragging: DragState | null;
+}>({ start: () => undefined, dragging: null });
+
+function useThreadDrag(onDrop: (threadId: string, sectionId: string | null) => void) {
+  const [dragging, setDragging] = useState<DragState | null>(null);
+  const start = useCallback(
+    (thread: PluginSidebarThread, event: ReactPointerEvent<HTMLElement>) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey) return;
+      const nav = event.currentTarget.closest("nav");
+      const origin = { x: event.clientX, y: event.clientY };
+      let active = false;
+      let over: string | null = null;
+      const move = (moveEvent: PointerEvent) => {
+        if (!active) {
+          if (Math.hypot(moveEvent.clientX - origin.x, moveEvent.clientY - origin.y) < 6) return;
+          active = true;
+        }
+        const bounds = nav?.getBoundingClientRect();
+        if (bounds && (moveEvent.clientX > bounds.right || moveEvent.clientX < bounds.left)) {
+          finish(false); // left the sidebar: bb's drag-to-split owns this gesture
+          return;
+        }
+        const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest(`[${DROP_ATTR}]`);
+        over = target?.getAttribute(DROP_ATTR) ?? null;
+        setDragging({ threadId: thread.id, title: thread.displayTitle, x: moveEvent.clientX, y: moveEvent.clientY, over });
+      };
+      const finish = (drop: boolean) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("keydown", escape);
+        setDragging(null);
+        if (!active) return;
+        // Swallow the click that follows the drag so the row doesn't navigate.
+        window.addEventListener("click", (clickEvent) => clickEvent.stopPropagation(), { capture: true, once: true });
+        if (drop && over !== null) onDrop(thread.id, over === ACTIVE_DROP ? null : over);
+      };
+      const up = () => finish(true);
+      const escape = (keyEvent: globalThis.KeyboardEvent) => {
+        if (keyEvent.key === "Escape") finish(false);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("keydown", escape);
+    },
+    [onDrop],
+  );
+  return { start, dragging };
+}
+
 // --- smart filters (computed sets, not your sections) --------------------------------
 
-type SmartId = "needs" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
+type SmartId = "needs" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
 const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
   { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, failed, or finished and unread" },
+  { id: "yourMove", label: "Your move", glyph: "question", tone: "text-sky-500", hint: "You've read it, but the agent's last message asks you to decide, answer or act" },
   { id: "running", label: "Running", glyph: "spinner", tone: "text-sky-500", hint: "Agents working right now" },
   { id: "prAction", label: "PR action", glyph: "pr", tone: "text-red-500", hint: "An open PR has failing checks, requested changes or conflicts" },
   { id: "readyToMerge", label: "Ready to merge", glyph: "pr", tone: "text-green-500", hint: "An open PR is green and ready" },
@@ -1044,6 +1110,13 @@ function TriageThreadList({
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
   const sdk = useSdk();
   const actions = useSidebarThreadActions();
+  const onDrop = useCallback(
+    (threadId: string, sectionId: string | null) => {
+      void sdk.threads.update({ threadId, sectionId });
+    },
+    [sdk],
+  );
+  const drag = useThreadDrag(onDrop);
 
   const orderedSections = useMemo(() => {
     const order = state?.sectionOrder ?? [];
@@ -1141,6 +1214,7 @@ function TriageThreadList({
       threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
       needs: needsMe,
+      yourMove: (thread) => !busy(thread) && !needsMe(thread) && state?.awaiting[thread.id] !== undefined,
       running: busy,
       prAction: (thread) =>
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
@@ -1152,6 +1226,7 @@ function TriageThreadList({
         !busy(thread) &&
         !needsMe(thread) &&
         state?.watching[thread.id] === undefined &&
+        state?.awaiting[thread.id] === undefined &&
         allSettled(threadPrs(state?.threadPrs[thread.id], null)),
     };
     const smartCounts = Object.fromEntries(
@@ -1242,6 +1317,7 @@ function TriageThreadList({
   }
 
   return (
+    <DragContext.Provider value={drag}>
     <nav
       aria-label="Triage"
       className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
@@ -1298,7 +1374,14 @@ function TriageThreadList({
         const collapsed = group.id.startsWith("smart:") ? false : isCollapsed(group.id);
         const limit = expanded[group.id] ? Infinity : (group.limit ?? Infinity);
         return (
-          <section key={group.id}>
+          <section
+            key={group.id}
+            {...(group.section ? { [DROP_ATTR]: group.section.id ?? ACTIVE_DROP } : {})}
+            className={cn(
+              "rounded-md transition-colors",
+              group.section && drag.dragging && drag.dragging.over === (group.section.id ?? ACTIVE_DROP) && "bg-accent/70 ring-1 ring-ring/40",
+            )}
+          >
             {group.firstUserGroup ? (
               <div className="group/divider mx-2 mt-4 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
                 Your sections
@@ -1413,7 +1496,17 @@ function TriageThreadList({
           onClose={() => setTagTarget(null)}
         />
       )}
+      {drag.dragging ? (
+        <div
+          className="pointer-events-none fixed z-50 max-w-64 truncate rounded-md border border-border bg-popover px-2 py-1 text-xs shadow-md"
+          style={{ left: drag.dragging.x + 12, top: drag.dragging.y + 8 }}
+        >
+          {drag.dragging.title}
+          <span className="ml-1 text-muted-foreground">{drag.dragging.over ? "→ drop to move" : ""}</span>
+        </div>
+      ) : null}
     </nav>
+    </DragContext.Provider>
   );
 }
 

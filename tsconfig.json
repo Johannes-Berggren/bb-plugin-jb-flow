@@ -21,6 +21,7 @@
     "skipLibCheck": false
   },
   "include": [
+    "awaiting.ts",
     "prs.ts",
     "activity.ts",
     "watchers.ts",
