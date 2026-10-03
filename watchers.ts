@@ -190,7 +190,7 @@ export function createWatchers(
       const headline = `${release.title} (#${release.prNumber}), merged ${new Date(release.mergedAt).toLocaleString("en-GB")}`;
       const message =
         failed.length === 0
-          ? `released: ${headline}. Its workflows passed${runs.length ? ` (${runs.length} runs)` : ""}. Continue where you left off.`
+          ? `released: ${headline}. Its workflows passed${runs.length ? ` (${runs.length} runs)` : ""}. First confirm your PRs are in it (merged into ${releaseConfig[release.projectName]?.base ?? "main"} via this release); if they aren't, say you're still waiting for a release and stop. Otherwise continue where you left off.`
           : `The release merged (${headline}), but ${failed.length} workflow run(s) failed: ${failed
               .map((run) => `${run.name} (${run.url})`)
               .join(", ")}. Check whether that affects you before continuing.`;
