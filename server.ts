@@ -119,7 +119,14 @@ export const rpcContract = defineRpcContract({
   },
   thread_preview: {
     input: z.object({ threadId: z.string() }),
-    output: z.object({ lastAssistant: z.string(), lastUser: z.string(), prompts: z.number() }),
+    output: z.object({
+      goal: z.string(),
+      done: z.string(),
+      next: z.string(),
+      blocked: z.string(),
+      latest: z.string(),
+      prompts: z.number(),
+    }),
   },
   thread_stop: { input: z.object({ threadId: z.string() }), output: z.object({ ok: z.boolean() }) },
   thread_watch_ci: {
@@ -475,10 +482,32 @@ export default async function plugin(bb: BbPluginApi) {
         bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),
         bb.sdk.threads.conversationOutline({ threadId }).catch(() => ({ items: [] as Array<{ role: string; preview: string }> })),
       ]);
+      const reply = output.output ?? "";
+      // Markdown → plain text for one-line display.
+      const plain = (text: string) =>
+        text
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+          .replace(/[*_`>#]+/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      // The user's Status template: "**Goal:** …", "**Next:** …", etc.
+      const field = (name: string) => {
+        const match = new RegExp(`\\*\\*${name}:\\*\\*\\s*(.+)`, "i").exec(reply);
+        return match ? plain(match[1]!).slice(0, 300) : "";
+      };
       const userItems = outline.items.filter((item) => item.role === "user");
+      const firstLines = reply
+        .split("\n")
+        .map(plain)
+        .filter((line) => line.length > 0 && !/^(goal|done|next|blocked):/i.test(line))
+        .slice(0, 4)
+        .join(" ");
       return {
-        lastAssistant: (output.output ?? "").trim().slice(0, 4000),
-        lastUser: (userItems.at(-1)?.preview ?? "").trim().slice(0, 600),
+        goal: field("Goal") || plain(userItems[0]?.preview ?? "").slice(0, 300),
+        done: field("Done"),
+        next: field("Next"),
+        blocked: field("Blocked"),
+        latest: firstLines.slice(0, 400),
         prompts: userItems.length,
       };
     },

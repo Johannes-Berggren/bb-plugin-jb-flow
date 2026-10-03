@@ -157,50 +157,62 @@ function ago(timestamp: number, now: number): string {
 
 type HoverPreviewProps = {
   thread: PluginSidebarThread;
+  /** The row's status (icon, colour, label), shown first. */
+  status: { glyph: GlyphName; tone: string; label: string; spin?: boolean };
   projectName: string | null;
   sectionName: string | null;
   tags: readonly string[];
   prs: readonly ThreadPr[];
-  run: RunInfo | null;
   watching: FlowState["watching"][string] | undefined;
   snoozeUntil: number | undefined;
   children: ReactNode;
 } & Omit<ComponentPropsWithoutRef<"a">, "children">;
 
+type Preview = { goal: string; done: string; next: string; blocked: string; latest: string; prompts: number };
+
+function Field({ label, children, tone }: { label: string; children: ReactNode; tone?: string }) {
+  return (
+    <div className="grid grid-cols-[3.25rem_1fr] gap-2 text-xs leading-snug">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className={cn("line-clamp-3", tone)}>{children}</span>
+    </div>
+  );
+}
+
 /**
  * Wraps a row in a hover card. Forwards the ref and any props (event handlers
  * from an outer `asChild` trigger such as the context menu) to the row
  * element, so wrapping never swallows right-click or keyboard handling.
+ *
+ * Order is by importance: status, goal, next/blocked, PRs, then details.
  */
 export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProps>(function ThreadHoverPreview(
-  { thread, projectName, sectionName, tags, prs, run, watching, snoozeUntil, children, ...triggerProps },
+  { thread, status, projectName, sectionName, tags, prs, watching, snoozeUntil, children, ...triggerProps },
   ref,
 ) {
   const rpc = useRpc<typeof rpcContract>();
   const [open, setOpen] = useState(false);
-  const [preview, setPreview] = useState<{ lastAssistant: string; lastUser: string; prompts: number } | null>(null);
-  const now = Date.now();
+  const [preview, setPreview] = useState<Preview | null>(null);
   useEffect(() => {
     if (!open || preview !== null) return;
     rpc.call("thread_preview", { threadId: thread.id }).then(setPreview, () =>
-      setPreview({ lastAssistant: "", lastUser: "", prompts: 0 }),
+      setPreview({ goal: "", done: "", next: "", blocked: "", latest: "", prompts: 0 }),
     );
   }, [open, preview, rpc, thread.id]);
-  // Refresh the text next time the card opens after the thread changed.
   useEffect(() => setPreview(null), [thread.updatedAt]);
 
-  const meta = [
+  const shownPrs = prs.slice(0, 4);
+  const details = [
     projectName,
     sectionName,
     thread.environment?.branchName ? `⎇ ${thread.environment.branchName}` : null,
-    thread.host?.name ?? null,
-    `created ${ago(thread.createdAt, now)}`,
-    `updated ${ago(thread.updatedAt, now)}`,
+    `updated ${duration(Date.now() - thread.updatedAt)} ago`,
     preview && preview.prompts > 0 ? `${preview.prompts} prompts` : null,
+    ...tags.map((tag) => `#${tag}`),
   ].filter(Boolean);
 
   return (
-    <HoverCard.Root open={open} onOpenChange={setOpen} openDelay={650} closeDelay={80}>
+    <HoverCard.Root open={open} onOpenChange={setOpen} openDelay={1000} closeDelay={60}>
       <HoverCard.Trigger asChild {...triggerProps} ref={ref}>
         {children}
       </HoverCard.Trigger>
@@ -208,52 +220,64 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
         <HoverCard.Content
           side="right"
           align="start"
-          sideOffset={12}
+          sideOffset={10}
           collisionPadding={12}
-          className="z-50 w-[36rem] max-w-[calc(100vw-2rem)] space-y-3 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl"
+          className="z-50 w-[26rem] max-w-[calc(100vw-2rem)] space-y-2.5 rounded-xl border border-border bg-popover p-3.5 text-popover-foreground shadow-lg"
         >
-          <div>
-            <div className="text-[15px] font-medium leading-snug">{thread.displayTitle}</div>
-            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-              {meta.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-              {tags.map((tag) => (
-                <span key={tag}>#{tag}</span>
-              ))}
-            </div>
-          </div>
-          {run || watching || snoozeUntil !== undefined || thread.isUnread ? (
-            <div className="flex flex-wrap gap-1.5 text-[11px]">
-              {run ? (
-                <span className={cn("rounded px-1.5 py-0.5", run.stuck ? "bg-amber-500/15 text-amber-600" : "bg-sky-500/10 text-sky-600")}>
-                  {run.stuck ? `no output for ${duration(run.silent)} · running ${duration(run.elapsed)}` : `running ${duration(run.elapsed)}`}
-                </span>
-              ) : null}
-              {watching ? <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">{watching.label}</span> : null}
+          <div className="space-y-1">
+            <div className={cn("flex items-center gap-1.5 text-[11px] font-medium", status.tone)}>
+              <Glyph name={status.glyph} className={cn("size-3.5", status.spin && "animate-spin")} />
+              <span className="truncate">{status.label}</span>
               {snoozeUntil !== undefined ? (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">snoozed until {formatWhen(snoozeUntil)}</span>
+                <span className="ml-auto shrink-0 font-normal text-muted-foreground">snoozed · {formatWhen(snoozeUntil)}</span>
               ) : null}
-              {thread.isUnread ? <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-green-600">unread</span> : null}
             </div>
-          ) : null}
-          {prs.length > 0 ? (
-            <div className="rounded-md border border-border p-2">
-              <PrList prs={prs} />
-            </div>
-          ) : null}
-          {preview?.lastUser ? (
-            <div className="text-xs">
-              <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">You asked</div>
-              <div className="line-clamp-3 whitespace-pre-wrap">{preview.lastUser}</div>
-            </div>
-          ) : null}
-          <div className="text-xs">
-            <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Last reply</div>
-            <div className="max-h-80 overflow-hidden whitespace-pre-wrap leading-relaxed text-muted-foreground [mask-image:linear-gradient(to_bottom,black_85%,transparent)]">
-              {preview === null ? "Loading…" : preview.lastAssistant || "(no reply yet)"}
-            </div>
+            <div className="text-sm font-medium leading-snug">{thread.displayTitle}</div>
           </div>
+
+          {preview === null ? (
+            <div className="h-10 animate-pulse rounded-md bg-muted/60" />
+          ) : (
+            <div className="space-y-1.5">
+              {preview.goal ? <Field label="Goal">{preview.goal}</Field> : null}
+              {preview.blocked ? (
+                <Field label="Blocked" tone="text-amber-600">
+                  {preview.blocked}
+                </Field>
+              ) : null}
+              {preview.next ? <Field label="Next">{preview.next}</Field> : null}
+              {!preview.next && !preview.blocked && preview.latest ? (
+                <Field label="Latest" tone="text-muted-foreground">
+                  {preview.latest}
+                </Field>
+              ) : null}
+            </div>
+          )}
+
+          {watching && !status.label.startsWith(watching.label) ? (
+            <div className="text-[11px] text-muted-foreground">{watching.label}</div>
+          ) : null}
+
+          {shownPrs.length > 0 ? (
+            <div className="space-y-0.5 border-t border-border pt-2">
+              {shownPrs.map((pr) => (
+                <div key={pr.url} className={cn("flex items-center gap-1.5 text-xs", pr.stackedOn !== null && "pl-3")}>
+                  <Glyph name={prGlyph(pr)} className={cn("size-3.5", PR_TONE[pr.attention])} />
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    {prs.some((other) => other.repo !== pr.repo) ? `${pr.repo.split("/")[1]}#` : "#"}
+                    {pr.number}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{pr.title}</span>
+                  <span className={cn("shrink-0 text-[10px]", PR_TONE[pr.attention])}>{attentionLabel(pr.attention)}</span>
+                </div>
+              ))}
+              {prs.length > shownPrs.length ? (
+                <div className="text-[11px] text-muted-foreground">+{prs.length - shownPrs.length} more</div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="truncate text-[10.5px] text-muted-foreground">{details.join(" · ")}</div>
         </HoverCard.Content>
       </HoverCard.Portal>
     </HoverCard.Root>
