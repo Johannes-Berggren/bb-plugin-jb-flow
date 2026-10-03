@@ -31,6 +31,10 @@ const RELEASE_WAIT =
   /waiting for (a |the )?(new )?(release|deploy)|once (it'?s|it is|you'?ve|this is|that'?s|everything is) (been )?(released|deployed|shipped|live)|once (`?main`? is|the release is|it'?s) (deployed|out|live|released)|after (the )?(next )?release|reply \*{0,2}go\*{0,2} once .{0,40}releas/i;
 const CI_TIMEOUT_MS = 3 * 3_600_000;
 const OK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+/** Deploy-preview and housekeeping bots: their comments are not review feedback. */
+const BOT_LOGINS = new Set(["vercel", "github-actions", "dependabot", "linear", "changeset-bot", "codecov", "netlify", "sonarcloud"]);
+const isBot = (login: string | undefined, body: string) =>
+  login === undefined || login.endsWith("[bot]") || BOT_LOGINS.has(login) || /^\[vc\]:/.test(body);
 
 type AutoContinue = { resetsAt: number; queuedMessageId: string | null };
 type ReleaseWaiter = { threadId: string; projectName: string; since: number };
@@ -41,6 +45,8 @@ type CiWatch = {
   pr: number;
   watchFor: "checks" | "reviews" | "both";
   since: number;
+  /** Reviews/comments newer than this are reported; advances after each report. */
+  reviewsSince?: number;
   headSha: string | null;
 };
 
@@ -312,10 +318,12 @@ export function createWatchers(
         }
       }
 
+      let reviewNews = false;
       if (watch.watchFor !== "checks") {
-        const fromOthers = <T extends { author: { login: string } | null }>(item: T) => item.author?.login !== me;
-        const reviews = pr.reviews.filter((review) => Date.parse(review.submittedAt) > watch.since && fromOthers(review));
-        const comments = pr.comments.filter((comment) => Date.parse(comment.createdAt) > watch.since && fromOthers(comment));
+        const cutoff = watch.reviewsSince ?? watch.since;
+        const human = (author: { login: string } | null, body: string) => author?.login !== me && !isBot(author?.login, body);
+        const reviews = pr.reviews.filter((review) => Date.parse(review.submittedAt) > cutoff && human(review.author, review.body));
+        const comments = pr.comments.filter((comment) => Date.parse(comment.createdAt) > cutoff && human(comment.author, comment.body));
         for (const review of reviews) {
           notes.push(`Review from ${review.author?.login ?? "someone"}: ${review.state}${review.body ? ` — ${truncate(review.body, 800)}` : ""}`);
         }
@@ -323,8 +331,10 @@ export function createWatchers(
           notes.push(`Comment from ${comment.author?.login ?? "someone"}: ${truncate(comment.body, 800)}`);
         }
         if (reviews.length + comments.length > 0) {
-          done = true;
-          notes.push(`Inline review comments: \`gh api repos/${watch.repo}/pulls/${watch.pr}/comments\``);
+          reviewNews = true;
+          notes.push(`Full comments: \`gh pr view ${watch.pr} -R ${watch.repo} --comments\`; inline: \`gh api repos/${watch.repo}/pulls/${watch.pr}/comments\``);
+          // Reviews only: done. Both: report now, keep watching the checks.
+          if (watch.watchFor === "reviews") done = true;
         }
       }
 
@@ -333,9 +343,11 @@ export function createWatchers(
         done = true;
       }
 
-      if (done) {
-        await tell(watch.threadId, `[ci watcher] ${notes.join("\n\n")}`).catch((error) => bb.log.warn(`ci notify: ${String(error)}`));
-        delete watches[key];
+      if (done || reviewNews) {
+        const suffix = done ? "" : "\n\n(Still watching the checks; you'll get another message when they finish.)";
+        await tell(watch.threadId, `[ci watcher] ${notes.join("\n\n")}${suffix}`).catch((error) => bb.log.warn(`ci notify: ${String(error)}`));
+        if (done) delete watches[key];
+        else watch.reviewsSince = Date.now();
       }
     }
     await kv.set("ciWatches", watches);
