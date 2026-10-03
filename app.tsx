@@ -453,6 +453,10 @@ type Group = {
   defaultCollapsed?: boolean;
   limit?: number;
   action?: { label: string; run: () => void };
+  hint?: string;
+  dynamic?: { glyph: GlyphName; tone: string };
+  /** First of your own sections: draws the "Your sections" divider above it. */
+  firstUserGroup?: boolean;
 };
 
 // --- row status icon ---------------------------------------------------------------
@@ -836,18 +840,31 @@ function GroupHeader({
   collapsed,
   onToggle,
   action,
+  hint,
+  dynamic,
 }: {
   title: string;
   count: number;
   collapsed: boolean;
   onToggle: () => void;
   action?: { label: string; run: () => void };
+  /** Shown on hover only, e.g. the lane's move key. */
+  hint?: string;
+  /** Computed group (not a section you made): accent styling. */
+  dynamic?: { glyph: GlyphName; tone: string };
 }) {
   return (
     <div className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground">
-      <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1 hover:text-foreground">
-        <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3" />
-        <span className="truncate">{title}</span>
+      <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground">
+        {dynamic ? (
+          <Glyph name={dynamic.glyph} className={cn("size-3.5", dynamic.tone)} />
+        ) : (
+          <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3" />
+        )}
+        <span className={cn("truncate", dynamic && "text-foreground")}>{title}</span>
+        {hint ? (
+          <kbd className="rounded border border-border px-1 text-[10px] font-normal leading-4 opacity-0 group-hover/header:opacity-100">{hint}</kbd>
+        ) : null}
       </button>
       {action ? (
         <button type="button" onClick={action.run} className="rounded px-1 text-[11px] text-foreground/70 opacity-0 hover:bg-accent hover:text-foreground group-hover/header:opacity-100">
@@ -858,6 +875,18 @@ function GroupHeader({
     </div>
   );
 }
+
+// --- smart filters (computed sets, not your sections) --------------------------------
+
+type SmartId = "needs" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
+const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
+  { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, failed, or finished and unread" },
+  { id: "running", label: "Running", glyph: "spinner", tone: "text-sky-500", hint: "Agents working right now" },
+  { id: "prAction", label: "PR action", glyph: "pr", tone: "text-red-500", hint: "An open PR has failing checks, requested changes or conflicts" },
+  { id: "readyToMerge", label: "Ready to merge", glyph: "pr", tone: "text-green-500", hint: "An open PR is green and ready" },
+  { id: "autopilot", label: "Autopilot", glyph: "hourglass", tone: "text-violet-500", hint: "Waiting on CI, a release or a usage-limit reset; you'll be pinged" },
+  { id: "done", label: "Done", glyph: "check", tone: "text-green-500", hint: "Unfiled threads whose PRs are all merged or closed" },
+];
 
 const COLLAPSE_KEY = "jb-flow:collapsed";
 
@@ -918,94 +947,102 @@ function TriageThreadList({
     [tags],
   );
 
-  const groups = useMemo<Group[]>(() => {
+  const [smart, setSmart] = useState<SmartId | null>(null);
+
+  const { groups, smartCounts } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
     const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
     const visible = threads
-      .filter(
-        (thread) =>
-          !thread.isHidden &&
-          !thread.isArchived &&
-          thread.parentThreadId === null,
-      )
-      .filter(
-        (thread) =>
-          tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter),
-      )
+      .filter((thread) => !thread.isHidden && !thread.isArchived && thread.parentThreadId === null)
+      .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter))
       .sort((a, b) => b.updatedAt - a.updatedAt);
+    const snoozed = visible.filter((thread) => thread.sectionId === snoozedSectionId);
+    const awake = visible.filter((thread) => thread.sectionId !== snoozedSectionId);
 
-    const snoozed = visible.filter(
-      (thread) => thread.sectionId === snoozedSectionId,
-    );
-    const awake = visible.filter(
-      (thread) => thread.sectionId !== snoozedSectionId,
-    );
+    const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";
+    const openPrs = (thread: PluginSidebarThread) =>
+      threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
+    const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
+      needs: needsMe,
+      running: busy,
+      prAction: (thread) =>
+        !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
+      readyToMerge: (thread) => !busy(thread) && openPrs(thread).some((pr) => pr.attention === "ready_to_merge"),
+      autopilot: (thread) => state?.watching[thread.id] !== undefined,
+      // Only unfiled threads: anything you put in a section stays there.
+      done: (thread) =>
+        thread.sectionId === null &&
+        !busy(thread) &&
+        !needsMe(thread) &&
+        state?.watching[thread.id] === undefined &&
+        allSettled(threadPrs(state?.threadPrs[thread.id], null)),
+    };
+    const smartCounts = Object.fromEntries(
+      SMART.map((entry) => [entry.id, awake.filter(sets[entry.id]).length]),
+    ) as Record<SmartId, number>;
+
+    // A smart filter replaces the list with that one computed set.
+    if (smart !== null) {
+      const entry = SMART.find((candidate) => candidate.id === smart)!;
+      const members = awake.filter(sets[smart]);
+      return {
+        smartCounts,
+        groups: [
+          {
+            id: `smart:${smart}`,
+            title: entry.label,
+            threads: members,
+            dynamic: { glyph: entry.glyph, tone: entry.tone },
+            action:
+              smart === "done" && members.length > 0
+                ? { label: "Archive all", run: () => void rpc.call("archive", { threadIds: members.map((thread) => thread.id) }) }
+                : undefined,
+          },
+        ] satisfies Group[],
+      };
+    }
+
     const pinned = awake.filter((thread) => thread.isPinned);
-    const attention = awake.filter(
-      (thread) => !thread.isPinned && needsMe(thread),
-    );
-    // All PRs merged/closed and nothing pending: suggest archiving. Threads still
-    // waiting on a release/CI, or deliberately in Priority, stay where they are.
-    const prioritySectionId = lanes.find((lane) => lane.id === "priority")?.sectionId ?? null;
-    const settled = (thread: PluginSidebarThread) =>
-      thread.status !== "active" &&
-      thread.status !== "starting" &&
-      state?.watching[thread.id] === undefined &&
-      (prioritySectionId === null || thread.sectionId !== prioritySectionId) &&
-      allSettled(threadPrs(state?.threadPrs[thread.id], null));
-    const doneThreads = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && settled(thread));
-    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && !settled(thread));
+    const attention = awake.filter((thread) => !thread.isPinned && needsMe(thread));
+    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && !sets.done(thread));
 
     const result: Group[] = [];
-    if (pinned.length > 0)
-      result.push({ id: "pinned", title: "Pinned", threads: pinned });
-    result.push({ id: "needs-me", title: "Needs me", threads: attention });
+    if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
+    result.push({
+      id: "needs-me",
+      title: "Needs me",
+      threads: attention,
+      dynamic: { glyph: "question", tone: "text-amber-500" },
+    });
     for (const lane of lanes) {
       result.push({
         id: `lane:${lane.id}`,
-        title: `${lane.title}  ·  ${lane.key}`,
+        title: lane.title,
+        hint: lane.key,
         threads: rest.filter((thread) => thread.sectionId === lane.sectionId),
         defaultCollapsed: lane.id === "low" || lane.id === "later",
         limit: lane.id === "active" ? 25 : 15,
       });
     }
     for (const section of sections) {
-      if (section.id === snoozedSectionId || laneSectionIds.has(section.id))
-        continue;
-      const inSection = rest.filter(
-        (thread) => thread.sectionId === section.id,
-      );
+      if (section.id === snoozedSectionId || laneSectionIds.has(section.id)) continue;
+      const inSection = rest.filter((thread) => thread.sectionId === section.id);
       if (inSection.length === 0) continue;
-      result.push({
-        id: `section:${section.id}`,
-        title: section.name,
-        threads: inSection,
-        defaultCollapsed: true,
-      });
+      result.push({ id: `section:${section.id}`, title: section.name, threads: inSection, defaultCollapsed: true });
     }
-    if (doneThreads.length > 0) {
-      result.push({
-        id: "merged",
-        title: "✓ PRs merged: ready to archive",
-        threads: doneThreads,
-        action: {
-          label: "Archive all",
-          run: () => void rpc.call("archive", { threadIds: doneThreads.map((thread) => thread.id) }),
-        },
-      });
-    }
+    const firstUser = result.find(
+      (group) => (group.id.startsWith("lane:") || group.id.startsWith("section:")) && group.threads.length > 0,
+    );
+    if (firstUser) firstUser.firstUserGroup = true;
     result.push({
       id: "snoozed",
-      title: "😴 Snoozed",
-      threads: snoozed.sort(
-        (a, b) =>
-          (state?.snoozes[a.id]?.until ?? 0) -
-          (state?.snoozes[b.id]?.until ?? 0),
-      ),
+      title: "Snoozed",
+      threads: snoozed.sort((a, b) => (state?.snoozes[a.id]?.until ?? 0) - (state?.snoozes[b.id]?.until ?? 0)),
       defaultCollapsed: true,
+      dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
-    return result;
-  }, [threads, sections, lanes, state, tags, tagFilter]);
+    return { groups: result, smartCounts };
+  }, [threads, sections, lanes, state, tags, tagFilter, smart, rpc]);
 
   const defaults = useMemo(
     () =>
@@ -1029,17 +1066,41 @@ function TriageThreadList({
       aria-label="Triage"
       className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >
+      <div className="flex flex-wrap items-center gap-1 px-2 pt-2">
+        {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            title={entry.hint}
+            onClick={() => setSmart((current) => (current === entry.id ? null : entry.id))}
+            className={cn(
+              "flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors",
+              smart === entry.id
+                ? "border-foreground/20 bg-accent text-foreground"
+                : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <Glyph name={entry.glyph} className={cn("size-3", entry.tone)} />
+            {entry.label}
+            <span className="tabular-nums opacity-70">{smartCounts[entry.id]}</span>
+          </button>
+        ))}
+        <span
+          className="ml-auto cursor-help px-1 text-[11px] text-muted-foreground/70"
+          title={"Keys on a focused row:\n1–5 move to lane · s snooze · t tag · e archive · u unread · j/k move"}
+        >
+          ?
+        </span>
+      </div>
       {knownTags.length > 0 ? (
-        <div className="flex flex-wrap gap-1 px-2 pt-2">
+        <div className="flex flex-wrap gap-1 px-2 pt-1">
           {knownTags.map((tag) => (
             <button
               key={tag}
               type="button"
-              onClick={() =>
-                setTagFilter((current) => (current === tag ? null : tag))
-              }
+              onClick={() => setTagFilter((current) => (current === tag ? null : tag))}
               className={cn(
-                "rounded-full border px-2 text-[11px] leading-5",
+                "rounded-full border px-2 text-[10px] leading-4",
                 tagFilter === tag
                   ? "border-foreground bg-foreground text-background"
                   : "border-border text-muted-foreground hover:text-foreground",
@@ -1051,21 +1112,29 @@ function TriageThreadList({
         </div>
       ) : null}
       {groups.map((group) => {
-        if (group.threads.length === 0 && group.id !== "needs-me") return null;
-        const collapsed = isCollapsed(group.id);
+        if (group.threads.length === 0 && group.id !== "needs-me" && !group.id.startsWith("smart:")) return null;
+        const collapsed = group.id.startsWith("smart:") ? false : isCollapsed(group.id);
         const limit = expanded[group.id] ? Infinity : (group.limit ?? Infinity);
         return (
           <section key={group.id}>
+            {group.firstUserGroup ? (
+              <div className="mx-2 mt-4 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                Your sections
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            ) : null}
             <GroupHeader
               title={group.title}
               count={group.threads.length}
               collapsed={collapsed}
               onToggle={() => toggle(group.id)}
               action={group.action}
+              hint={group.hint}
+              dynamic={group.dynamic}
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="px-2 py-1 text-xs text-muted-foreground">
-                Inbox zero ✨
+                {group.id === "needs-me" ? "Inbox zero ✨" : "Nothing here."}
               </p>
             ) : (
               <>
@@ -1111,10 +1180,6 @@ function TriageThreadList({
           </section>
         );
       })}
-      <p className="px-2 pt-4 text-[10px] leading-4 text-muted-foreground">
-        Keys on a focused row: 1–5 lane · s snooze · t tag · e archive · u
-        unread · j/k move
-      </p>
       {snoozeTarget === null ? null : (
         <SnoozeDialog
           threadId={snoozeTarget}
