@@ -21,6 +21,8 @@
     "skipLibCheck": false
   },
   "include": [
+    "prs.ts",
+    "activity.ts",
     "watchers.ts",
     "limits.ts",
     "focus.ts",

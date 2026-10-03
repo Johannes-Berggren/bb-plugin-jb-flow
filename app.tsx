@@ -19,6 +19,7 @@ import {
   useSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
 import type {
+  JsonValue,
   PluginSidebarProject,
   PluginSidebarSection,
   PluginSidebarThread,
@@ -26,6 +27,21 @@ import type {
 } from "@get-bb/plugin-sdk/app";
 import type { DigestItem, FlowState, rpcContract } from "./server";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
+import {
+  HeaderStatusStrip,
+  PR_TONE,
+  PullRequestsPanel,
+  ThreadHoverPreview,
+  allSettled,
+  attentionLabel,
+  duration,
+  prGlyph,
+  runInfo,
+  threadPrs,
+  useNow,
+  worstPr,
+} from "./ui-extras";
+import type { RunInfo, ThreadPr } from "./ui-extras";
 import { formatWhen } from "./when";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -373,6 +389,33 @@ function TagDialog({
   );
 }
 
+// --- thread header: status strip + Pull requests panel ------------------------------
+
+function ThreadStatusHeader({ threadId }: { threadId: string }) {
+  const { state } = useFlowState();
+  const { pullRequest } = useSidebarThreadPullRequest(threadId);
+  return <HeaderStatusStrip threadId={threadId} state={state} branchPr={pullRequest} />;
+}
+
+function PullRequestsTab({ threadId, params }: { threadId: string; params: JsonValue | null }) {
+  const { state } = useFlowState();
+  const { pullRequest } = useSidebarThreadPullRequest(threadId);
+  return <PullRequestsPanel threadId={threadId} params={params} state={state} branchPr={pullRequest} />;
+}
+
+/** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
+function CommandHost() {
+  const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
+  useEffect(() => {
+    const onSnooze = (event: Event) => setSnoozeThreadId((event as CustomEvent<string>).detail);
+    window.addEventListener(SNOOZE_EVENT, onSnooze);
+    return () => window.removeEventListener(SNOOZE_EVENT, onSnooze);
+  }, []);
+  return snoozeThreadId === null ? null : (
+    <SnoozeDialog threadId={snoozeThreadId} open onOpenChange={(open) => (open ? undefined : setSnoozeThreadId(null))} />
+  );
+}
+
 // --- thread header action --------------------------------------------------------
 
 function SnoozeHeaderAction({ threadId }: { threadId: string }) {
@@ -409,6 +452,7 @@ type Group = {
   threads: PluginSidebarThread[];
   defaultCollapsed?: boolean;
   limit?: number;
+  action?: { label: string; run: () => void };
 };
 
 // --- row status icon ---------------------------------------------------------------
@@ -416,27 +460,12 @@ type Group = {
 // provider badge. Priority: needs you > error > running > watched > PR > finished.
 
 type RowStatus = { glyph: GlyphName; tone: string; label: string; spin?: boolean };
-type PullRequest = NonNullable<ReturnType<typeof useSidebarThreadPullRequest>["pullRequest"]>;
-
-const PR_TONE: Record<PullRequest["attention"], string> = {
-  blocked: "text-red-500",
-  changes_requested: "text-red-500",
-  checks_failed: "text-red-500",
-  conflicts: "text-red-500",
-  checks_pending: "text-amber-500",
-  review_requested: "text-sky-500",
-  ready_to_merge: "text-green-500",
-  merged: "text-violet-500",
-  draft: "text-muted-foreground",
-  closed: "text-muted-foreground",
-  none: "text-muted-foreground",
-};
-
 function rowStatus(
   thread: PluginSidebarThread,
   busy: boolean,
   watching: FlowState["watching"][string] | undefined,
-  pullRequest: PullRequest | null,
+  prs: readonly ThreadPr[],
+  run: RunInfo | null,
 ): RowStatus {
   if (thread.hasPendingInteraction || thread.indicator === "waiting-for-input") {
     return { glyph: "question", tone: "text-amber-500", label: thread.indicatorLabel ?? "Needs your input" };
@@ -444,14 +473,17 @@ function rowStatus(
   if (thread.status === "error" || thread.indicator === "unread-error") {
     return { glyph: "alert", tone: "text-red-500", label: thread.indicatorLabel ?? "Failed" };
   }
-  if (busy) return { glyph: "spinner", tone: "text-sky-500", label: "Working", spin: true };
+  if (busy && run?.stuck) {
+    return { glyph: "alert", tone: "text-amber-500", label: `Possibly stuck: no output for ${duration(run.silent)}` };
+  }
+  if (busy) return { glyph: "spinner", tone: "text-sky-500", label: run ? `Working for ${duration(run.elapsed)}` : "Working", spin: true };
   if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };
   if (watching?.kind === "release") return { glyph: "rocket", tone: "text-violet-500", label: watching.label };
   if (watching?.kind === "continue") return { glyph: "alarm", tone: "text-amber-500", label: watching.label };
-  if (pullRequest) {
-    const glyph: GlyphName =
-      pullRequest.state === "merged" ? "merged" : pullRequest.state === "closed" ? "prClosed" : pullRequest.state === "draft" ? "prDraft" : "pr";
-    return { glyph, tone: PR_TONE[pullRequest.attention], label: `PR #${pullRequest.number}: ${pullRequest.attention.replace(/_/g, " ")}` };
+  const worst = worstPr(prs);
+  if (worst) {
+    const label = prs.length === 1 ? `PR #${worst.number}: ${attentionLabel(worst.attention)}` : `${prs.length} PRs; worst: #${worst.number} ${attentionLabel(worst.attention)}`;
+    return { glyph: prGlyph(worst), tone: PR_TONE[worst.attention] ?? "text-muted-foreground", label };
   }
   if (thread.isUnread) return { glyph: "check", tone: "text-green-500", label: "Finished, unread" };
   return { glyph: "dot", tone: "text-muted-foreground/40", label: "Idle" };
@@ -472,6 +504,9 @@ function ThreadRow({
   tags,
   snoozeUntil,
   watching,
+  createdPrs,
+  running,
+  now,
   lanes,
   otherSections,
   onNavigate,
@@ -486,6 +521,9 @@ function ThreadRow({
   tags: readonly string[];
   snoozeUntil: number | undefined;
   watching: FlowState["watching"][string] | undefined;
+  createdPrs: FlowState["threadPrs"][string] | undefined;
+  running: FlowState["running"][string] | undefined;
+  now: number;
   lanes: readonly Lane[];
   otherSections: readonly PluginSidebarSection[];
   onNavigate: () => void;
@@ -507,7 +545,12 @@ function ThreadRow({
   const idleDays = (Date.now() - thread.updatedAt) / DAY_MS;
   const busy = thread.status === "active" || thread.status === "starting";
   const { pullRequest } = useSidebarThreadPullRequest(thread.id);
-  const status = rowStatus(thread, busy, watching, pullRequest);
+  const prs = threadPrs(createdPrs, pullRequest);
+  const run = busy ? runInfo(running, now) : null;
+  const status = rowStatus(thread, busy, watching, prs, run);
+  const worst = worstPr(prs);
+  const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
+  const rpc = useRpc<typeof rpcContract>();
 
   const onKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -543,6 +586,14 @@ function ThreadRow({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
+        <ThreadHoverPreview
+          threadId={thread.id}
+          title={thread.displayTitle}
+          prs={prs}
+          run={run}
+          watching={watching}
+          snoozeUntil={snoozeUntil}
+        >
         <a
           href={thread.href}
           {...split.splitProps}
@@ -590,19 +641,24 @@ function ThreadRow({
             </span>
           ))}
           <ProjectChip project={project} />
-          {pullRequest ? (
+          {run ? (
+            <span className={cn("shrink-0 text-[10px] tabular-nums", run.stuck ? "font-medium text-amber-600" : "text-sky-600")}>
+              {run.stuck ? `stuck ${duration(run.silent)}` : duration(run.elapsed)}
+            </span>
+          ) : null}
+          {worst ? (
             <button
               type="button"
               tabIndex={-1}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                window.open(pullRequest.url, "_blank", "noopener");
+                window.open(worst.url, "_blank", "noopener");
               }}
-              title={`#${pullRequest.number} ${pullRequest.title} (${pullRequest.attention.replace(/_/g, " ")}). Click to open on GitHub`}
-              className={cn("shrink-0 text-[10px] tabular-nums hover:underline", PR_TONE[pullRequest.attention])}
+              title={prs.map((pr) => `${pr.repo}#${pr.number} · ${attentionLabel(pr.attention)} · ${pr.title}`).join("\n")}
+              className={cn("shrink-0 text-[10px] tabular-nums hover:underline", PR_TONE[worst.attention])}
             >
-              #{pullRequest.number}
+              {prs.length === 1 ? `#${worst.number}` : `${prs.length} PRs`}
             </button>
           ) : null}
           {snoozeUntil !== undefined ? (
@@ -615,6 +671,7 @@ function ThreadRow({
             </span>
           ) : null}
         </a>
+        </ThreadHoverPreview>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">
         <ContextMenuItem
@@ -634,6 +691,16 @@ function ThreadRow({
         >
           <Icon name="Columns2" className="size-4" /> Open in split view
         </ContextMenuItem>
+        {busy ? (
+          <ContextMenuItem onSelect={() => void rpc.call("thread_stop", { threadId: thread.id })}>
+            <Icon name="Square" className="size-4" /> Stop run{run?.stuck ? ` (silent ${duration(run.silent)})` : ""}
+          </ContextMenuItem>
+        ) : null}
+        {openPrs.length > 0 ? (
+          <ContextMenuItem onSelect={() => void rpc.call("thread_watch_ci", { threadId: thread.id })}>
+            <Glyph name="hourglass" className="size-4" /> Watch CI ({openPrs.length} open PR{openPrs.length === 1 ? "" : "s"})
+          </ContextMenuItem>
+        ) : null}
         <ContextMenuSeparator />
         <ContextMenuItem
           onSelect={() => void actions.setPinned(thread.id, !thread.isPinned)}
@@ -766,26 +833,27 @@ function GroupHeader({
   count,
   collapsed,
   onToggle,
+  action,
 }: {
   title: string;
   count: number;
   collapsed: boolean;
   onToggle: () => void;
+  action?: { label: string; run: () => void };
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={!collapsed}
-      className="flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground hover:text-foreground"
-    >
-      <Icon
-        name={collapsed ? "ChevronRight" : "ChevronDown"}
-        className="size-3"
-      />
-      <span className="truncate">{title}</span>
-      <span className="ml-auto tabular-nums">{count}</span>
-    </button>
+    <div className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground">
+      <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1 hover:text-foreground">
+        <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3" />
+        <span className="truncate">{title}</span>
+      </button>
+      {action ? (
+        <button type="button" onClick={action.run} className="rounded px-1 text-[11px] text-foreground/70 opacity-0 hover:bg-accent hover:text-foreground group-hover/header:opacity-100">
+          {action.label}
+        </button>
+      ) : null}
+      <span className="tabular-nums">{count}</span>
+    </div>
   );
 }
 
@@ -821,6 +889,7 @@ function TriageThreadList({
 }: PluginThreadListProps) {
   const { threads, projects, sections, status } = useSidebarThreads();
   const { rpc, state } = useFlowState();
+  const now = useNow();
   const [renameTarget, setRenameTarget] = useState<PluginSidebarThread | null>(
     null,
   );
@@ -873,7 +942,17 @@ function TriageThreadList({
     const attention = awake.filter(
       (thread) => !thread.isPinned && needsMe(thread),
     );
-    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread));
+    // All PRs merged/closed and nothing pending: suggest archiving. Threads still
+    // waiting on a release/CI, or deliberately in Priority, stay where they are.
+    const prioritySectionId = lanes.find((lane) => lane.id === "priority")?.sectionId ?? null;
+    const settled = (thread: PluginSidebarThread) =>
+      thread.status !== "active" &&
+      thread.status !== "starting" &&
+      state?.watching[thread.id] === undefined &&
+      (prioritySectionId === null || thread.sectionId !== prioritySectionId) &&
+      allSettled(threadPrs(state?.threadPrs[thread.id], null));
+    const doneThreads = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && settled(thread));
+    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && !settled(thread));
 
     const result: Group[] = [];
     if (pinned.length > 0)
@@ -900,6 +979,17 @@ function TriageThreadList({
         title: section.name,
         threads: inSection,
         defaultCollapsed: true,
+      });
+    }
+    if (doneThreads.length > 0) {
+      result.push({
+        id: "merged",
+        title: "✓ PRs merged: ready to archive",
+        threads: doneThreads,
+        action: {
+          label: "Archive all",
+          run: () => void rpc.call("archive", { threadIds: doneThreads.map((thread) => thread.id) }),
+        },
       });
     }
     result.push({
@@ -969,6 +1059,7 @@ function TriageThreadList({
               count={group.threads.length}
               collapsed={collapsed}
               onToggle={() => toggle(group.id)}
+              action={group.action}
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="px-2 py-1 text-xs text-muted-foreground">
@@ -985,6 +1076,9 @@ function TriageThreadList({
                     tags={tags[thread.id] ?? []}
                     snoozeUntil={state?.snoozes[thread.id]?.until}
                     watching={state?.watching[thread.id]}
+                    createdPrs={state?.threadPrs[thread.id]}
+                    running={state?.running[thread.id]}
+                    now={now}
                     lanes={lanes}
                     otherSections={otherSections}
                     onNavigate={onNavigate}
@@ -1324,8 +1418,13 @@ function MigrationSettings() {
 // Tells the server which thread this window has focused, so `bb jb-flow focused`
 // (used by the Stream Deck) can target it. Split layouts report the focused pane.
 
+/** RPC client for command-palette handlers, which run outside React. */
+let commandRpc: ReturnType<typeof useRpc<typeof rpcContract>> | null = null;
+const SNOOZE_EVENT = "jb-flow:snooze";
+
 function FocusReporter() {
   const rpc = useRpc<typeof rpcContract>();
+  commandRpc = rpc;
   const { threadId: routeThreadId } = useBbContext();
   const split = useSidebarSplitLayout();
   const threadId = split?.panes.find((pane) => pane.isFocused)?.threadId ?? routeThreadId;
@@ -1411,6 +1510,75 @@ export default definePluginApp((app) => {
     description:
       "Needs me on top, then lanes, project chips, tags, snooze and keyboard triage.",
     component: TriageThreadList,
+  });
+  app.slots.experimental_threadHeaderAction({
+    id: "status",
+    title: "Thread status",
+    component: ({ threadId }) => <ThreadStatusHeader threadId={threadId} />,
+  });
+  app.slots.threadPanelAction({
+    id: "prs",
+    title: "Pull requests",
+    icon: "GitPullRequest",
+    component: PullRequestsTab,
+    run: ({ openPanel }) => {
+      openPanel({ title: "Pull requests" });
+    },
+  });
+  app.slots.experimental_appOverlay({ id: "command-host", component: CommandHost });
+  const inThread = ({ threadId }: { threadId: string | null }) => threadId !== null;
+  app.commands.register({
+    id: "snooze",
+    title: "Snooze this thread…",
+    defaultShortcut: { key: "s", alt: true, shift: true },
+    isAvailable: inThread,
+    run: ({ threadId }) => {
+      if (threadId) window.dispatchEvent(new CustomEvent(SNOOZE_EVENT, { detail: threadId }));
+    },
+  });
+  app.commands.register({
+    id: "next-needs-me",
+    title: "Open the next thread that needs me",
+    defaultShortcut: { key: "n", alt: true, shift: true },
+    run: async () => {
+      await commandRpc?.call("next_needs_me", { archiveThreadId: null });
+    },
+  });
+  app.commands.register({
+    id: "archive-next",
+    title: "Archive this thread and open the next that needs me",
+    defaultShortcut: { key: "e", alt: true, shift: true },
+    isAvailable: inThread,
+    run: async ({ threadId }) => {
+      await commandRpc?.call("next_needs_me", { archiveThreadId: threadId });
+    },
+  });
+  app.commands.register({
+    id: "dev-servers",
+    title: "Start dev servers",
+    defaultShortcut: { key: "d", alt: true, shift: true },
+    isAvailable: inThread,
+    run: ({ openPanel }) => {
+      openPanel({ actionId: "dev-servers", title: "Scripts", params: { autorun: "dev" } });
+    },
+  });
+  app.commands.register({
+    id: "pull-requests",
+    title: "Show this thread's pull requests",
+    defaultShortcut: { key: "p", alt: true, shift: true },
+    isAvailable: inThread,
+    run: ({ openPanel }) => {
+      openPanel({ actionId: "prs", title: "Pull requests" });
+    },
+  });
+  app.commands.register({
+    id: "watch-ci",
+    title: "Watch CI and reviews for this thread's PRs",
+    defaultShortcut: { key: "w", alt: true, shift: true },
+    isAvailable: inThread,
+    run: async ({ threadId }) => {
+      if (threadId) await commandRpc?.call("thread_watch_ci", { threadId });
+    },
   });
   app.slots.experimental_threadHeaderAction({
     id: "snooze",

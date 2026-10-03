@@ -7,7 +7,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { createActivity } from "./activity";
 import { createFocus, focusReportSchema } from "./focus";
+import { createPrTracker, prStatusSchema } from "./prs";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
 import { createWatchers, releaseWatchSchema } from "./watchers";
@@ -67,6 +69,10 @@ function loadLocalConfig(bb: BbPluginApi): LocalConfig {
 const stateSchema = z.object({
   projectShortNames: z.record(z.string(), z.string()),
   stripProjectPrefixes: z.array(z.string()),
+  /** Per thread: every PR it created (any repo), stack-ordered. */
+  threadPrs: z.record(z.string(), z.array(prStatusSchema)),
+  /** Running threads: run start and last event, for elapsed time and stuck detection. */
+  running: z.record(z.string(), z.object({ since: z.number(), lastEventAt: z.number() })),
   /** Per thread: what the plugin is waiting on for it (CI, release, auto-continue). */
   watching: z.record(z.string(), z.object({ kind: z.enum(["ci", "release", "continue"]), label: z.string() })),
   snoozedSectionId: z.string(),
@@ -110,6 +116,24 @@ export const rpcContract = defineRpcContract({
   archive: {
     input: z.object({ threadIds: z.array(z.string()).min(1).max(500) }),
     output: z.object({ archived: z.number(), failed: z.array(z.string()) }),
+  },
+  thread_preview: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ lastAssistant: z.string() }),
+  },
+  thread_stop: { input: z.object({ threadId: z.string() }), output: z.object({ ok: z.boolean() }) },
+  thread_watch_ci: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ watching: z.array(z.string()) }),
+  },
+  pr_link: {
+    input: z.object({ threadId: z.string(), url: z.string(), remove: z.boolean() }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  pr_refresh: { input: z.null(), output: z.object({ ok: z.boolean() }) },
+  next_needs_me: {
+    input: z.object({ archiveThreadId: z.string().nullable() }),
+    output: z.object({ opened: z.string().nullable() }),
   },
   focus_report: {
     input: focusReportSchema,
@@ -379,6 +403,22 @@ export default async function plugin(bb: BbPluginApi) {
 
   const focus = createFocus(bb);
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed);
+  const prTracker = createPrTracker(bb, changed);
+  const activity = createActivity(bb, changed);
+
+  /** Watch every open PR the thread created; fall back to its branch PR. */
+  async function watchThreadCi(
+    threadId: string,
+    options: { pr?: number; repo?: string; watchFor?: "checks" | "reviews" | "both" },
+  ) {
+    if (options.pr === undefined) {
+      const open = await prTracker.openPrsFor(threadId);
+      if (open.length > 0) {
+        return Promise.all(open.map((ref) => watchers.watchCi(threadId, { ...options, pr: ref.number, repo: ref.repo })));
+      }
+    }
+    return [await watchers.watchCi(threadId, options)];
+  }
   async function watchingByThread() {
     const status = await watchers.status();
     const watching: FlowState["watching"] = {};
@@ -400,6 +440,8 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     state_get: async () => ({
+      threadPrs: await prTracker.byThread(),
+      running: activity.snapshot(),
       watching: await watchingByThread(),
       projectShortNames: localConfig.projectShortNames,
       stripProjectPrefixes: localConfig.stripProjectPrefixes,
@@ -428,6 +470,34 @@ export default async function plugin(bb: BbPluginApi) {
       return { kept: threadIds.length };
     },
     archive: ({ threadIds }) => archive(threadIds),
+    thread_preview: async ({ threadId }) => {
+      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+      return { lastAssistant: (output.output ?? "").trim().slice(0, 1500) };
+    },
+    thread_stop: async ({ threadId }) => {
+      await bb.sdk.threads.stop({ threadId });
+      return { ok: true };
+    },
+    thread_watch_ci: async ({ threadId }) => ({
+      watching: (await watchThreadCi(threadId, { watchFor: "both" })).map((watch) => `${watch.repo}#${watch.pr}`),
+    }),
+    pr_link: async ({ threadId, url, remove }) => {
+      const match = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(url);
+      if (!match) throw new Error("Paste a GitHub PR URL, e.g. https://github.com/owner/repo/pull/123");
+      await prTracker.link(threadId, { repo: match[1]!, number: Number(match[2]) }, remove);
+      return { ok: true };
+    },
+    pr_refresh: async () => {
+      await prTracker.refresh();
+      return { ok: true };
+    },
+    next_needs_me: async ({ archiveThreadId }) => {
+      if (archiveThreadId !== null) await bb.sdk.threads.archive({ threadId: archiveThreadId });
+      const next = (await focus.needsMe()).find((thread) => thread.id !== archiveThreadId);
+      if (next === undefined) return { opened: null };
+      await bb.sdk.threads.open({ threadId: next.id, file: null });
+      return { opened: next.id };
+    },
     focus_report: (input) => {
       focus.report(input);
       return { ok: true };
@@ -505,13 +575,13 @@ export default async function plugin(bb: BbPluginApi) {
     instructions:
       "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result. For a review loop use for: \"both\".",
     parameters: z.object({
-      pr: z.number().int().positive().optional().describe("PR number; defaults to the PR for this thread's branch"),
+      pr: z.number().int().positive().optional().describe("PR number; defaults to every open PR this thread created (all repos), else this branch's PR"),
       for: z.enum(["checks", "reviews", "both"]).optional().describe("What to wait for (default both)"),
     }),
     async execute({ pr, for: watchFor }, ctx) {
       try {
-        const watch = await watchers.watchCi(ctx.threadId, { pr, watchFor });
-        return `Watching ${watch.repo}#${watch.pr} for ${watch.watchFor}. End your turn now; a message will arrive when there's news.`;
+        const watches = await watchThreadCi(ctx.threadId, { pr, watchFor });
+        return `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}. End your turn now; a message will arrive when there's news.`;
       } catch (error) {
         return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
       }
@@ -535,6 +605,8 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb jb-flow next                                      Open the next thread that needs you",
     "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]",
     "  bb jb-flow watches [--json]                          Auto-continues, release waiters, CI watches",
+    "  bb jb-flow prs [--self|<thread-id>] [--json]         PRs a thread created (all repos, stack order)",
+    "  bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]",
     "  bb jb-flow release-wait [--self|<thread-id>]         Wake this thread on the next release",
     "  bb jb-flow check-now                                 Run the release and CI checks immediately",
     "  bb jb-flow repo [--self|<thread-id>]                 List repo commands and runs",
@@ -567,6 +639,8 @@ export default async function plugin(bb: BbPluginApi) {
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
       { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
+      { name: "prs", summary: "List the PRs a thread created, across repos, in stack order", usage: "bb jb-flow prs [--self|<thread-id>] [--json]" },
+      { name: "pr-link", summary: "Link (or --remove) a PR to a thread", usage: "bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]" },
       { name: "watches", summary: "List auto-continues, release waiters and CI watches", usage: "bb jb-flow watches [--json]" },
       { name: "release-wait", summary: "Wake a thread on the next release", usage: "bb jb-flow release-wait [--self|<thread-id>]" },
       { name: "check-now", summary: "Run the release and CI checks immediately", usage: "bb jb-flow check-now" },
@@ -638,12 +712,37 @@ export default async function plugin(bb: BbPluginApi) {
             const threadId = resolveThread(positional[0] ?? "--self");
             if (threadId === undefined) break;
             const watchFor = forFlag === -1 ? undefined : z.enum(["checks", "reviews", "both"]).parse(args[forFlag + 1]);
-            const watch = await watchers.watchCi(threadId, {
+            const watches = await watchThreadCi(threadId, {
               pr: prFlag === -1 ? undefined : Number(args[prFlag + 1]),
               watchFor,
               repo: repoFlag === -1 ? undefined : args[repoFlag + 1],
             });
-            return { exitCode: 0, stdout: `Watching ${watch.repo}#${watch.pr} for ${watch.watchFor}; ${threadId} will be messaged.` };
+            return {
+              exitCode: 0,
+              stdout: `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}; ${threadId} will be messaged.`,
+            };
+          }
+          case "prs": {
+            const threadId = resolveThread(args[0] ?? "--self");
+            if (threadId === undefined) break;
+            await prTracker.scan(threadId);
+            await prTracker.refresh();
+            const prs = (await prTracker.byThread())[threadId] ?? [];
+            if (json) return { exitCode: 0, stdout: JSON.stringify(prs) };
+            const lines = prs.map(
+              (pr) => `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number}  ${pr.attention.padEnd(17)} ${pr.title}`,
+            );
+            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PRs linked." };
+          }
+          case "pr-link": {
+            const remove = args.includes("--remove");
+            const rest = args.filter((arg) => arg !== "--remove");
+            const url = rest[0];
+            const threadId = resolveThread(rest[1] ?? "--self");
+            const match = url ? /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(url) : null;
+            if (!match || threadId === undefined) break;
+            await prTracker.link(threadId, { repo: match[1]!, number: Number(match[2]) }, remove);
+            return { exitCode: 0, stdout: `${remove ? "Unlinked" : "Linked"} ${match[1]}#${match[2]}.` };
           }
           case "watches": {
             const result = await watchers.status();
