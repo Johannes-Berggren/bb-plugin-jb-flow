@@ -6,13 +6,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import {
   definePluginApp,
-  experimental_ProviderIcon as ProviderIcon,
   experimental_useSidebarThreadActions as useSidebarThreadActions,
   experimental_useSidebarThreads as useSidebarThreads,
   ThreadTitle,
   useRealtime,
   useRpc,
   useSdk,
+  experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
   useBbContext,
   useSidebarSplitLayout,
@@ -48,6 +48,8 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { Glyph } from "@/components/ui/glyph";
+import type { GlyphName } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -392,10 +394,7 @@ function SnoozeHeaderAction({ threadId }: { threadId: string }) {
         aria-label={label}
         onClick={() => setOpen(true)}
       >
-        <Icon
-          name={snoozed ? "AlarmClockCheck" : "AlarmClock"}
-          className="size-4"
-        />
+        <Glyph name="alarm" className={cn("size-4", snoozed && "text-amber-500")} />
       </Button>
       <SnoozeDialog threadId={threadId} open={open} onOpenChange={setOpen} />
     </>
@@ -412,12 +411,67 @@ type Group = {
   limit?: number;
 };
 
+// --- row status icon ---------------------------------------------------------------
+// One glyph that answers "what is this thread doing / waiting on?", replacing the
+// provider badge. Priority: needs you > error > running > watched > PR > finished.
+
+type RowStatus = { glyph: GlyphName; tone: string; label: string; spin?: boolean };
+type PullRequest = NonNullable<ReturnType<typeof useSidebarThreadPullRequest>["pullRequest"]>;
+
+const PR_TONE: Record<PullRequest["attention"], string> = {
+  blocked: "text-red-500",
+  changes_requested: "text-red-500",
+  checks_failed: "text-red-500",
+  conflicts: "text-red-500",
+  checks_pending: "text-amber-500",
+  review_requested: "text-sky-500",
+  ready_to_merge: "text-green-500",
+  merged: "text-violet-500",
+  draft: "text-muted-foreground",
+  closed: "text-muted-foreground",
+  none: "text-muted-foreground",
+};
+
+function rowStatus(
+  thread: PluginSidebarThread,
+  busy: boolean,
+  watching: FlowState["watching"][string] | undefined,
+  pullRequest: PullRequest | null,
+): RowStatus {
+  if (thread.hasPendingInteraction || thread.indicator === "waiting-for-input") {
+    return { glyph: "question", tone: "text-amber-500", label: thread.indicatorLabel ?? "Needs your input" };
+  }
+  if (thread.status === "error" || thread.indicator === "unread-error") {
+    return { glyph: "alert", tone: "text-red-500", label: thread.indicatorLabel ?? "Failed" };
+  }
+  if (busy) return { glyph: "spinner", tone: "text-sky-500", label: "Working", spin: true };
+  if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };
+  if (watching?.kind === "release") return { glyph: "rocket", tone: "text-violet-500", label: watching.label };
+  if (watching?.kind === "continue") return { glyph: "alarm", tone: "text-amber-500", label: watching.label };
+  if (pullRequest) {
+    const glyph: GlyphName =
+      pullRequest.state === "merged" ? "merged" : pullRequest.state === "closed" ? "prClosed" : pullRequest.state === "draft" ? "prDraft" : "pr";
+    return { glyph, tone: PR_TONE[pullRequest.attention], label: `PR #${pullRequest.number}: ${pullRequest.attention.replace(/_/g, " ")}` };
+  }
+  if (thread.isUnread) return { glyph: "check", tone: "text-green-500", label: "Finished, unread" };
+  return { glyph: "dot", tone: "text-muted-foreground/40", label: "Idle" };
+}
+
+function StatusIcon({ status }: { status: RowStatus }) {
+  return (
+    <span title={status.label} aria-label={status.label} className="flex size-4 shrink-0 items-center justify-center">
+      <Glyph name={status.glyph} className={cn("size-3.5", status.tone, status.spin && "animate-spin")} />
+    </span>
+  );
+}
+
 function ThreadRow({
   thread,
   project,
   active,
   tags,
   snoozeUntil,
+  watching,
   lanes,
   otherSections,
   onNavigate,
@@ -431,6 +485,7 @@ function ThreadRow({
   active: boolean;
   tags: readonly string[];
   snoozeUntil: number | undefined;
+  watching: FlowState["watching"][string] | undefined;
   lanes: readonly Lane[];
   otherSections: readonly PluginSidebarSection[];
   onNavigate: () => void;
@@ -451,6 +506,8 @@ function ThreadRow({
   const shortcut = useSidebarThreadShortcut(thread.id);
   const idleDays = (Date.now() - thread.updatedAt) / DAY_MS;
   const busy = thread.status === "active" || thread.status === "starting";
+  const { pullRequest } = useSidebarThreadPullRequest(thread.id);
+  const status = rowStatus(thread, busy, watching, pullRequest);
 
   const onKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -515,15 +572,7 @@ function ThreadRow({
             opacity: active ? 1 : idleDays > 14 ? 0.5 : idleDays > 7 ? 0.7 : 1,
           }}
         >
-          <span className="relative flex size-4 shrink-0 items-center justify-center">
-            <ProviderIcon
-              providerKind="agent"
-              provider={{ id: thread.providerId }}
-            />
-            {busy ? (
-              <span className="absolute -right-0.5 -top-0.5 size-1.5 animate-pulse rounded-full bg-blue-500" />
-            ) : null}
-          </span>
+          <StatusIcon status={status} />
           <span
             className={cn(
               "min-w-0 flex-1 truncate",
@@ -541,26 +590,25 @@ function ThreadRow({
             </span>
           ))}
           <ProjectChip project={project} />
+          {pullRequest ? (
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                window.open(pullRequest.url, "_blank", "noopener");
+              }}
+              title={`#${pullRequest.number} ${pullRequest.title} (${pullRequest.attention.replace(/_/g, " ")}). Click to open on GitHub`}
+              className={cn("shrink-0 text-[10px] tabular-nums hover:underline", PR_TONE[pullRequest.attention])}
+            >
+              #{pullRequest.number}
+            </button>
+          ) : null}
           {snoozeUntil !== undefined ? (
             <span className="shrink-0 text-[10px] text-muted-foreground">
               {formatWhen(snoozeUntil)}
             </span>
-          ) : thread.indicator === "waiting-for-input" ||
-            thread.hasPendingInteraction ? (
-            <span
-              className="size-2 shrink-0 rounded-full bg-amber-500"
-              aria-label={thread.indicatorLabel ?? "Needs input"}
-            />
-          ) : thread.indicator === "unread-error" ? (
-            <span
-              className="size-2 shrink-0 rounded-full bg-red-500"
-              aria-label={thread.indicatorLabel ?? "Error"}
-            />
-          ) : thread.isUnread ? (
-            <span
-              className="size-2 shrink-0 rounded-full bg-foreground/60"
-              aria-label="Unread"
-            />
           ) : shortcut ? (
             <span className="shrink-0 text-[10px] text-muted-foreground">
               {shortcut.label}
@@ -604,12 +652,12 @@ function ThreadRow({
           <ContextMenuShortcut>U</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={onRename}>
-          <Icon name="Pencil" className="size-4" /> Rename…
+          <Glyph name="pencil" className="size-4" /> Rename…
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub>
           <ContextMenuSubTrigger>
-            <Icon name="FolderInput" className="size-4" /> Move to
+            <Glyph name="folderMove" className="size-4" /> Move to
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="w-52">
             {lanes.map((lane) => (
@@ -636,16 +684,16 @@ function ThreadRow({
         </ContextMenuSub>
         {snoozeUntil !== undefined ? (
           <ContextMenuItem onSelect={onUnsnooze}>
-            <Icon name="AlarmClockOff" className="size-4" /> Wake now
+            <Glyph name="alarm" className="size-4" /> Wake now
           </ContextMenuItem>
         ) : null}
         <ContextMenuItem onSelect={onSnooze}>
-          <Icon name="AlarmClock" className="size-4" />{" "}
+          <Glyph name="alarm" className="size-4" />{" "}
           {snoozeUntil !== undefined ? "Change snooze…" : "Snooze…"}
           <ContextMenuShortcut>S</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onSelect={onTag}>
-          <Icon name="Tag" className="size-4" /> Tags…
+          <Glyph name="tag" className="size-4" /> Tags…
           <ContextMenuShortcut>T</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuSeparator />
@@ -936,6 +984,7 @@ function TriageThreadList({
                     active={thread.id === activeThreadId}
                     tags={tags[thread.id] ?? []}
                     snoozeUntil={state?.snoozes[thread.id]?.until}
+                    watching={state?.watching[thread.id]}
                     lanes={lanes}
                     otherSections={otherSections}
                     onNavigate={onNavigate}
@@ -1089,7 +1138,7 @@ function DigestSection() {
             disabled={pending}
             onClick={() => load(true)}
           >
-            <Icon name="RefreshCw" className="size-3.5" /> Refresh
+            <Icon name="RotateCcw" className="size-3.5" /> Refresh
           </Button>
           <Button
             variant="outline"
@@ -1371,7 +1420,7 @@ export default definePluginApp((app) => {
   app.slots.threadPanelAction({
     id: "dev-servers",
     title: "Start dev servers",
-    icon: "Rocket",
+    icon: "Play",
     component: RepoCommandsPanel,
     run: ({ openPanel }) => {
       openPanel({ title: "Scripts", params: { autorun: "dev" } });
@@ -1380,7 +1429,7 @@ export default definePluginApp((app) => {
   app.slots.threadPanelAction({
     id: "repo-commands",
     title: "Scripts",
-    icon: "SquareTerminal",
+    icon: "ListView",
     component: RepoCommandsPanel,
     run: ({ openPanel }) => {
       openPanel({ title: "Scripts" });

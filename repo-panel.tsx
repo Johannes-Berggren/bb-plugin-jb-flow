@@ -7,6 +7,7 @@ import type { JsonValue } from "@get-bb/plugin-sdk/app";
 import type { DevRun, RepoCommand, RepoScript } from "./repo-commands";
 import type { rpcContract } from "./server";
 import { Button } from "@/components/ui/button";
+import { Glyph } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
@@ -90,7 +91,7 @@ function CommandRow({
           onClick={onRun}
           aria-label={`Run ${row.label}`}
         >
-          <Icon name={pending ? "LoaderCircle" : "Play"} className={cn("size-3.5", pending && "animate-spin")} />
+          {pending ? <Glyph name="spinner" className="size-3.5 animate-spin" /> : <Icon name="Play" className="size-3.5" />}
         </Button>
       )}
     </li>

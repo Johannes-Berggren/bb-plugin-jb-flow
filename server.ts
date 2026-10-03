@@ -67,6 +67,8 @@ function loadLocalConfig(bb: BbPluginApi): LocalConfig {
 const stateSchema = z.object({
   projectShortNames: z.record(z.string(), z.string()),
   stripProjectPrefixes: z.array(z.string()),
+  /** Per thread: what the plugin is waiting on for it (CI, release, auto-continue). */
+  watching: z.record(z.string(), z.object({ kind: z.enum(["ci", "release", "continue"]), label: z.string() })),
   snoozedSectionId: z.string(),
   snoozes: z.record(z.string(), snoozeSchema),
   tags: z.record(z.string(), z.array(z.string())),
@@ -377,12 +379,28 @@ export default async function plugin(bb: BbPluginApi) {
 
   const focus = createFocus(bb);
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed);
+  async function watchingByThread() {
+    const status = await watchers.status();
+    const watching: FlowState["watching"] = {};
+    for (const [threadId, waiter] of Object.entries(status.releaseWaiters)) {
+      watching[threadId] = { kind: "release", label: `Waiting for the next ${waiter.projectName} release` };
+    }
+    for (const [threadId, entry] of Object.entries(status.autoContinue)) {
+      watching[threadId] = { kind: "continue", label: `Limit hit; auto-continues ${formatWhen(entry.resetsAt + 90_000)}` };
+    }
+    for (const watch of Object.values(status.ciWatches)) {
+      watching[watch.threadId] = { kind: "ci", label: `Watching ${watch.repo.split("/")[1]}#${watch.pr} (${watch.watchFor})` };
+    }
+    return watching;
+  }
+
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
 
   // --- RPC ------------------------------------------------------------------
 
   bb.rpc.register(rpcContract, {
     state_get: async () => ({
+      watching: await watchingByThread(),
       projectShortNames: localConfig.projectShortNames,
       stripProjectPrefixes: localConfig.stripProjectPrefixes,
       snoozedSectionId: await ensureSnoozedSection(),

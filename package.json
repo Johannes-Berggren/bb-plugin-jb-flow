@@ -10,7 +10,7 @@
     "name": "JB Flow",
     "description": "Snooze threads until a date, a daily stale-thread digest, and a Triage sidebar with lanes, tags and keyboard triage.",
     "branding": {
-      "icon": "AlarmClock"
+      "icon": "TimeSchedule"
     },
     "server": "./server.ts",
     "app": "./app.tsx"
