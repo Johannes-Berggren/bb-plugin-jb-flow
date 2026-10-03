@@ -50,6 +50,29 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 - Plans awaiting approval open expanded and can use up to 75% of the window height instead of 288px.
 - This is a content script, so it depends on bb's plan-banner markup.
 
+### Multi-PR threads (stacked and cross-repo)
+- Every PR a thread opens with `gh pr create` is linked automatically, in any repo. You can also link PRs manually.
+- One batched GitHub GraphQL query every 3 minutes keeps their state current: checks, review, conflicts, draft or merged.
+- PRs whose base branch is another PR's head are shown as a stack. Trunk branches like `dev` and `main` are ignored for this.
+- Rows show the PR that most needs attention plus a count. A **Pull requests** side-panel tab lists the stack, lets you link or unlink PRs, and starts a CI watch for all of them.
+- Threads whose PRs are all merged or closed go into a **ready to archive** group, with **Archive all**. Threads waiting on a release or CI, or in Priority, are left out.
+
+### Thread status at a glance
+- **Row icon:** needs input / failed / running / stuck / watched / PR state.
+- **Running threads:** show elapsed time. After 15 minutes without output they're flagged "stuck", and you can stop them from the row menu or the header chip.
+- **Hover preview:** hovering a row shows the last reply, the PR stack, what's being watched, and the run time.
+- **Thread header strip:** shows run time or stuck, the watch, and the PR summary. Clicking the PR summary opens the PR panel.
+- **Command palette:**
+
+  | Shortcut | Command |
+  |---|---|
+  | Alt+Shift+S | Snooze this thread |
+  | Alt+Shift+N | Open the next thread that needs me |
+  | Alt+Shift+E | Archive and open the next one |
+  | Alt+Shift+D | Start dev servers |
+  | Alt+Shift+P | Show pull requests |
+  | Alt+Shift+W | Watch CI |
+
 ### Watchers (no polling)
 - **Auto-continue after usage limits:** when Claude Code stops with "You've hit your session limit · resets 10pm", "continue" is scheduled for 90 seconds after the reset.
   - If you resume the thread yourself first, the scheduled message is cancelled.
@@ -105,6 +128,8 @@ bb jb-flow snoozed [--json]
 bb jb-flow digest [--refresh] [--json]
 bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]
 bb jb-flow release-wait [--self|<thread-id>]
+bb jb-flow prs [--self|<thread-id>] [--json]
+bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]
 bb jb-flow watches [--json]
 bb jb-flow check-now
 bb jb-flow focused [--json]

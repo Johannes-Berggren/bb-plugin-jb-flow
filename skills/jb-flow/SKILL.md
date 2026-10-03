@@ -77,3 +77,11 @@ Never poll GitHub in loops. That means no `gh pr checks --watch`, no `gh run wat
 - **Usage limits:** if a session or weekly limit stops you, "continue" is scheduled automatically for just after the reset.
 
 `bb jb-flow watches` lists everything currently being watched.
+
+## Threads with several PRs (stacked or across repos)
+
+Every PR a thread opens with `gh pr create` is linked to it automatically, in any repo. Stacks are detected from base and head branches.
+
+- `bb jb-flow prs --self [--json]`: the thread's PRs, in stack order, with each one's state (checks, review, conflicts, merged).
+- `bb jb-flow pr-link <url> --self [--remove]`: link or unlink a PR that was opened another way, for example through a GitHub MCP tool or by someone else.
+- `wait_for_ci` with no `pr` watches every open PR this thread created. The thread is woken once for each PR that has news.
