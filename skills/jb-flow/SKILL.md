@@ -62,3 +62,18 @@ its own ports, so parallel worktrees don't clash.
 When the user asks you to start the dev servers, use `repo-run dev --self`.
 Don't start `pnpm dev` in your own shell: that leaves the user without the
 terminal and browser tabs.
+
+## Waiting on CI, reviews and releases (don't poll)
+
+Never poll GitHub in loops. That means no `gh pr checks --watch`, no `gh run watch`, no `until gh …; sleep`, and no repeated `gh pr view`. Polling burns tokens and session limits.
+
+- **CI and reviews:** after pushing or opening a PR, call the `wait_for_ci` tool and end your turn. The CLI equivalent is `bb jb-flow wait-ci --self [--pr <n>] [--for checks|reviews|both]`. You get a message when:
+  - the checks finish (failed logs included),
+  - a review or comment arrives, or
+  - the PR merges or closes.
+- **Releases:** when you're blocked on a release, say so plainly ("waiting for release") and end your turn.
+  - In projects with `releaseWatch` configured, the thread is woken with "released: …" once a release PR merges and its workflows pass.
+  - To register explicitly: `bb jb-flow release-wait --self`.
+- **Usage limits:** if a session or weekly limit stops you, "continue" is scheduled automatically for just after the reset.
+
+`bb jb-flow watches` lists everything currently being watched.

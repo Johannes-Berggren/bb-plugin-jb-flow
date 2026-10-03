@@ -21,6 +21,9 @@
     "skipLibCheck": false
   },
   "include": [
+    "watchers.ts",
+    "limits.ts",
+    "focus.ts",
     "repo-commands.ts",
     "repo-panel.tsx",
     "when.ts",

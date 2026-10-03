@@ -50,6 +50,18 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 - Plans awaiting approval open expanded and can use up to 75% of the window height instead of 288px.
 - This is a content script, so it depends on bb's plan-banner markup.
 
+### Watchers (no polling)
+- **Auto-continue after usage limits:** when Claude Code stops with "You've hit your session limit · resets 10pm", "continue" is scheduled for 90 seconds after the reset.
+  - If you resume the thread yourself first, the scheduled message is cancelled.
+  - Spend limits are left alone, since they need a human to raise them.
+- **Release watcher:** threads that go idle "waiting for release" are woken with a "released: …" message.
+  - This happens once a PR matching `titlePattern` merges into `base` and its workflow runs finish.
+  - If the release workflow fails, the message names the failed runs instead.
+  - Configure it per project in `local.config.json` → `releaseWatch`.
+- **CI and review watcher:** agents call the `wait_for_ci` tool (or `bb jb-flow wait-ci`) and end their turn, instead of polling `gh`.
+  - The plugin polls once every 2 minutes for all watches.
+  - It messages the thread when checks finish (with the failed log), when reviews or comments arrive, or when the PR merges.
+
 ### Focus tracking (for Stream Deck and scripts)
 - Every BB window reports which thread is focused, including the focused pane in a split view.
 - External controllers can then act on the focused thread without simulating keystrokes:
@@ -80,6 +92,7 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 - `repoCommands`: pinned side-panel commands, keyed by bb project name. A command has `id`, `label`, and `slots[]`. Each slot has a `command`, a `url` (or `null`), and the `ports` it binds.
 - `projectShortNames`: the label shown on a project's sidebar chip.
 - `stripProjectPrefixes`: prefixes removed from project names on chips.
+- `releaseWatch`: per project, `{ "base": "main", "titlePattern": "^Release\\b", "repo"?: "owner/name" }`.
 
 Pinned commands can also be edited per project under **Settings → JB Flow → Repo commands**. Those edits override the file. Reload the plugin after editing the file.
 
@@ -90,6 +103,10 @@ bb jb-flow snooze <thread-id|--self> <when> [--note <text>]
 bb jb-flow unsnooze <thread-id|--self>
 bb jb-flow snoozed [--json]
 bb jb-flow digest [--refresh] [--json]
+bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]
+bb jb-flow release-wait [--self|<thread-id>]
+bb jb-flow watches [--json]
+bb jb-flow check-now
 bb jb-flow focused [--json]
 bb jb-flow tell <text…> [--thread <id>]
 bb jb-flow stop [<thread-id>|--focused]

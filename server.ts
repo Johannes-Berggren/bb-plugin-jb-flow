@@ -10,6 +10,7 @@ import { z } from "zod";
 import { createFocus, focusReportSchema } from "./focus";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
+import { createWatchers, releaseWatchSchema } from "./watchers";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
 const CHANGED = "jb-flow-changed";
@@ -39,6 +40,8 @@ const localConfigSchema = z.object({
   repoCommands: z.record(z.string(), z.array(repoCommandSchema)).default({}),
   projectShortNames: z.record(z.string(), z.string()).default({}),
   stripProjectPrefixes: z.array(z.string()).default([]),
+  /** Projects (by BB name) whose release-blocked threads are woken on release. */
+  releaseWatch: z.record(z.string(), releaseWatchSchema).default({}),
 });
 type LocalConfig = z.infer<typeof localConfigSchema>;
 
@@ -373,6 +376,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   const focus = createFocus(bb);
+  const watchers = createWatchers(bb, localConfig.releaseWatch, changed);
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
 
   // --- RPC ------------------------------------------------------------------
@@ -476,7 +480,26 @@ export default async function plugin(bb: BbPluginApi) {
       }
     },
   });
-  bb.agents.configure(() => ({ tools: ["snooze_thread"], skills: [] }));
+  bb.agents.registerTool({
+    name: "wait_for_ci",
+    description:
+      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread. End your turn after calling it.",
+    instructions:
+      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result. For a review loop use for: \"both\".",
+    parameters: z.object({
+      pr: z.number().int().positive().optional().describe("PR number; defaults to the PR for this thread's branch"),
+      for: z.enum(["checks", "reviews", "both"]).optional().describe("What to wait for (default both)"),
+    }),
+    async execute({ pr, for: watchFor }, ctx) {
+      try {
+        const watch = await watchers.watchCi(ctx.threadId, { pr, watchFor });
+        return `Watching ${watch.repo}#${watch.pr} for ${watch.watchFor}. End your turn now; a message will arrive when there's news.`;
+      } catch (error) {
+        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+      }
+    },
+  });
+  bb.agents.configure(() => ({ tools: ["snooze_thread", "wait_for_ci"], skills: [] }));
 
   // --- CLI ------------------------------------------------------------------
 
@@ -492,6 +515,10 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb jb-flow tell <text…> [--thread <id>]              Send a message (default: focused thread)",
     "  bb jb-flow needs-me [--json]                         Threads waiting on you",
     "  bb jb-flow next                                      Open the next thread that needs you",
+    "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]",
+    "  bb jb-flow watches [--json]                          Auto-continues, release waiters, CI watches",
+    "  bb jb-flow release-wait [--self|<thread-id>]         Wake this thread on the next release",
+    "  bb jb-flow check-now                                 Run the release and CI checks immediately",
     "  bb jb-flow repo [--self|<thread-id>]                 List repo commands and runs",
     "  bb jb-flow repo-run <command-id> [--self|<thread-id>]",
     "  bb jb-flow repo-stop <command-id> [--self|<thread-id>]",
@@ -521,6 +548,10 @@ export default async function plugin(bb: BbPluginApi) {
       { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
+      { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
+      { name: "watches", summary: "List auto-continues, release waiters and CI watches", usage: "bb jb-flow watches [--json]" },
+      { name: "release-wait", summary: "Wake a thread on the next release", usage: "bb jb-flow release-wait [--self|<thread-id>]" },
+      { name: "check-now", summary: "Run the release and CI checks immediately", usage: "bb jb-flow check-now" },
       { name: "repo", summary: "List repo commands and runs for a thread", usage: "bb jb-flow repo [--self|<thread-id>]" },
       { name: "repo-run", summary: "Run a repo command in the thread's terminal", usage: "bb jb-flow repo-run <command-id> [--self|<thread-id>]" },
       { name: "repo-stop", summary: "Stop a running repo command", usage: "bb jb-flow repo-stop <command-id> [--self|<thread-id>]" },
@@ -576,6 +607,47 @@ export default async function plugin(bb: BbPluginApi) {
             );
             return { exitCode: 0, stdout: lines.length === 0 ? "Nothing snoozed." : lines.join("\n") };
           }
+          case "wait-ci": {
+            const prFlag = args.indexOf("--pr");
+            const forFlag = args.indexOf("--for");
+            const repoFlag = args.indexOf("--repo");
+            const positional = args.filter((arg, index) => {
+              if (prFlag !== -1 && (index === prFlag || index === prFlag + 1)) return false;
+              if (forFlag !== -1 && (index === forFlag || index === forFlag + 1)) return false;
+              if (repoFlag !== -1 && (index === repoFlag || index === repoFlag + 1)) return false;
+              return true;
+            });
+            const threadId = resolveThread(positional[0] ?? "--self");
+            if (threadId === undefined) break;
+            const watchFor = forFlag === -1 ? undefined : z.enum(["checks", "reviews", "both"]).parse(args[forFlag + 1]);
+            const watch = await watchers.watchCi(threadId, {
+              pr: prFlag === -1 ? undefined : Number(args[prFlag + 1]),
+              watchFor,
+              repo: repoFlag === -1 ? undefined : args[repoFlag + 1],
+            });
+            return { exitCode: 0, stdout: `Watching ${watch.repo}#${watch.pr} for ${watch.watchFor}; ${threadId} will be messaged.` };
+          }
+          case "watches": {
+            const result = await watchers.status();
+            if (json) return { exitCode: 0, stdout: JSON.stringify(result) };
+            const lines = [
+              ...Object.entries(result.autoContinue).map(([id, entry]) => `continue    ${id}  at ${formatWhen(entry.resetsAt + 90_000)}`),
+              ...Object.values(result.releaseWaiters).map((waiter) => `release     ${waiter.threadId}  (${waiter.projectName})`),
+              ...Object.entries(result.pendingReleases).map(([key, release]) => `deploying   ${key}  ${release.title}`),
+              ...Object.values(result.ciWatches).map((watch) => `ci          ${watch.threadId}  ${watch.repo}#${watch.pr} (${watch.watchFor})`),
+            ];
+            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "Nothing watched." };
+          }
+          case "release-wait": {
+            const threadId = resolveThread(args[0] ?? "--self");
+            if (threadId === undefined) break;
+            await watchers.registerReleaseWaiter(await bb.sdk.threads.get({ threadId }));
+            return { exitCode: 0, stdout: `${threadId} will be woken on the next release (if its project has releaseWatch configured).` };
+          }
+          case "check-now":
+            await watchers.checkReleases();
+            await watchers.checkCi();
+            return { exitCode: 0, stdout: "Checked releases and CI watches." };
           case "focused": {
             const threadId = focus.focusedThreadId();
             if (threadId === null) return { exitCode: 1, stderr: "No focused thread." };
