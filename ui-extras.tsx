@@ -1,11 +1,11 @@
 // UI built on the plugin's thread state: PR stacks (any repo), running/stuck
 // detection, the hover preview, the thread-header status strip, the Pull
 // requests panel, and command-palette commands.
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { forwardRef, useEffect, useState } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import * as HoverCard from "@radix-ui/react-hover-card";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import type { JsonValue } from "@get-bb/plugin-sdk/app";
+import type { JsonValue, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState, rpcContract } from "./server";
 import { formatWhen } from "./when";
@@ -151,66 +151,114 @@ export function PrList({ prs, compact = false }: { prs: readonly ThreadPr[]; com
 
 // --- hover preview -----------------------------------------------------------------
 
-export function ThreadHoverPreview({
-  threadId,
-  title,
-  prs,
-  run,
-  watching,
-  snoozeUntil,
-  children,
-}: {
-  threadId: string;
-  title: string;
+function ago(timestamp: number, now: number): string {
+  return `${duration(now - timestamp)} ago`;
+}
+
+type HoverPreviewProps = {
+  thread: PluginSidebarThread;
+  projectName: string | null;
+  sectionName: string | null;
+  tags: readonly string[];
   prs: readonly ThreadPr[];
   run: RunInfo | null;
   watching: FlowState["watching"][string] | undefined;
   snoozeUntil: number | undefined;
   children: ReactNode;
-}) {
+} & Omit<ComponentPropsWithoutRef<"a">, "children">;
+
+/**
+ * Wraps a row in a hover card. Forwards the ref and any props (event handlers
+ * from an outer `asChild` trigger such as the context menu) to the row
+ * element, so wrapping never swallows right-click or keyboard handling.
+ */
+export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProps>(function ThreadHoverPreview(
+  { thread, projectName, sectionName, tags, prs, run, watching, snoozeUntil, children, ...triggerProps },
+  ref,
+) {
   const rpc = useRpc<typeof rpcContract>();
   const [open, setOpen] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ lastAssistant: string; lastUser: string; prompts: number } | null>(null);
+  const now = Date.now();
   useEffect(() => {
     if (!open || preview !== null) return;
-    rpc.call("thread_preview", { threadId }).then(
-      (result) => setPreview(result.lastAssistant || "(no reply yet)"),
-      () => setPreview(""),
+    rpc.call("thread_preview", { threadId: thread.id }).then(setPreview, () =>
+      setPreview({ lastAssistant: "", lastUser: "", prompts: 0 }),
     );
-  }, [open, preview, rpc, threadId]);
+  }, [open, preview, rpc, thread.id]);
+  // Refresh the text next time the card opens after the thread changed.
+  useEffect(() => setPreview(null), [thread.updatedAt]);
+
+  const meta = [
+    projectName,
+    sectionName,
+    thread.environment?.branchName ? `⎇ ${thread.environment.branchName}` : null,
+    thread.host?.name ?? null,
+    `created ${ago(thread.createdAt, now)}`,
+    `updated ${ago(thread.updatedAt, now)}`,
+    preview && preview.prompts > 0 ? `${preview.prompts} prompts` : null,
+  ].filter(Boolean);
 
   return (
     <HoverCard.Root open={open} onOpenChange={setOpen} openDelay={650} closeDelay={80}>
-      <HoverCard.Trigger asChild>{children}</HoverCard.Trigger>
+      <HoverCard.Trigger asChild {...triggerProps} ref={ref}>
+        {children}
+      </HoverCard.Trigger>
       <HoverCard.Portal>
         <HoverCard.Content
           side="right"
           align="start"
           sideOffset={12}
           collisionPadding={12}
-          className="z-50 w-96 space-y-2.5 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+          className="z-50 w-[36rem] max-w-[calc(100vw-2rem)] space-y-3 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl"
         >
-          <div className="text-sm font-medium leading-snug">{title}</div>
-          <div className="flex flex-wrap gap-1.5 text-[11px]">
-            {run ? (
-              <span className={cn("rounded px-1.5 py-0.5", run.stuck ? "bg-amber-500/15 text-amber-600" : "bg-sky-500/10 text-sky-600")}>
-                {run.stuck ? `silent ${duration(run.silent)} · running ${duration(run.elapsed)}` : `running ${duration(run.elapsed)}`}
-              </span>
-            ) : null}
-            {watching ? <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">{watching.label}</span> : null}
-            {snoozeUntil !== undefined ? (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">snoozed until {formatWhen(snoozeUntil)}</span>
-            ) : null}
+          <div>
+            <div className="text-[15px] font-medium leading-snug">{thread.displayTitle}</div>
+            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+              {meta.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+              {tags.map((tag) => (
+                <span key={tag}>#{tag}</span>
+              ))}
+            </div>
           </div>
-          {prs.length > 0 ? <PrList prs={prs} compact /> : null}
-          <div className="max-h-48 overflow-hidden whitespace-pre-wrap border-t border-border pt-2 text-xs leading-relaxed text-muted-foreground">
-            {preview === null ? "Loading last reply…" : preview || "(couldn't load the last reply)"}
+          {run || watching || snoozeUntil !== undefined || thread.isUnread ? (
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              {run ? (
+                <span className={cn("rounded px-1.5 py-0.5", run.stuck ? "bg-amber-500/15 text-amber-600" : "bg-sky-500/10 text-sky-600")}>
+                  {run.stuck ? `no output for ${duration(run.silent)} · running ${duration(run.elapsed)}` : `running ${duration(run.elapsed)}`}
+                </span>
+              ) : null}
+              {watching ? <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">{watching.label}</span> : null}
+              {snoozeUntil !== undefined ? (
+                <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">snoozed until {formatWhen(snoozeUntil)}</span>
+              ) : null}
+              {thread.isUnread ? <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-green-600">unread</span> : null}
+            </div>
+          ) : null}
+          {prs.length > 0 ? (
+            <div className="rounded-md border border-border p-2">
+              <PrList prs={prs} />
+            </div>
+          ) : null}
+          {preview?.lastUser ? (
+            <div className="text-xs">
+              <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">You asked</div>
+              <div className="line-clamp-3 whitespace-pre-wrap">{preview.lastUser}</div>
+            </div>
+          ) : null}
+          <div className="text-xs">
+            <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Last reply</div>
+            <div className="max-h-80 overflow-hidden whitespace-pre-wrap leading-relaxed text-muted-foreground [mask-image:linear-gradient(to_bottom,black_85%,transparent)]">
+              {preview === null ? "Loading…" : preview.lastAssistant || "(no reply yet)"}
+            </div>
           </div>
         </HoverCard.Content>
       </HoverCard.Portal>
     </HoverCard.Root>
   );
-}
+});
 
 // --- thread header status strip -----------------------------------------------------
 

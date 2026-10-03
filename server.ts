@@ -119,7 +119,7 @@ export const rpcContract = defineRpcContract({
   },
   thread_preview: {
     input: z.object({ threadId: z.string() }),
-    output: z.object({ lastAssistant: z.string() }),
+    output: z.object({ lastAssistant: z.string(), lastUser: z.string(), prompts: z.number() }),
   },
   thread_stop: { input: z.object({ threadId: z.string() }), output: z.object({ ok: z.boolean() }) },
   thread_watch_ci: {
@@ -471,8 +471,16 @@ export default async function plugin(bb: BbPluginApi) {
     },
     archive: ({ threadIds }) => archive(threadIds),
     thread_preview: async ({ threadId }) => {
-      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      return { lastAssistant: (output.output ?? "").trim().slice(0, 1500) };
+      const [output, outline] = await Promise.all([
+        bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),
+        bb.sdk.threads.conversationOutline({ threadId }).catch(() => ({ items: [] as Array<{ role: string; preview: string }> })),
+      ]);
+      const userItems = outline.items.filter((item) => item.role === "user");
+      return {
+        lastAssistant: (output.output ?? "").trim().slice(0, 4000),
+        lastUser: (userItems.at(-1)?.preview ?? "").trim().slice(0, 600),
+        prompts: userItems.length,
+      };
     },
     thread_stop: async ({ threadId }) => {
       await bb.sdk.threads.stop({ threadId });

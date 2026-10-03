@@ -587,8 +587,10 @@ function ThreadRow({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <ThreadHoverPreview
-          threadId={thread.id}
-          title={thread.displayTitle}
+          thread={thread}
+          projectName={project?.name ?? null}
+          sectionName={[...lanes.map((lane) => ({ id: lane.sectionId, name: lane.title })), ...otherSections].find((section) => section.id === thread.sectionId)?.name ?? null}
+          tags={tags}
           prs={prs}
           run={run}
           watching={watching}
