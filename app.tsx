@@ -862,6 +862,7 @@ function GroupHeader({
   hint,
   dynamic,
   menu,
+  onDragStart,
 }: {
   title: string;
   count: number;
@@ -874,9 +875,11 @@ function GroupHeader({
   dynamic?: { glyph: GlyphName; tone: string };
   /** Right-click menu items for this group. */
   menu?: ReactNode;
+  /** Makes the header draggable to reorder sections. */
+  onDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const header = (
-    <div className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground">
+    <div onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground">
       <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground">
         {dynamic ? (
           <Glyph name={dynamic.glyph} className={cn("size-3.5", dynamic.tone)} />
@@ -1045,6 +1048,75 @@ function useThreadDrag(onDrop: (threadId: string, sectionId: string | null) => v
   return { start, dragging };
 }
 
+// --- reorder sections by dragging their header ---------------------------------------
+
+const SECTION_ATTR = "data-jb-section-key";
+/** Order key for a section; the unsectioned Active lane has no id. */
+const sectionKey = (id: string | null) => id ?? ACTIVE_DROP;
+
+/** Saved order first; sections it doesn't know yet go right after their default predecessor. */
+function mergeOrder(saved: readonly string[], defaults: readonly string[]): string[] {
+  const result = saved.filter((key, index) => defaults.includes(key) && saved.indexOf(key) === index);
+  defaults.forEach((key, index) => {
+    if (result.includes(key)) return;
+    const previous = defaults.slice(0, index).reverse().find((candidate) => result.includes(candidate));
+    result.splice(previous === undefined ? 0 : result.indexOf(previous) + 1, 0, key);
+  });
+  return result;
+}
+
+type SectionDragState = { key: string; over: string | null; after: boolean };
+
+function useSectionDrag(onMove: (key: string, target: string, after: boolean) => void) {
+  const [dragging, setDragging] = useState<SectionDragState | null>(null);
+  const start = useCallback(
+    (key: string, event: ReactPointerEvent<HTMLElement>) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey) return;
+      const origin = { x: event.clientX, y: event.clientY };
+      let active = false;
+      let over: string | null = null;
+      let after = false;
+      const move = (moveEvent: PointerEvent) => {
+        if (!active) {
+          if (Math.hypot(moveEvent.clientX - origin.x, moveEvent.clientY - origin.y) < 6) return;
+          active = true;
+          document.body.style.userSelect = "none";
+        }
+        const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest(`[${SECTION_ATTR}]`);
+        const targetKey = target?.getAttribute(SECTION_ATTR) ?? null;
+        if (target && targetKey !== null && targetKey !== key) {
+          const bounds = target.getBoundingClientRect();
+          over = targetKey;
+          after = moveEvent.clientY > bounds.top + bounds.height / 2;
+        } else {
+          over = null;
+        }
+        setDragging({ key, over, after });
+      };
+      const finish = (drop: boolean) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("keydown", escape);
+        setDragging(null);
+        if (!active) return;
+        document.body.style.userSelect = "";
+        // Swallow the click that follows the drag so the header doesn't toggle.
+        window.addEventListener("click", (clickEvent) => clickEvent.stopPropagation(), { capture: true, once: true });
+        if (drop && over !== null) onMove(key, over, after);
+      };
+      const up = () => finish(true);
+      const escape = (keyEvent: globalThis.KeyboardEvent) => {
+        if (keyEvent.key === "Escape") finish(false);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("keydown", escape);
+    },
+    [onMove],
+  );
+  return { start, dragging };
+}
+
 // --- smart filters (computed sets, not your sections) --------------------------------
 
 type SmartId = "needs" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
@@ -1130,32 +1202,43 @@ function TriageThreadList({
   );
   const drag = useThreadDrag(onDrop);
 
-  const orderedSections = useMemo(() => {
-    const order = state?.sectionOrder ?? [];
-    const rank = (id: string) => {
-      const index = order.indexOf(id);
-      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-    };
-    return otherSections
-      .map((section, index) => ({ section, index }))
-      .sort((a, b) => rank(a.section.id) - rank(b.section.id) || a.index - b.index)
-      .map(({ section }) => section);
-  }, [otherSections, state?.sectionOrder]);
+  // Lanes and your own sections share one order, so any section can sit anywhere.
+  const sectionKeys = useMemo(
+    () =>
+      mergeOrder(state?.sectionOrder ?? [], [
+        ...lanes.map((lane) => sectionKey(lane.sectionId)),
+        ...otherSections.map((section) => section.id),
+      ]),
+    [lanes, otherSections, state?.sectionOrder],
+  );
 
-  const moveSection = (id: string, delta: -1 | 1) => {
-    const ids = orderedSections.map((section) => section.id);
-    const from = ids.indexOf(id);
+  const saveOrder = (keys: string[]) => void rpc.call("section_order_set", { order: keys });
+  const moveSection = (key: string, delta: -1 | 1) => {
+    const keys = [...sectionKeys];
+    const from = keys.indexOf(key);
     const to = from + delta;
-    if (from === -1 || to < 0 || to >= ids.length) return;
-    [ids[from], ids[to]] = [ids[to]!, ids[from]!];
-    void rpc.call("section_order_set", { order: ids });
+    if (from === -1 || to < 0 || to >= keys.length) return;
+    [keys[from], keys[to]] = [keys[to]!, keys[from]!];
+    saveOrder(keys);
   };
+  const sectionDrag = useSectionDrag(
+    useCallback(
+      (key: string, target: string, after: boolean) => {
+        const keys = sectionKeys.filter((candidate) => candidate !== key);
+        const index = keys.indexOf(target);
+        if (index === -1) return;
+        keys.splice(after ? index + 1 : index, 0, key);
+        saveOrder(keys);
+      },
+      [sectionKeys, rpc],
+    ),
+  );
 
   const sectionMenu = (group: Group) => {
     const section = group.section;
     if (!section) return undefined;
     const ids = group.threads.map((thread) => thread.id);
-    const index = section.id === null ? -1 : orderedSections.findIndex((candidate) => candidate.id === section.id);
+    const index = sectionKeys.indexOf(sectionKey(section.id));
     return (
       <>
         <ContextMenuItem onSelect={() => actions.openNewThread({ ...(section.id ? { sectionId: section.id } : {}), focusPrompt: true })}>
@@ -1164,20 +1247,18 @@ function TriageThreadList({
         <ContextMenuItem disabled={ids.length === 0} onSelect={() => ids.forEach((id) => void actions.setRead(id, true))}>
           <Icon name="MailOpen" className="size-4" /> Mark all as read
         </ContextMenuItem>
+        <ContextMenuSeparator />
         {!section.isLane && section.id !== null ? (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => setSectionDialog({ mode: "rename", id: section.id!, name: section.name })}>
-              <Glyph name="pencil" className="size-4" /> Rename…
-            </ContextMenuItem>
-            <ContextMenuItem disabled={index <= 0} onSelect={() => moveSection(section.id!, -1)}>
-              <Icon name="ArrowUp" className="size-4" /> Move up
-            </ContextMenuItem>
-            <ContextMenuItem disabled={index === -1 || index >= orderedSections.length - 1} onSelect={() => moveSection(section.id!, 1)}>
-              <Icon name="ArrowDown" className="size-4" /> Move down
-            </ContextMenuItem>
-          </>
+          <ContextMenuItem onSelect={() => setSectionDialog({ mode: "rename", id: section.id!, name: section.name })}>
+            <Glyph name="pencil" className="size-4" /> Rename…
+          </ContextMenuItem>
         ) : null}
+        <ContextMenuItem disabled={index <= 0} onSelect={() => moveSection(sectionKey(section.id), -1)}>
+          <Icon name="ArrowUp" className="size-4" /> Move up
+        </ContextMenuItem>
+        <ContextMenuItem disabled={index === -1 || index >= sectionKeys.length - 1} onSelect={() => moveSection(sectionKey(section.id), 1)}>
+          <Icon name="ArrowDown" className="size-4" /> Move down
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
           disabled={ids.length === 0}
@@ -1278,23 +1359,26 @@ function TriageThreadList({
       threads: attention,
       dynamic: { glyph: "question", tone: "text-amber-500" },
     });
-    for (const lane of lanes) {
-      result.push({
-        id: `lane:${lane.id}`,
-        title: lane.title,
-        hint: lane.key,
-        threads: rest.filter((thread) => thread.sectionId === lane.sectionId),
-        defaultCollapsed: lane.id === "low" || lane.id === "later",
-        limit: lane.id === "active" ? 25 : 15,
-        section: { id: lane.sectionId, name: lane.title, isLane: true },
-      });
-    }
-    for (const section of orderedSections) {
-      const inSection = rest.filter((thread) => thread.sectionId === section.id);
+    for (const key of sectionKeys) {
+      const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
+      if (lane) {
+        result.push({
+          id: `lane:${lane.id}`,
+          title: lane.title,
+          hint: lane.key,
+          threads: rest.filter((thread) => thread.sectionId === lane.sectionId),
+          defaultCollapsed: lane.id === "low" || lane.id === "later",
+          limit: lane.id === "active" ? 25 : 15,
+          section: { id: lane.sectionId, name: lane.title, isLane: true },
+        });
+        continue;
+      }
+      const section = otherSections.find((candidate) => candidate.id === key);
+      if (!section) continue;
       result.push({
         id: `section:${section.id}`,
         title: section.name,
-        threads: inSection,
+        threads: rest.filter((thread) => thread.sectionId === section.id),
         defaultCollapsed: true,
         section: { id: section.id, name: section.name, isLane: false },
       });
@@ -1309,7 +1393,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts };
-  }, [threads, sections, lanes, state, tags, tagFilter, smart, rpc, orderedSections]);
+  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys]);
 
   const defaults = useMemo(
     () =>
@@ -1388,12 +1472,22 @@ function TriageThreadList({
         return (
           <section
             key={group.id}
-            {...(group.section ? { [DROP_ATTR]: group.section.id ?? ACTIVE_DROP } : {})}
+            {...(group.section ? { [DROP_ATTR]: sectionKey(group.section.id), [SECTION_ATTR]: sectionKey(group.section.id) } : {})}
             className={cn(
-              "rounded-md transition-colors",
-              group.section && drag.dragging && drag.dragging.over === (group.section.id ?? ACTIVE_DROP) && "bg-accent/70 ring-1 ring-ring/40",
+              "relative rounded-md transition-colors",
+              group.section && drag.dragging && drag.dragging.over === sectionKey(group.section.id) && "bg-accent/70 ring-1 ring-ring/40",
+              group.section && sectionDrag.dragging?.key === sectionKey(group.section.id) && "opacity-40",
             )}
           >
+            {group.section && sectionDrag.dragging?.over === sectionKey(group.section.id) ? (
+              <div
+                aria-hidden="true"
+                className={cn(
+                  "pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-primary",
+                  sectionDrag.dragging.after ? "-bottom-px" : "top-0",
+                )}
+              />
+            ) : null}
             {group.firstUserGroup ? (
               <div className="group/divider mx-2 mt-4 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
                 Your sections
@@ -1417,6 +1511,7 @@ function TriageThreadList({
               hint={group.hint}
               dynamic={group.dynamic}
               menu={sectionMenu(group)}
+              {...(group.section && !smart ? { onDragStart: (event: ReactPointerEvent<HTMLElement>) => sectionDrag.start(sectionKey(group.section!.id), event) } : {})}
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="px-2 py-1 text-xs text-muted-foreground">

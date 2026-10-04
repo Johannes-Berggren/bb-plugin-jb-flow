@@ -26,7 +26,8 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
   - move to a section, snooze, tags
   - copy link or ID
   - archive, delete
-- Drag a row into the main area to open it in a split.
+- Drag a row into the main area to open it in a split, or onto another section to move it there.
+- Drag a section header to reorder sections, or use Move up / Move down in its right-click menu. Lanes (Priority, Active, …) and your own sections share one order.
 - **Tags** allow several per thread. A settings button converts "area" sections (e.g. Commercial) into tags.
 
 ### Snooze
