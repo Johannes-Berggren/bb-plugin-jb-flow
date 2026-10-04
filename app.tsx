@@ -640,7 +640,7 @@ function ThreadRow({
           }}
           onKeyDown={onKeyDown}
           className={cn(
-            "group flex h-8 items-center gap-2 rounded-md px-2 text-sm outline-none",
+            "group flex h-8 items-center gap-2 rounded-md pl-6 pr-2 text-sm outline-none",
             "hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
             active && "bg-accent",
           )}
@@ -879,7 +879,7 @@ function GroupHeader({
   onDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const header = (
-    <div onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground">
+    <div onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
       <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground">
         {dynamic ? (
           <Glyph name={dynamic.glyph} className={cn("size-3.5", dynamic.tone)} />
@@ -1489,7 +1489,7 @@ function TriageThreadList({
               />
             ) : null}
             {group.firstUserGroup ? (
-              <div className="group/divider mx-2 mt-4 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              <div className="group/divider mx-2 mt-6 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
                 Your sections
                 <span className="h-px flex-1 bg-border" />
                 <button
@@ -1514,7 +1514,7 @@ function TriageThreadList({
               {...(group.section && !smart ? { onDragStart: (event: ReactPointerEvent<HTMLElement>) => sectionDrag.start(sectionKey(group.section!.id), event) } : {})}
             />
             {collapsed ? null : group.threads.length === 0 ? (
-              <p className="px-2 py-1 text-xs text-muted-foreground">
+              <p className="py-1 pl-6 pr-2 text-xs text-muted-foreground">
                 {group.id === "needs-me" ? "Inbox zero ✨" : "Nothing here."}
               </p>
             ) : (
@@ -1545,7 +1545,7 @@ function TriageThreadList({
                 {group.threads.length > limit ? (
                   <button
                     type="button"
-                    className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                    className="py-1 pl-6 pr-2 text-xs text-muted-foreground hover:text-foreground"
                     onClick={() =>
                       setExpanded((current) => ({
                         ...current,
