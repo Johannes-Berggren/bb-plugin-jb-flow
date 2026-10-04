@@ -428,6 +428,13 @@ export default async function plugin(bb: BbPluginApi) {
     threadId: string,
     options: { pr?: number; repo?: string; watchFor?: "checks" | "reviews" | "both" },
   ) {
+    // A bare PR number: use the repo of this thread's own PR with that number.
+    if (options.pr !== undefined && options.repo === undefined) {
+      const own = ((await prTracker.byThread())[threadId] ?? []).filter((pr) => pr.number === options.pr);
+      const repos = [...new Set(own.map((pr) => pr.repo))];
+      if (repos.length > 1) throw new Error(`#${options.pr} exists in ${repos.join(" and ")}. Pass repo.`);
+      if (repos.length === 1) options = { ...options, repo: repos[0] };
+    }
     if (options.pr === undefined) {
       const open = await prTracker.openPrsFor(threadId);
       if (open.length > 0) {
@@ -631,11 +638,16 @@ export default async function plugin(bb: BbPluginApi) {
       "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result. For a review loop use for: \"both\".",
     parameters: z.object({
       pr: z.number().int().positive().optional().describe("PR number; defaults to every open PR this thread created (all repos), else this branch's PR"),
+      repo: z
+        .string()
+        .regex(/^[\w.-]+\/[\w.-]+$/)
+        .optional()
+        .describe("owner/name of the PR's repo. Needed when the PR is not in this thread's project repo and this thread didn't create it"),
       for: z.enum(["checks", "reviews", "both"]).optional().describe("What to wait for (default both)"),
     }),
-    async execute({ pr, for: watchFor }, ctx) {
+    async execute({ pr, repo, for: watchFor }, ctx) {
       try {
-        const watches = await watchThreadCi(ctx.threadId, { pr, watchFor });
+        const watches = await watchThreadCi(ctx.threadId, { pr, repo, watchFor });
         return `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}. End your turn now; a message will arrive when there's news.`;
       } catch (error) {
         return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };

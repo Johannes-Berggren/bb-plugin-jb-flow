@@ -238,6 +238,17 @@ export function createWatchers(
       if (found.number === undefined) throw new Error(`No open PR for branch ${environment.branchName}.`);
       pr = found.number;
     }
+    // Refuse closed/merged PRs up front: a wrong repo guess (same number, other
+    // repo) shows up here instead of as a bogus "merged" notice later.
+    const current = JSON.parse(
+      await gh(["pr", "view", String(pr), "-R", slug, "--json", "state,title,createdAt"]).catch(() => "{}"),
+    ) as { state?: string; title?: string; createdAt?: string };
+    if (current.state === undefined) throw new Error(`${slug}#${pr} doesn't exist or isn't accessible. Pass repo explicitly.`);
+    if (current.state !== "OPEN") {
+      throw new Error(
+        `${slug}#${pr} is already ${current.state.toLowerCase()} ("${current.title}", opened ${current.createdAt?.slice(0, 10)}). If you meant a PR in another repo, pass repo (owner/name).`,
+      );
+    }
     const watches = await get<Record<string, CiWatch>>("ciWatches", {});
     const key = `${threadId}:${slug}#${pr}`;
     watches[key] = { threadId, repo: slug, pr, watchFor: options.watchFor ?? "both", since: Date.now(), headSha: null };
@@ -290,7 +301,7 @@ export function createWatchers(
       let done = false;
 
       if (pr.state !== "OPEN") {
-        notes.push(`PR #${watch.pr} is now ${pr.state.toLowerCase()}.`);
+        notes.push(`PR ${watch.repo.split("/")[1]}#${watch.pr} is now ${pr.state.toLowerCase()}.`);
         done = true;
       }
       // A new push restarts the checks; keep waiting on the new head.
@@ -307,11 +318,11 @@ export function createWatchers(
         if (checks.length > 0 && checks.every((check) => !check.pending)) {
           const failed = checks.filter((check) => !check.ok);
           if (failed.length === 0) {
-            notes.push(`✅ CI is green on #${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${checks.length} checks passed.`);
+            notes.push(`✅ CI is green on ${watch.repo.split("/")[1]}#${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${checks.length} checks passed.`);
           } else {
             const log = await failedLog(failed[0]!.url, watch.repo);
             notes.push(
-              `❌ CI failed on #${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${failed.map((check) => check.name).join(", ")}.${log}`,
+              `❌ CI failed on ${watch.repo.split("/")[1]}#${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${failed.map((check) => check.name).join(", ")}.${log}`,
             );
           }
           done = true;
@@ -339,7 +350,7 @@ export function createWatchers(
       }
 
       if (!done && Date.now() - watch.since > CI_TIMEOUT_MS) {
-        notes.push(`Still waiting on #${watch.pr} after 3 hours; stopped watching. ${pr.url}`);
+        notes.push(`Still waiting on ${watch.repo.split("/")[1]}#${watch.pr} after 3 hours; stopped watching. ${pr.url}`);
         done = true;
       }
 
