@@ -57,6 +57,11 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 - Rows show the PR that most needs attention plus a count. A **Pull requests** side-panel tab lists the stack, lets you link or unlink PRs, and starts a CI watch for all of them.
 - Threads whose PRs are all merged or closed go into a **ready to archive** group, with **Archive all**. Threads waiting on a release or CI, or in Priority, are left out.
 
+### Decisions and "Your move"
+- **Decision buttons:** when an agent's last message ends with numbered options, they appear as one-click replies above the composer. The recommended one is highlighted.
+- **Your move:** a home-page section lists threads whose agent handed the next step to you, oldest first. Threads waiting 3+ days are flagged, and each has Snooze 3d and Archive. Also `bb jb-flow your-move`.
+- **`pr_status` agent tool:** all of a thread's PRs in one call, so agents stop running `gh pr view` / `gh pr checks` loops.
+
 ### Thread status at a glance
 - **Row icon:** needs input / failed / running / stuck / watched / PR state.
 - **Running threads:** show elapsed time. After 15 minutes without output they're flagged "stuck", and you can stop them from the row menu or the header chip.
@@ -132,6 +137,7 @@ bb jb-flow prs [--self|<thread-id>] [--json]
 bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]
 bb jb-flow watches [--json]
 bb jb-flow check-now
+bb jb-flow your-move [--json]
 bb jb-flow focused [--json]
 bb jb-flow tell <text…> [--thread <id>]
 bb jb-flow stop [<thread-id>|--focused]

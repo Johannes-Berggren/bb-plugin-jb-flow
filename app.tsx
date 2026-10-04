@@ -15,6 +15,7 @@ import {
   experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
   useBbContext,
+  useComposerView,
   useSidebarSplitLayout,
   useSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
@@ -28,6 +29,8 @@ import type {
 import type { DigestItem, FlowState, rpcContract } from "./server";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
 import {
+  DecisionChips,
+  YourMoveSection,
   HeaderStatusStrip,
   PR_TONE,
   PullRequestsPanel,
@@ -401,6 +404,15 @@ function PullRequestsTab({ threadId, params }: { threadId: string; params: JsonV
   const { state } = useFlowState();
   const { pullRequest } = useSidebarThreadPullRequest(threadId);
   return <PullRequestsPanel threadId={threadId} params={params} state={state} branchPr={pullRequest} />;
+}
+
+function DecisionChipsBanner() {
+  const view = useComposerView();
+  const threadId = view.scope.kind === "thread" ? view.scope.threadId : null;
+  const { threads } = useSidebarThreads();
+  const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
+  if (view.run.isRunning || !view.draft.isEmpty) return null;
+  return <DecisionChips threadId={threadId} updatedAt={thread?.updatedAt ?? null} idle={thread?.status === "idle"} />;
 }
 
 /** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
@@ -1980,6 +1992,15 @@ export default definePluginApp((app) => {
     title: "Repo commands",
     description: "Per-project buttons for the thread side panel.",
     component: RepoCommandsSettings,
+  });
+  app.composer.customize({
+    id: "decision-chips",
+    banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
+  });
+  app.slots.homepageSection({
+    id: "your-move",
+    title: "Your move",
+    component: YourMoveSection,
   });
   app.slots.homepageSection({
     id: "stale-digest",

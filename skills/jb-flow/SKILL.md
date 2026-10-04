@@ -84,4 +84,9 @@ Every PR a thread opens with `gh pr create` is linked to it automatically, in an
 
 - `bb jb-flow prs --self [--json]`: the thread's PRs, in stack order, with each one's state (checks, review, conflicts, merged).
 - `bb jb-flow pr-link <url> --self [--remove]`: link or unlink a PR that was opened another way, for example through a GitHub MCP tool or by someone else.
-- `wait_for_ci` with no `pr` watches every open PR this thread created. The thread is woken once for each PR that has news.
+- `pr_status` (agent tool) returns the state of all of them in one call, from the plugin's cache, or live with `refresh: true`. Use it instead of `gh pr view` / `gh pr checks` for state; use `gh` only for full review comments or logs.
+- `wait_for_ci` with no `pr` watches every open PR this thread created. Pass `repo` (owner/name) for a PR in another repo that this thread didn't create. News from all of a thread's PRs arrives as one message per check cycle.
+
+## Asking the user
+
+When you need a decision, end your message with numbered options, one line each, and mark one "(recommended)". The user sees them as one-click reply buttons above the composer; the reply is just the number. For the obvious next step of agreed work, don't ask: do it.

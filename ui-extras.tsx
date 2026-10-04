@@ -432,3 +432,128 @@ export function PullRequestsPanel({
     </div>
   );
 }
+
+// --- decision chips (composer banner) ---------------------------------------------------
+// When the agent's last message ends with numbered options, offer them as
+// one-click replies above the composer. Sends just the number.
+
+export function DecisionChips({
+  threadId,
+  updatedAt,
+  idle,
+}: {
+  threadId: string | null;
+  updatedAt: number | null;
+  idle: boolean;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [options, setOptions] = useState<Array<{ n: number; text: string; recommended: boolean }>>([]);
+  const [sent, setSent] = useState<number | null>(null);
+  useEffect(() => {
+    setSent(null);
+    if (threadId === null || !idle) {
+      setOptions([]);
+      return;
+    }
+    let live = true;
+    rpc.call("decision_options", { threadId }).then(
+      (result) => live && setOptions(result.options),
+      () => live && setOptions([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [rpc, threadId, updatedAt, idle]);
+  if (threadId === null || options.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-1 py-1">
+      <span className="text-[11px] text-muted-foreground">Reply:</span>
+      {options.map((option) => (
+        <button
+          key={option.n}
+          type="button"
+          disabled={sent !== null}
+          title={option.text}
+          onClick={() => {
+            setSent(option.n);
+            void rpc.call("thread_reply", { threadId, text: String(option.n) });
+          }}
+          className={cn(
+            "flex max-w-[16rem] items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors disabled:opacity-50",
+            option.recommended
+              ? "border-green-500/40 bg-green-500/10 text-foreground hover:bg-green-500/20"
+              : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+            sent === option.n && "ring-1 ring-ring",
+          )}
+        >
+          <span className="font-medium tabular-nums">{option.n}</span>
+          <span className="truncate">{option.text}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// --- Your move (homepage) ---------------------------------------------------------------
+
+export function YourMoveSection() {
+  const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  const [items, setItems] = useState<Array<{ threadId: string; title: string; since: number; ask: string }> | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const load = () => {
+    rpc.call("your_move", null).then((result) => setItems(result.items), () => setItems([]));
+  };
+  useEffect(load, [rpc]);
+  if (items === null) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (items.length === 0) return <p className="text-sm text-muted-foreground">Nothing is waiting on you. ✨</p>;
+  const now = Date.now();
+  const stale = items.filter((item) => now - item.since > 3 * 86_400_000).length;
+  const shown = showAll ? items : items.slice(0, 8);
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        {items.length} thread{items.length === 1 ? "" : "s"} where the agent handed the next step to you, oldest first
+        {stale > 0 ? ` · ${stale} waiting 3+ days` : ""}.
+      </p>
+      <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+        {shown.map((item) => {
+          const age = now - item.since;
+          return (
+            <li key={item.threadId} className="group flex items-start gap-3 px-3 py-2">
+              <span
+                className={cn(
+                  "mt-0.5 w-10 shrink-0 text-right text-xs tabular-nums",
+                  age > 3 * 86_400_000 ? "font-medium text-amber-600" : "text-muted-foreground",
+                )}
+              >
+                {duration(age)}
+              </span>
+              <button type="button" className="min-w-0 flex-1 text-left" onClick={() => navigate.toThread(item.threadId)}>
+                <div className="truncate text-sm font-medium group-hover:underline">{item.title}</div>
+                {item.ask ? <div className="line-clamp-2 text-xs text-muted-foreground">{item.ask}</div> : null}
+              </button>
+              <div className="flex shrink-0 gap-1 opacity-0 group-hover:opacity-100">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void rpc.call("snooze", { threadId: item.threadId, when: "3d", note: null }).then(load)}
+                >
+                  Snooze 3d
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => void rpc.call("archive", { threadIds: [item.threadId] }).then(load)}>
+                  Archive
+                </Button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {items.length > shown.length ? (
+        <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setShowAll(true)}>
+          Show all {items.length}
+        </button>
+      ) : null}
+    </div>
+  );
+}

@@ -285,6 +285,8 @@ export function createWatchers(
 
   async function checkCi() {
     const watches = await get<Record<string, CiWatch>>("ciWatches", {});
+    // One message per thread per cycle, however many of its PRs have news.
+    const outbox = new Map<string, { notes: string[]; stillWatching: boolean }>();
     let me: string | null = null;
     for (const [key, watch] of Object.entries(watches)) {
       let pr: PrState;
@@ -355,11 +357,23 @@ export function createWatchers(
       }
 
       if (done || reviewNews) {
-        const suffix = done ? "" : "\n\n(Still watching the checks; you'll get another message when they finish.)";
-        await tell(watch.threadId, `[ci watcher] ${notes.join("\n\n")}${suffix}`).catch((error) => bb.log.warn(`ci notify: ${String(error)}`));
+        const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
+        entry.notes.push(...notes);
+        if (!done) entry.stillWatching = true;
+        outbox.set(watch.threadId, entry);
         if (done) delete watches[key];
         else watch.reviewsSince = Date.now();
       }
+    }
+    for (const [threadId, entry] of outbox) {
+      const others = Object.values(watches).filter((watch) => watch.threadId === threadId).length;
+      const suffix =
+        entry.stillWatching || others > 0
+          ? `\n\n(Still watching ${others} PR${others === 1 ? "" : "s"}; you'll get another message when there's news.)`
+          : "";
+      await tell(threadId, `[ci watcher] ${entry.notes.join("\n\n")}${suffix}`).catch((error) =>
+        bb.log.warn(`ci notify: ${String(error)}`),
+      );
     }
     await kv.set("ciWatches", watches);
     changed();

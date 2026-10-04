@@ -21,6 +21,7 @@
     "skipLibCheck": false
   },
   "include": [
+    "decisions.ts",
     "awaiting.ts",
     "prs.ts",
     "activity.ts",

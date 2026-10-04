@@ -9,6 +9,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
+import { parseDecisionOptions } from "./decisions";
 import { createFocus, focusReportSchema } from "./focus";
 import { createPrTracker, prStatusSchema } from "./prs";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
@@ -146,6 +147,24 @@ export const rpcContract = defineRpcContract({
   next_needs_me: {
     input: z.object({ archiveThreadId: z.string().nullable() }),
     output: z.object({ opened: z.string().nullable() }),
+  },
+  decision_options: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({
+      options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
+    }),
+  },
+  thread_reply: {
+    input: z.object({ threadId: z.string(), text: z.string().min(1).max(2000) }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  your_move: {
+    input: z.null(),
+    output: z.object({
+      items: z.array(
+        z.object({ threadId: z.string(), title: z.string(), projectId: z.string(), since: z.number(), ask: z.string() }),
+      ),
+    }),
   },
   section_order_set: {
     input: z.object({ order: z.array(z.string()).max(200) }),
@@ -458,6 +477,35 @@ export default async function plugin(bb: BbPluginApi) {
     return watching;
   }
 
+async function yourMove() {
+    const waiting = await awaiting.all();
+    const items = [];
+    for (const [threadId, since] of Object.entries(waiting)) {
+      const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
+      if (!thread || thread.archivedAt !== null || thread.status !== "idle") continue;
+      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+      // The ask is at the end of the message: show its last meaningful lines.
+      const ask = (output.output ?? "")
+        .split("\n")
+        .map((line) => line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`>#]+/g, "").trim())
+        .filter((line) => line.length > 0 && !/^\d{1,2}[./]\d{1,2}[./]\d{2,4}|^\d{4}-\d{2}-\d{2}|^stamped/i.test(line))
+        .slice(-3)
+        .join(" ")
+        .slice(0, 240);
+      // Date the ask by the thread's last activity: backfilled entries carry the
+      // classification time, not when the agent actually asked.
+      items.push({
+        threadId,
+        title: thread.title ?? thread.titleFallback ?? "Untitled",
+        projectId: thread.projectId,
+        since: Math.min(since, thread.updatedAt),
+        ask,
+      });
+    }
+    items.sort((a, b) => a.since - b.since);
+    return { items };
+  }
+
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
 
   // --- RPC ------------------------------------------------------------------
@@ -555,6 +603,15 @@ export default async function plugin(bb: BbPluginApi) {
       await bb.sdk.threads.open({ threadId: next.id, file: null });
       return { opened: next.id };
     },
+    decision_options: async ({ threadId }) => {
+      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+      return { options: parseDecisionOptions(output.output ?? "") };
+    },
+    thread_reply: async ({ threadId, text }) => {
+      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+      return { ok: true };
+    },
+    your_move: () => yourMove(),
     section_order_set: async ({ order }) => {
       await bb.storage.kv.set("sectionOrder", order);
       changed();
@@ -654,7 +711,31 @@ export default async function plugin(bb: BbPluginApi) {
       }
     },
   });
-  bb.agents.configure(() => ({ tools: ["snooze_thread", "wait_for_ci"], skills: [] }));
+  bb.agents.registerTool({
+    name: "pr_status",
+    description:
+      "State of every PR this thread created (any repo, stack order): checks, review decision, conflicts, draft/merged, base/head. Served from the plugin's cache, refreshed every 3 minutes; pass refresh: true for a live read. Use this instead of gh pr view / gh pr checks to check PR state.",
+    instructions:
+      "To check the state of this thread's PRs, call pr_status (one call, all repos) instead of gh pr view / gh pr checks. Use gh only to read full review comments or logs.",
+    parameters: z.object({
+      refresh: z.boolean().optional().describe("Fetch live state first (one batched GitHub query)"),
+    }),
+    async execute({ refresh }, ctx) {
+      if (refresh) {
+        await prTracker.scan(ctx.threadId);
+        await prTracker.refresh();
+      }
+      const prs = (await prTracker.byThread())[ctx.threadId] ?? [];
+      if (prs.length === 0) return "No PRs linked to this thread. PRs opened with gh pr create are linked automatically; others via `bb jb-flow pr-link <url> --self`.";
+      return prs
+        .map(
+          (pr) =>
+            `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number} [${pr.attention}] ${pr.title} (${pr.head} → ${pr.base}) ${pr.url}`,
+        )
+        .join("\n");
+    },
+  });
+  bb.agents.configure(() => ({ tools: ["snooze_thread", "wait_for_ci", "pr_status"], skills: [] }));
 
   // --- CLI ------------------------------------------------------------------
 
@@ -700,6 +781,7 @@ export default async function plugin(bb: BbPluginApi) {
       },
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
+      { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json]" },
       { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
       { name: "stop", summary: "Stop a thread's run (default: focused)", usage: "bb jb-flow stop [<thread-id>|--focused]" },
       { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
@@ -832,6 +914,12 @@ export default async function plugin(bb: BbPluginApi) {
             await watchers.checkReleases();
             await watchers.checkCi();
             return { exitCode: 0, stdout: "Checked releases and CI watches." };
+          case "your-move": {
+            const { items } = await yourMove();
+            if (json) return { exitCode: 0, stdout: JSON.stringify({ count: items.length, items }) };
+            const lines = items.map((item) => `${formatWhen(item.since).padEnd(16)} ${item.threadId}  ${item.title}`);
+            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "Nothing is waiting on you." };
+          }
           case "focused": {
             const threadId = focus.focusedThreadId();
             if (threadId === null) return { exitCode: 1, stderr: "No focused thread." };
