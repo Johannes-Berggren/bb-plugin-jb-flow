@@ -765,6 +765,8 @@ async function yourMove() {
     "<when>: 30m, 2h, 3d, 1w, today, tonight, tomorrow, mon…sun, next-week, YYYY-MM-DD, YYYY-MM-DDTHH:MM",
   ].join("\n");
 
+  // The deck polls `decisions` every few seconds; re-parse only when the thread changes.
+  let decisionCache: { key: string; options: ReturnType<typeof parseDecisionOptions> } | null = null;
   bb.cli.register({
     name: "jb-flow",
     summary: "Snooze threads and review the stale-thread digest",
@@ -783,6 +785,7 @@ async function yourMove() {
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
       { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json]" },
       { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
+      { name: "decisions", summary: "Numbered options the focused thread is waiting on", usage: "bb jb-flow decisions [<thread-id>] [--json]" },
       { name: "stop", summary: "Stop a thread's run (default: focused)", usage: "bb jb-flow stop [<thread-id>|--focused]" },
       { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
@@ -929,6 +932,28 @@ async function yourMove() {
               stdout: json
                 ? JSON.stringify({ threadId, projectId: thread.projectId, title: thread.title, status: thread.status })
                 : `${threadId}  ${thread.title ?? ""}`,
+            };
+          }
+          case "decisions": {
+            const threadId = resolveThread(args[0] ?? "--focused") ?? null;
+            const thread = threadId === null ? null : await bb.sdk.threads.get({ threadId }).catch(() => null);
+            // Same rule as the composer buttons: only an idle thread is waiting on an answer.
+            let options: ReturnType<typeof parseDecisionOptions> = [];
+            if (thread !== null && thread.status === "idle") {
+              const cacheKey = `${thread.id}:${thread.updatedAt}`;
+              if (decisionCache?.key !== cacheKey) {
+                const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
+                decisionCache = { key: cacheKey, options: parseDecisionOptions(output.output ?? "") };
+              }
+              options = decisionCache.options;
+            }
+            const result = { threadId: thread?.id ?? null, title: thread?.title ?? null, options };
+            return {
+              exitCode: 0,
+              stdout: json
+                ? JSON.stringify(result)
+                : options.map((option) => `${option.n}. ${option.text}${option.recommended ? " (recommended)" : ""}`).join("\n") ||
+                  "No open decision.",
             };
           }
           case "stop": {
