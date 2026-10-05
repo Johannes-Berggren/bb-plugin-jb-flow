@@ -1925,8 +1925,10 @@ function FocusReporter() {
     window.addEventListener("focus", send);
     window.addEventListener("blur", send);
     document.addEventListener("visibilitychange", send);
+    // Keep reporting while BB is in the background too: deck keys are pressed
+    // while other apps have focus.
     const heartbeat = window.setInterval(() => {
-      if (document.hasFocus()) send();
+      if (document.visibilityState === "visible") send();
     }, 60_000);
     return () => {
       window.removeEventListener("focus", send);

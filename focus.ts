@@ -30,15 +30,27 @@ export function needsAttention(thread: Thread): boolean {
 export function createFocus(bb: BbPluginApi) {
   const reports = new Map<string, FocusReport>();
 
+  // Last known focus survives plugin reloads and quiet windows, so a deck key
+  // pressed while another app is in front still reaches the thread you left.
+  let lastFocused: string | null = null;
+  void bb.storage.kv.get<string>("lastFocused").then((value) => {
+    lastFocused ??= value ?? null;
+  });
+
   function report(input: z.infer<typeof focusReportSchema>) {
     reports.set(input.clientId, { ...input, at: Date.now() });
+    const current = focusedThreadId();
+    if (current !== null && current !== lastFocused) {
+      lastFocused = current;
+      void bb.storage.kv.set("lastFocused", current);
+    }
   }
 
   function focusedThreadId(): string | null {
     const fresh = [...reports.values()].filter((entry) => Date.now() - entry.at < STALE_MS);
     const pick = (entries: FocusReport[]) =>
       entries.sort((a, b) => b.at - a.at).find((entry) => entry.threadId !== null)?.threadId ?? null;
-    return pick(fresh.filter((entry) => entry.windowFocused)) ?? pick(fresh);
+    return pick(fresh.filter((entry) => entry.windowFocused)) ?? pick(fresh) ?? lastFocused;
   }
 
   async function requireFocused(): Promise<string> {
