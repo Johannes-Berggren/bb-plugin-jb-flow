@@ -11,7 +11,7 @@ import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
 import { parseDecisionOptions } from "./decisions";
 import { createFocus, focusReportSchema } from "./focus";
-import { createPrTracker, prStatusSchema } from "./prs";
+import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
 import { createWatchers, releaseWatchSchema } from "./watchers";
@@ -783,6 +783,7 @@ async function yourMove() {
       },
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
+      { name: "pr-radar", summary: "Threads with a PR to fix or merge (--open: jump to the next one)", usage: "bb jb-flow pr-radar [--json] [--open]" },
       { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json] [--open]" },
       { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
       { name: "decisions", summary: "Numbered options the focused thread is waiting on", usage: "bb jb-flow decisions [<thread-id>] [--json]" },
@@ -885,6 +886,43 @@ async function yourMove() {
               (pr) => `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number}  ${pr.attention.padEnd(17)} ${pr.title}`,
             );
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PRs linked." };
+          }
+          case "pr-radar": {
+            // Threads with an open PR that needs fixing or is ready to merge,
+            // skipping threads whose agent is already working on it.
+            const byThread = await prTracker.byThread();
+            const threads = await bb.sdk.threads.list({ limit: 500 });
+            const live = new Map(
+              threads
+                .filter((thread) => thread.archivedAt === null && thread.status !== "active" && thread.status !== "starting")
+                .map((thread) => [thread.id, thread]),
+            );
+            const broken: Array<{ threadId: string; title: string; pr: string }> = [];
+            const ready: Array<{ threadId: string; title: string; pr: string }> = [];
+            for (const [threadId, prs] of Object.entries(byThread)) {
+              const thread = live.get(threadId);
+              if (!thread) continue;
+              const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
+              const bad = open.find((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention));
+              const good = open.find((pr) => pr.attention === "ready_to_merge");
+              const entry = (pr: PrStatus) => ({ threadId, title: thread.title ?? "", pr: `${pr.repo.split("/")[1]}#${pr.number}` });
+              if (bad) broken.push(entry(bad));
+              else if (good) ready.push(entry(good));
+            }
+            if (argv.includes("--open")) {
+              const focused = focus.focusedThreadId();
+              const queue = [...broken, ...ready];
+              const next = queue.find((item) => item.threadId !== focused) ?? queue[0];
+              if (next === undefined) return { exitCode: 0, stdout: "No PR needs you." };
+              await bb.sdk.threads.open({ threadId: next.threadId, file: null });
+              return { exitCode: 0, stdout: `Opened ${next.threadId}  ${next.title} (${next.pr})` };
+            }
+            if (json) return { exitCode: 0, stdout: JSON.stringify({ broken, ready }) };
+            const lines = [
+              ...broken.map((item) => `fix    ${item.pr.padEnd(22)} ${item.title}`),
+              ...ready.map((item) => `merge  ${item.pr.padEnd(22)} ${item.title}`),
+            ];
+            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PR needs you." };
           }
           case "pr-link": {
             const remove = args.includes("--remove");
