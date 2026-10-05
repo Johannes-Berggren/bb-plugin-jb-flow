@@ -18,7 +18,7 @@ const ASKS = new RegExp(
     String.raw`\b(let me know|tell me|please)\b`,
     String.raw`\byour (call|decision|input|answer|go-ahead)\b`,
     String.raw`\bdecisions? (needed|for you|board)\b`,
-    String.raw`\b(decide|choose|pick|approve)\b`,
+    String.raw`\b(decide|choose|approve)\b|\bpick (one|an option|between|which|a|the)\b(?! up)`,
     String.raw`\bpaste (it|the text|them|his|her|their)\b`,
     String.raw`\b(waiting|blocked) (for|on|until) you\b`,
     String.raw`\bonce you('ve| have)?\b`,
@@ -30,7 +30,7 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 6;
+const AWAITING_VERSION = 8;
 
 /** True when the tail of the message hands the next step to the user. */
 export function asksUser(text: string): boolean {
@@ -74,6 +74,7 @@ const WAITS = new RegExp(
     String.raw`\b(depends on|is up to|pending on|[Bb]locked on) ${PERSON}\b`,
     String.raw`\b(only )?pending reviewers?\b|\bawaiting (review|a reply|reply|response|approval|their|his|her)\b`,
     String.raw`\b(no|nothing|not) (reply|answer|response) (yet )?from\b`,
+    String.raw`\b${PERSON} (can|needs to|has to|should|will) (now )?(push|send|review|approve|sign|reply|confirm|answer|check|merge|decide)\b`,
     String.raw`\b([Aa]sked|[Ee]mailed|[Pp]inged|[Mm]essaged|[Nn]udged) ${PERSON}\b[^.\n]{0,60}\b(waiting|reply|answer|back)\b`,
   ].join("|"),
   "u",

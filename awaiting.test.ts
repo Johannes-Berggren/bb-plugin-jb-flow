@@ -18,6 +18,7 @@ test("hands-off messages count as your move", () => {
 test("wrapped-up messages don't", () => {
   assert.ok(!asksUser("Merged #9995 into dev and closed T-10600. Everything in this thread is done."));
   assert.ok(!asksUser("All 16 checks passed and the PR is merged."));
+  assert.ok(!asksUser("I'm waiting on the fresh review I requested, and will pick it up when it arrives."));
   assert.ok(!asksUser("**Blocked:** Waiting for release (last: v6.100.0)."));
   assert.ok(!asksUser("The open item is whether they need an AI block. If they say yes, that's new development."));
   assert.ok(!asksUser("The prod apply is running in the background. I'll report when it finishes."));
@@ -38,6 +39,8 @@ test("waiting on someone else", () => {
   assert.ok(waitsOnOthers("On #1136 and #1137, Knut is now the only pending reviewer. Their approvals are on older commits."));
   assert.ok(waitsOnOthers("Løvenskiold stays cancelled.\n\nOnce he sends the invoices, I can check that Xledger numbered them."));
   assert.ok(waitsOnOthers("Everything planned for BOAS is done. The next step depends on Nikolai: which tenant users get access."));
+  assert.ok(waitsOnOthers("CI passed. I'm waiting on the fresh review I requested, and will pick it up when it arrives."));
+  assert.ok(waitsOnOthers("The two invoices now show as drafts in billing. Håkon can push them to Xledger from there."));
   assert.ok(waitsOnOthers("Sent the reminder to Martin on Friday; still no reply from him."));
   assert.ok(!waitsOnOthers("Waiting for CI on #1191; I'll merge when it's green."));
   assert.ok(waitsOnOthers("Once Håkon confirms, say \"go\" and I'll switch the setup."), "relaying his answer is waiting on him");
