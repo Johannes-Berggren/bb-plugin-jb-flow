@@ -24,6 +24,7 @@
   "include": [
     "decisions.ts",
     "awaiting.ts",
+    "leftovers.ts",
     "prs.ts",
     "activity.ts",
     "watchers.ts",

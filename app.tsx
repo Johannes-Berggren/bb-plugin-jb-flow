@@ -27,6 +27,7 @@ import type {
   PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import type { DigestItem, FlowState, rpcContract } from "./server";
+import type { Leftover } from "./leftovers";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
 import {
   DecisionChips,
@@ -1835,11 +1836,64 @@ function DigestSection() {
           ) : null}
         </ul>
       )}
+      <LeftoversBlock />
     </div>
   );
 }
 
 // --- settings: area-section → tag migration ---------------------------------------
+
+// Worktree checkouts bb no longer tracks (see leftovers.ts). Shown only when there are some.
+function LeftoversBlock() {
+  const rpc = useRpc<typeof rpcContract>();
+  const [report, setReport] = useState<{ checkedAt: number; items: Leftover[] } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    rpc.call("leftovers_get", { refresh: false }).then(setReport, (cause: unknown) => setError(errorText(cause)));
+  }, [rpc]);
+  if (!report || report.items.length === 0) return error ? <p className="text-sm text-destructive">{error}</p> : null;
+  const safe = report.items.filter((item) => item.safe);
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-medium">Leftover worktrees</span>
+        <span className="text-muted-foreground">
+          {report.items.length} checkout(s) bb no longer tracks · checked {formatWhen(report.checkedAt)}
+        </span>
+        {safe.length > 0 ? (
+          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setConfirming(true)}>
+            Delete {safe.length} merged
+          </Button>
+        ) : null}
+      </div>
+      <ul className="divide-y divide-border rounded-md border border-border text-xs">
+        {report.items.map((item) => (
+          <li key={item.path} className="flex items-center gap-2 px-3 py-1.5" title={item.path}>
+            <span className="font-medium">{item.repo}</span>
+            <span className="truncate text-muted-foreground">{item.branch}</span>
+            <span className="ml-auto shrink-0 text-muted-foreground">
+              {[item.pr ? `${item.pr} ${item.prState}` : "no PR", item.dirty ? `${item.dirty} uncommitted` : null, item.nodeModules ? "node_modules" : null]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+            {item.safe ? null : <span className="shrink-0 text-amber-600">keep</span>}
+          </li>
+        ))}
+      </ul>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {confirming ? (
+        <ConfirmDialog
+          title={`Delete ${safe.length} leftover checkout(s)?`}
+          body="Only checkouts whose PR is merged (or that have no commits of their own) and that have no uncommitted changes are removed. Branches stay on GitHub."
+          confirmLabel="Delete"
+          onConfirm={() => rpc.call("leftovers_clean", null).then(() => rpc.call("leftovers_get", { refresh: false }).then(setReport))}
+          onClose={() => setConfirming(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 function MigrationSettings() {
   const rpc = useRpc<typeof rpcContract>();

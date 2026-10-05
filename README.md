@@ -61,6 +61,7 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 
 ### Decisions and "Your move"
 - **Decision buttons:** when an agent's last message ends with numbered options, they appear as one-click replies above the composer. The recommended one is highlighted.
+- **Leftover worktrees:** bb removes a thread's worktree when it's archived, but extra checkouts an agent adds next to it (cross-repo work) and failed teardowns stay on disk. A weekly scan (Mondays 08:00) lists them under the stale digest with their PR state, uncommitted changes and node_modules, plus a button that deletes the merged, clean ones. Also `bb jb-flow leftovers`.
 - **Your move:** a home-page section lists threads whose agent handed the next step to you, oldest first. Threads waiting 3+ days are flagged, and each has Snooze 3d and Archive. Also `bb jb-flow your-move`.
 - **`pr_status` agent tool:** all of a thread's PRs in one call, so agents stop running `gh pr view` / `gh pr checks` loops.
 
@@ -142,6 +143,7 @@ bb jb-flow watches [--json]
 bb jb-flow check-now
 bb jb-flow your-move [--json] [--open]
 bb jb-flow pr-radar [--json] [--open]
+bb jb-flow leftovers [--refresh] [--json] [--clean]
 bb jb-flow classify            # debug: where every open thread lands, with its last message
 bb jb-flow focused [--json]
 bb jb-flow decisions [<thread-id>] [--json]

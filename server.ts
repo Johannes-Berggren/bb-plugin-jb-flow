@@ -10,6 +10,7 @@ import { z } from "zod";
 import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
 import { parseDecisionOptions } from "./decisions";
+import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
@@ -165,6 +166,14 @@ export const rpcContract = defineRpcContract({
         z.object({ threadId: z.string(), title: z.string(), projectId: z.string(), since: z.number(), ask: z.string() }),
       ),
     }),
+  },
+  leftovers_get: {
+    input: z.object({ refresh: z.boolean() }),
+    output: z.object({ checkedAt: z.number(), items: z.array(leftoverSchema) }),
+  },
+  leftovers_clean: {
+    input: z.null(),
+    output: z.object({ removed: z.array(z.string()), kept: z.array(z.string()) }),
   },
   section_order_set: {
     input: z.object({ order: z.array(z.string()).max(200) }),
@@ -507,6 +516,7 @@ async function yourMove() {
   }
 
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
+  const leftovers = createLeftovers(bb);
 
   // --- RPC ------------------------------------------------------------------
 
@@ -612,6 +622,8 @@ async function yourMove() {
       return { ok: true };
     },
     your_move: () => yourMove(),
+    leftovers_get: ({ refresh }) => leftovers.read(refresh),
+    leftovers_clean: () => leftovers.clean(),
     section_order_set: async ({ order }) => {
       await bb.storage.kv.set("sectionOrder", order);
       changed();
@@ -783,6 +795,7 @@ async function yourMove() {
       },
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
+      { name: "leftovers", summary: "Worktree checkouts bb no longer tracks (--clean removes the merged ones)", usage: "bb jb-flow leftovers [--refresh] [--json] [--clean]" },
       { name: "pr-radar", summary: "Threads with a PR to fix or merge (--open: jump to the next one)", usage: "bb jb-flow pr-radar [--json] [--open]" },
       { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json] [--open]" },
       { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
@@ -933,6 +946,19 @@ async function yourMove() {
               });
             }
             return { exitCode: 0, stdout: JSON.stringify(rows) };
+          }
+          case "leftovers": {
+            if (argv.includes("--clean")) {
+              const { removed, kept } = await leftovers.clean();
+              return { exitCode: 0, stdout: `Removed ${removed.length}, kept ${kept.length}.\n${kept.map((path) => `  kept ${path}`).join("\n")}` };
+            }
+            const report = await leftovers.read(refresh);
+            if (json) return { exitCode: 0, stdout: JSON.stringify(report) };
+            const lines = report.items.map(
+              (item) =>
+                `${item.safe ? "safe" : "KEEP"}  ${item.repo.padEnd(28)} ${item.branch.padEnd(40)} ${item.pr ? `${item.pr} ${item.prState}` : "no PR"}${item.dirty ? ` · ${item.dirty} uncommitted` : ""}${item.nodeModules ? " · node_modules" : ""}`,
+            );
+            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No leftover worktrees." };
           }
           case "pr-radar": {
             // Threads with an open PR that needs fixing or is ready to merge,
