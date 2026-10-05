@@ -18,6 +18,7 @@ export function parseDecisionOptions(message: string): DecisionOption[] {
     end -= 1;
   }
   const options: DecisionOption[] = [];
+  let first = end;
   for (let index = end; index >= 0; index -= 1) {
     const match = /^\s*(?:>\s*)*(\d+)[.)]\s+(.+)$/.exec(lines[index]!);
     if (!match) {
@@ -25,12 +26,16 @@ export function parseDecisionOptions(message: string): DecisionOption[] {
       break;
     }
     const raw = match[2]!;
+    first = index;
     options.unshift({
       n: Number(match[1]),
       text: plain(raw.replace(/\(recommended\)/i, "")).slice(0, 90),
       recommended: /\(recommended\)|\brecommended\b/i.test(raw),
     });
   }
+  // "When it's green, I'll: 1. Merge 2. Release" is the agent's own plan, not a choice.
+  const intro = lines.slice(0, first).reverse().find((line) => line.trim() !== "" && !/^\s*(?:>\s*)*$/.test(line)) ?? "";
+  if (/\bI('ll| will|'m going to)\b[^?]*:\s*\**\s*$/i.test(intro) && !options.some((option) => option.recommended)) return [];
   // A real choice: 2–9 consecutive options numbered from 1.
   if (options.length < 2 || options.length > 9 || options[0]!.n !== 1) return [];
   if (options.some((option, index) => option.n !== index + 1)) return [];

@@ -447,7 +447,8 @@ export default async function plugin(bb: BbPluginApi) {
     return { archived: threadIds.length - failed.length, failed };
   }
 
-  const focus = createFocus(bb);
+  // Late-bound: the awaiting tracker is created below.
+  const focus = createFocus(bb, () => awaiting.all());
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed);
   const prTracker = createPrTracker(bb, changed);
   const activity = createActivity(bb, changed);
@@ -922,7 +923,7 @@ async function yourMove() {
               const prs = (byThread[thread.id] ?? []).map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`);
               const open = (byThread[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft");
               const settled = (byThread[thread.id] ?? []).every((pr) => pr.state === "merged" || pr.state === "closed");
-              const needs = needsAttention(thread);
+              const needs = needsAttention(thread, awaitingAll);
               const group = needs
                 ? "needs-me"
                 : thread.pinnedAt

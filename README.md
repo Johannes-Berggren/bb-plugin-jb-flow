@@ -8,7 +8,7 @@ A personal [bb](https://getbb.app) plugin for triaging a lot of agent threads. I
 A replacement thread list. Pick it under **Settings → Appearance → Thread list → Triage**.
 
 - **Groups**, top to bottom:
-  - **Needs me**: unread finished threads, errors, and threads waiting for input.
+  - **Needs me**: threads blocked on a prompt or permission, failed threads, and unread threads whose last message asks you something. Unread status updates stay in their section, in bold.
   - **Stalled** (only when there are some): the agent said it would report back ("I'll report when it finishes", "I'm checking every 30 seconds") but the thread has been idle for over an hour with nothing watching it. **Nudge all** asks each one to check and continue.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. They map onto your existing sections by name.
   - Any other sections, collapsed.

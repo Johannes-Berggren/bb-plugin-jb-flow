@@ -17,17 +17,22 @@ const STALE_MS = 15 * 60_000;
 
 type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
 
-export function needsAttention(thread: Thread): boolean {
+/**
+ * Failed, blocked on a prompt, or finished unread with a last message that asks
+ * you something (`awaiting`). Unread status updates don't count.
+ */
+export function needsAttention(thread: Thread, awaiting: Record<string, number>): boolean {
   return (
     thread.status === "error" ||
     thread.hasPendingInteraction ||
     (thread.status === "idle" &&
+      awaiting[thread.id] !== undefined &&
       thread.latestAttentionAt !== null &&
       (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt))
   );
 }
 
-export function createFocus(bb: BbPluginApi) {
+export function createFocus(bb: BbPluginApi, getAwaiting: () => Promise<Record<string, number>>) {
   const reports = new Map<string, FocusReport>();
 
   // Last known focus survives plugin reloads and quiet windows, so a deck key
@@ -69,6 +74,7 @@ export function createFocus(bb: BbPluginApi) {
       threads.push(...page);
       if (page.length < 500) break;
     }
+    const awaiting = await getAwaiting();
     return threads
       .filter(
         (thread) =>
@@ -76,7 +82,7 @@ export function createFocus(bb: BbPluginApi) {
           thread.deletedAt === null &&
           thread.visibility === "visible" &&
           thread.parentThreadId === null &&
-          needsAttention(thread),
+          needsAttention(thread, awaiting),
       )
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));
   }

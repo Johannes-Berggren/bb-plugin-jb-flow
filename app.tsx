@@ -150,12 +150,17 @@ function resolveLanes(sections: readonly PluginSidebarSection[]): Lane[] {
   );
 }
 
-function needsMe(thread: PluginSidebarThread): boolean {
+/**
+ * Blocked on you (prompt, permission, failure), or finished unread with a last
+ * message that asks you something. Unread status updates don't count: they stay
+ * in their section, in bold.
+ */
+function needsMe(thread: PluginSidebarThread, awaiting: Record<string, number> | undefined): boolean {
   return (
     thread.hasPendingInteraction ||
     thread.indicator === "waiting-for-input" ||
     thread.indicator === "unread-error" ||
-    (thread.isUnread && thread.status === "idle")
+    (thread.isUnread && thread.status === "idle" && awaiting?.[thread.id] !== undefined)
   );
 }
 
@@ -1313,6 +1318,7 @@ function TriageThreadList({
     const snoozed = visible.filter((thread) => thread.sectionId === snoozedSectionId);
     const awake = visible.filter((thread) => thread.sectionId !== snoozedSectionId);
 
+    const needs = (thread: PluginSidebarThread) => needsMe(thread, state?.awaiting);
     const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";
     // Promised to report back, but nothing is running and nothing is watching for it.
     const isStalled = (thread: PluginSidebarThread) =>
@@ -1323,9 +1329,9 @@ function TriageThreadList({
     const openPrs = (thread: PluginSidebarThread) =>
       threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
-      needs: needsMe,
+      needs,
       stalled: (thread) => isStalled(thread),
-      yourMove: (thread) => !busy(thread) && !needsMe(thread) && state?.awaiting[thread.id] !== undefined,
+      yourMove: (thread) => !busy(thread) && !needs(thread) && state?.awaiting[thread.id] !== undefined,
       running: busy,
       prAction: (thread) =>
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
@@ -1338,7 +1344,7 @@ function TriageThreadList({
         thread.id !== activeThreadId &&
         Date.now() - thread.updatedAt > DONE_AFTER_MS &&
         !busy(thread) &&
-        !needsMe(thread) &&
+        !needs(thread) &&
         state?.watching[thread.id] === undefined &&
         state?.awaiting[thread.id] === undefined &&
         !isStalled(thread) &&
@@ -1369,10 +1375,10 @@ function TriageThreadList({
       };
     }
 
-    const stalled = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && isStalled(thread));
+    const stalled = awake.filter((thread) => !thread.isPinned && !needs(thread) && isStalled(thread));
     const pinned = awake.filter((thread) => thread.isPinned);
-    const attention = awake.filter((thread) => !thread.isPinned && needsMe(thread));
-    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && !isStalled(thread) && !sets.done(thread));
+    const attention = awake.filter((thread) => !thread.isPinned && needs(thread));
+    const rest = awake.filter((thread) => !thread.isPinned && !needs(thread) && !isStalled(thread) && !sets.done(thread));
 
     const result: Group[] = [];
     if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
@@ -1417,7 +1423,7 @@ function TriageThreadList({
     }
     const firstUser = result.find((group) => group.section !== undefined);
     if (firstUser) firstUser.firstUserGroup = true;
-    const done = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && sets.done(thread));
+    const done = awake.filter((thread) => !thread.isPinned && !needs(thread) && sets.done(thread));
     result.push({
       id: "done",
       title: "Done",

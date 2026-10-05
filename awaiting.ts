@@ -30,11 +30,16 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 3;
+const AWAITING_VERSION = 4;
 
 /** True when the tail of the message hands the next step to the user. */
 export function asksUser(text: string): boolean {
-  const tail = text.trim().slice(-900);
+  // Conditional fallbacks ("If it still breaks, tell me what you did") aren't
+  // asks; conditions addressed to you ("If you want, I can…") still are.
+  const tail = text
+    .trim()
+    .slice(-900)
+    .replace(/(^|[.!?\n]\s*)if (?!you\b)(?:[^.!?\n]|[.!?](?=\S))*[.!?]?/gi, "$1");
   // Trailing numbered options are a choice for you, whatever the wording.
   return ASKS.test(tail) || parseDecisionOptions(text).length > 0;
 }

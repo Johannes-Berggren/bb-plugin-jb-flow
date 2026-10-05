@@ -21,6 +21,9 @@ test("wrapped-up messages don't", () => {
   assert.ok(!asksUser("**Blocked:** Waiting for release (last: v6.100.0)."));
   assert.ok(!asksUser("The open item is whether they need an AI block. If they say yes, that's new development."));
   assert.ok(!asksUser("The prod apply is running in the background. I'll report when it finishes."));
+  assert.ok(!asksUser("Shipped in v0.2.15. If switching shows on v0.2.15 still misbehaves, tell me what you did and what went wrong."));
+  assert.ok(!asksUser("Main's CI is blocked until #1113 merges.\n\nWhen #1113 is green, I'll:\n1. Merge it.\n2. Bring #1110 up to date and merge it.\n3. Run the first release train."));
+  assert.ok(asksUser("If you place one on dev with a throwaway password, I'll check the admin side."));
 });
 
 test("follow-up promises are detected, asks win", () => {
