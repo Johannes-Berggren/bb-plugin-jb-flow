@@ -11,6 +11,7 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
   - **Needs me**: unread finished threads, errors, and threads waiting for input.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. They map onto your existing sections by name.
   - Any other sections, collapsed.
+  - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here.
   - Snoozed threads, collapsed.
 - **Rows** show a project chip with a stable colour per project, tags, and an age fade for idle threads.
 - **Keyboard**, on a focused row:

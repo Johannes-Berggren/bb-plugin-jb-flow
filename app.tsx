@@ -1117,6 +1117,9 @@ function useSectionDrag(onMove: (key: string, target: string, after: boolean) =>
   return { start, dragging };
 }
 
+/** An unfiled thread counts as done only after this long without activity. */
+const DONE_AFTER_MS = 2 * 3_600_000;
+
 // --- smart filters (computed sets, not your sections) --------------------------------
 
 type SmartId = "needs" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
@@ -1313,9 +1316,12 @@ function TriageThreadList({
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
       readyToMerge: (thread) => !busy(thread) && openPrs(thread).some((pr) => pr.attention === "ready_to_merge"),
       autopilot: (thread) => state?.watching[thread.id] !== undefined,
-      // Only unfiled threads: anything you put in a section stays there.
+      // Only unfiled threads: anything you put in a section stays there. A thread
+      // you just worked in, or are looking at, stays in Active for a while.
       done: (thread) =>
         thread.sectionId === null &&
+        thread.id !== activeThreadId &&
+        Date.now() - thread.updatedAt > DONE_AFTER_MS &&
         !busy(thread) &&
         !needsMe(thread) &&
         state?.watching[thread.id] === undefined &&
@@ -1385,6 +1391,15 @@ function TriageThreadList({
     }
     const firstUser = result.find((group) => group.section !== undefined);
     if (firstUser) firstUser.firstUserGroup = true;
+    const done = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && sets.done(thread));
+    result.push({
+      id: "done",
+      title: "Done",
+      threads: done,
+      defaultCollapsed: true,
+      dynamic: { glyph: "check", tone: "text-green-500" },
+      action: done.length > 0 ? { label: "Archive all", run: () => void rpc.call("archive", { threadIds: done.map((thread) => thread.id) }) } : undefined,
+    });
     result.push({
       id: "snoozed",
       title: "Snoozed",
@@ -1393,7 +1408,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys]);
+  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId]);
 
   const defaults = useMemo(
     () =>
