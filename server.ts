@@ -1066,7 +1066,7 @@ async function yourMove() {
               }
               options = decisionCache.options;
             }
-            const result = { threadId: thread?.id ?? null, title: thread?.title ?? null, options };
+            const result = { threadId: thread?.id ?? null, title: thread?.title ?? null, status: thread?.status ?? null, options };
             return {
               exitCode: 0,
               stdout: json
