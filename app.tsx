@@ -2010,15 +2010,24 @@ function FocusReporter() {
 }
 
 // --- plan review banners -----------------------------------------------------------
-// BB renders a plan awaiting approval in a banner that starts collapsed and caps
-// the plan body at 288px. Core renderers can't be replaced, so this content script
-// expands each banner once when it appears (a manual collapse sticks) and lifts
-// the height cap. Selectors are BB's own test ids.
+// BB renders a plan awaiting approval in a banner that starts collapsed, caps its
+// body at min(32rem, 50dvh) and sizes the banner to the space left in the thread.
+// Core renderers can't be replaced, so this content script expands each banner
+// once when it appears (a manual collapse sticks) and lets it take ~75% of the
+// window with a single scroll area. Selectors are BB's own test ids.
 
 const PLAN_BANNER = 'section[data-testid="plan-review-banner"]';
 const PLAN_STYLE = `
+${PLAN_BANNER}[data-expanded] {
+  max-height: 80dvh !important;
+}
+${PLAN_BANNER} .overflow-y-auto:has([data-testid="plan-review-request"]) {
+  max-height: 75dvh !important;
+}
+/* The plan body itself doesn't scroll; the banner body does. */
 ${PLAN_BANNER} [data-testid="plan-review-request"] > div:first-child {
-  max-height: 75vh !important;
+  max-height: none !important;
+  overflow: visible !important;
 }
 ${PLAN_BANNER} [data-testid="plan-review-request"] .text-xs {
   font-size: 0.8125rem;
