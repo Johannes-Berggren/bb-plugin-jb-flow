@@ -10,7 +10,7 @@ import { z } from "zod";
 import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
 import { parseDecisionOptions } from "./decisions";
-import { createFocus, focusReportSchema } from "./focus";
+import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
@@ -886,6 +886,53 @@ async function yourMove() {
               (pr) => `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number}  ${pr.attention.padEnd(17)} ${pr.title}`,
             );
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PRs linked." };
+          }
+          case "classify": {
+            // Debug view: where each open thread lands in the triage sidebar, with
+            // the tail of its last agent message to check the call against.
+            const [threads, awaitingAll, byThread, watching, sections] = await Promise.all([
+              bb.sdk.threads.list({ limit: 500 }),
+              awaiting.all(),
+              prTracker.byThread(),
+              watchingByThread(),
+              bb.sdk.threadSections.list(),
+            ]);
+            const sectionName = new Map(sections.map((section) => [section.id, section.name]));
+            const rows = [];
+            for (const thread of threads) {
+              if (thread.archivedAt !== null || thread.visibility !== "visible" || thread.parentThreadId !== null) continue;
+              const busy = thread.status === "active" || thread.status === "starting";
+              const prs = (byThread[thread.id] ?? []).map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`);
+              const open = (byThread[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft");
+              const settled = (byThread[thread.id] ?? []).every((pr) => pr.state === "merged" || pr.state === "closed");
+              const needs = needsAttention(thread);
+              const group = needs
+                ? "needs-me"
+                : thread.pinnedAt
+                  ? "pinned"
+                  : busy
+                    ? "running"
+                    : awaitingAll[thread.id] !== undefined
+                      ? "your-move"
+                      : thread.sectionId === null && !watching[thread.id] && settled && Date.now() - thread.updatedAt > 2 * 3_600_000
+                        ? "done"
+                        : "lane";
+              const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
+              rows.push({
+                id: thread.id,
+                title: thread.title,
+                status: thread.status,
+                section: thread.sectionId === null ? "Active" : sectionName.get(thread.sectionId) ?? thread.sectionId,
+                group,
+                awaiting: awaitingAll[thread.id] !== undefined,
+                watching: watching[thread.id] ?? null,
+                openPrs: open.map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`),
+                prs: prs.length,
+                idleHours: Math.round((Date.now() - thread.updatedAt) / 3_600_000),
+                tail: (output.output ?? "").trim().slice(-1500),
+              });
+            }
+            return { exitCode: 0, stdout: JSON.stringify(rows) };
           }
           case "pr-radar": {
             // Threads with an open PR that needs fixing or is ready to merge,
