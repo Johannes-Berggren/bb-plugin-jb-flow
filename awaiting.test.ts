@@ -48,4 +48,5 @@ test("waiting on someone else", () => {
   assert.ok(waitsOnOthers("> 1. Rebase the contract.\n> 2. Cancel 11506 if he agrees.\n>\n> Reply **go** with his answer and I'll do both."));
   assert.ok(!waitsOnOthers("Should I merge #12 now?"), "a real ask to you");
   assert.ok(!waitsOnOthers("Merged and deployed. Nothing left to do."));
+  assert.ok(!waitsOnOthers("The job is scheduled. It will check the numbers every night."));
 });

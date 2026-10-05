@@ -66,7 +66,7 @@ export function promisesFollowUp(text: string): boolean {
 
 // The next move is someone else's: a reviewer, a customer, a colleague. Names
 // are capitalised words; "you" is excluded (that's an ask, handled above).
-const PERSON = String.raw`(?:he|she|they|(?!You\b)\p{Lu}[\p{L}'’-]+(?: \p{Lu}[\p{L}'’-]+)?)`;
+const PERSON = String.raw`(?:he|she|they|(?!(?:You|It|This|That|These|Those|We|There|Then|Once|When|CI|GitHub|Vercel|Linear|Sentry|Slack)\b)\p{Lu}[\p{L}'’-]+(?: \p{Lu}[\p{L}'’-]+)?)`;
 const WAITS = new RegExp(
   [
     String.raw`\b([Ww]aiting|[Ww]ait) (for|on) (?![Yy]ou\b|CI\b|ci\b|(the|that) CI\b|[Cc]hecks?\b|(the|that|it|a) (CI|build|deploy|release|certificate|run|job|result)\b|release\b|deploy\b)\w`,
