@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksUser, promisesFollowUp } from "./awaiting.ts";
+import { asksUser, promisesFollowUp, waitsOnOthers } from "./awaiting.ts";
 
 test("hands-off messages count as your move", () => {
   assert.ok(asksUser("I've reopened the decision board. Use \"Copy this instead\" and paste the text here."));
@@ -32,4 +32,17 @@ test("follow-up promises are detected, asks win", () => {
   assert.ok(promisesFollowUp("Still waiting on that CI result; will report when it lands."));
   assert.ok(!promisesFollowUp("I'll report when it finishes. Should I also merge #12?"));
   assert.ok(!promisesFollowUp("Merged and deployed. Nothing left to do."));
+});
+
+test("waiting on someone else", () => {
+  assert.ok(waitsOnOthers("On #1136 and #1137, Knut is now the only pending reviewer. Their approvals are on older commits."));
+  assert.ok(waitsOnOthers("Løvenskiold stays cancelled.\n\nOnce he sends the invoices, I can check that Xledger numbered them."));
+  assert.ok(waitsOnOthers("Everything planned for BOAS is done. The next step depends on Nikolai: which tenant users get access."));
+  assert.ok(waitsOnOthers("Sent the reminder to Martin on Friday; still no reply from him."));
+  assert.ok(!waitsOnOthers("Waiting for CI on #1191; I'll merge when it's green."));
+  assert.ok(waitsOnOthers("Once Håkon confirms, say \"go\" and I'll switch the setup."), "relaying his answer is waiting on him");
+  assert.ok(waitsOnOthers("4. I apply the remaining eight pairs.\n\nTell me when he replies, or paste his answer here."));
+  assert.ok(waitsOnOthers("> 1. Rebase the contract.\n> 2. Cancel 11506 if he agrees.\n>\n> Reply **go** with his answer and I'll do both."));
+  assert.ok(!waitsOnOthers("Should I merge #12 now?"), "a real ask to you");
+  assert.ok(!waitsOnOthers("Merged and deployed. Nothing left to do."));
 });

@@ -475,6 +475,8 @@ type Group = {
   dynamic?: { glyph: GlyphName; tone: string };
   /** First of your own sections: draws the "Your sections" divider above it. */
   firstUserGroup?: boolean;
+  /** Your section, but the plugin also files matching threads into it. */
+  auto?: boolean;
   /** Your section behind this group (null = the unsectioned Active lane). */
   section?: { id: string | null; name: string; isLane: boolean };
 };
@@ -869,6 +871,7 @@ function GroupHeader({
   dynamic,
   menu,
   onDragStart,
+  auto,
 }: {
   title: string;
   count: number;
@@ -883,6 +886,7 @@ function GroupHeader({
   menu?: ReactNode;
   /** Makes the header draggable to reorder sections. */
   onDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
+  auto?: boolean;
 }) {
   const header = (
     <div onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
@@ -893,6 +897,14 @@ function GroupHeader({
           <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3" />
         )}
         <span className={cn("truncate", dynamic && "text-foreground")}>{title}</span>
+        {auto ? (
+          <span
+            title="Fills itself: unfiled threads whose agent is waiting on someone else, or whose open PRs all wait on a reviewer. Threads you move here stay."
+            className="rounded border border-border px-1 text-[9px] font-normal uppercase leading-3 tracking-wide text-muted-foreground"
+          >
+            auto
+          </span>
+        ) : null}
         {hint ? (
           <kbd className="rounded border border-border px-1 text-[10px] font-normal leading-4 opacity-0 group-hover/header:opacity-100">{hint}</kbd>
         ) : null}
@@ -1375,6 +1387,16 @@ function TriageThreadList({
       };
     }
 
+    // Waiting on someone else: the agent said so, or every open PR waits on a reviewer.
+    // Only unfiled threads move automatically; your own sections stay as you set them.
+    const waitsOnOthers = (thread: PluginSidebarThread) => {
+      if (thread.sectionId !== null || busy(thread) || needs(thread) || isStalled(thread)) return false;
+      if (state?.awaiting[thread.id] !== undefined) return false;
+      if (state?.waitingOthers[thread.id] !== undefined) return true;
+      const open = openPrs(thread);
+      return open.length > 0 && open.every((pr) => pr.attention === "review_requested");
+    };
+    const waitingLane = lanes.find((lane) => lane.id === "waiting");
     const stalled = awake.filter((thread) => !thread.isPinned && !needs(thread) && isStalled(thread));
     const pinned = awake.filter((thread) => thread.isPinned);
     const attention = awake.filter((thread) => !thread.isPinned && needs(thread));
@@ -1404,7 +1426,14 @@ function TriageThreadList({
           id: `lane:${lane.id}`,
           title: lane.title,
           hint: lane.key,
-          threads: rest.filter((thread) => thread.sectionId === lane.sectionId),
+          threads: rest.filter((thread) =>
+            lane.id === "waiting"
+              ? thread.sectionId === lane.sectionId || waitsOnOthers(thread)
+              : lane.id === "active"
+                ? thread.sectionId === null && !(waitingLane && waitsOnOthers(thread))
+                : thread.sectionId === lane.sectionId,
+          ),
+          ...(lane.id === "waiting" ? { auto: true } : {}),
           defaultCollapsed: lane.id === "low" || lane.id === "later",
           limit: lane.id === "active" ? 25 : 15,
           section: { id: lane.sectionId, name: lane.title, isLane: true },
@@ -1558,6 +1587,7 @@ function TriageThreadList({
               hint={group.hint}
               dynamic={group.dynamic}
               menu={sectionMenu(group)}
+              auto={group.auto}
               {...(group.section && !smart ? { onDragStart: (event: ReactPointerEvent<HTMLElement>) => sectionDrag.start(sectionKey(group.section!.id), event) } : {})}
             />
             {collapsed ? null : group.threads.length === 0 ? (

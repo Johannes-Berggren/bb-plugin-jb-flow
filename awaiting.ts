@@ -30,7 +30,7 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 4;
+const AWAITING_VERSION = 6;
 
 /** True when the tail of the message hands the next step to the user. */
 export function asksUser(text: string): boolean {
@@ -64,6 +64,42 @@ export function promisesFollowUp(text: string): boolean {
   return PROMISES.test(text.trim().slice(-600)) && !asksUser(text);
 }
 
+// The next move is someone else's: a reviewer, a customer, a colleague. Names
+// are capitalised words; "you" is excluded (that's an ask, handled above).
+const PERSON = String.raw`(?:he|she|they|(?!You\b)\p{Lu}[\p{L}'’-]+(?: \p{Lu}[\p{L}'’-]+)?)`;
+const WAITS = new RegExp(
+  [
+    String.raw`\b([Ww]aiting|[Ww]ait) (for|on) (?![Yy]ou\b|CI\b|ci\b|(the|that) CI\b|[Cc]hecks?\b|(the|that|it|a) (CI|build|deploy|release|certificate|run|job|result)\b|release\b|deploy\b)\w`,
+    String.raw`\b([Oo]nce|[Ww]hen|[Uu]ntil|[Aa]fter) ${PERSON} (replies|responds|answers|confirms|approves|reviews|sends|signs|gets back|has (replied|answered|confirmed|reviewed))`,
+    String.raw`\b(depends on|is up to|pending on|[Bb]locked on) ${PERSON}\b`,
+    String.raw`\b(only )?pending reviewers?\b|\bawaiting (review|a reply|reply|response|approval|their|his|her)\b`,
+    String.raw`\b(no|nothing|not) (reply|answer|response) (yet )?from\b`,
+    String.raw`\b([Aa]sked|[Ee]mailed|[Pp]inged|[Mm]essaged|[Nn]udged) ${PERSON}\b[^.\n]{0,60}\b(waiting|reply|answer|back)\b`,
+  ].join("|"),
+  "u",
+);
+
+// "Tell me when he replies", "Reply go with his answer": your only part is to
+// pass someone else's answer on, so the thread is really waiting on them.
+const RELAY = new RegExp(
+  [
+    String.raw`\b(tell me|let me know|paste (it|his|her|their)?|reply|say)\b[^.\n]{0,50}\b(when|once|after) ${PERSON} (replies|answers|responds|confirms|gets back|has replied)`,
+    String.raw`\b([Oo]nce|[Ww]hen|[Aa]fter) ${PERSON} (replies|answers|responds|confirms|gets back)[^.\n]{0,40}\b(tell me|let me know|say|reply|paste)\b`,
+    String.raw`\b(with|paste) (his|her|their) (answer|reply|response)\b`,
+  ].join("|"),
+  "u",
+);
+
+export function relaysOthers(text: string): boolean {
+  return RELAY.test(text.trim().slice(-600));
+}
+
+/** True when the message hands the next step to someone other than you. */
+export function waitsOnOthers(text: string): boolean {
+  if (relaysOthers(text)) return true;
+  return WAITS.test(text.trim().slice(-700)) && !asksUser(text);
+}
+
 /** A promise counts as stalled after the thread has been idle this long. */
 export const STALLED_AFTER_MS = 60 * 60_000;
 
@@ -88,15 +124,37 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     await kv.set("promised", all);
     changed();
   };
+  const getWaiting = async () => (await kv.get<Record<string, number>>("waitingOthers")) ?? {};
+  const setWaiting = async (threadId: string, value: boolean) => {
+    const all = await getWaiting();
+    if (value === (threadId in all)) return;
+    if (value) all[threadId] = Date.now();
+    else delete all[threadId];
+    await kv.set("waitingOthers", all);
+    changed();
+  };
   const classify = async (threadId: string, text: string) => {
-    await set(threadId, asksUser(text));
+    await set(threadId, asksUser(text) && !relaysOthers(text));
     await setPromised(threadId, promisesFollowUp(text));
+    await setWaiting(threadId, waitsOnOthers(text));
   };
 
-  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => classify(thread.id, lastAssistantText ?? ""));
+  bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
+    const text = lastAssistantText ?? "";
+    await classify(thread.id, text);
+    // A thread you filed under "Waiting for others" goes back to Active once a
+    // turn ends without waiting on anyone (it asks you, or it's done).
+    if (waitsOnOthers(text)) return;
+    const current = await bb.sdk.threads.get({ threadId: thread.id }).catch(() => null);
+    if (current?.sectionId == null) return;
+    const sections = await bb.sdk.threadSections.list().catch(() => []);
+    const waiting = sections.find((section) => /waiting/i.test(section.name));
+    if (waiting && current.sectionId === waiting.id) await bb.sdk.threads.update({ threadId: thread.id, sectionId: null });
+  });
   const clear = async ({ thread }: { thread: { id: string } }) => {
     await set(thread.id, false);
     await setPromised(thread.id, false);
+    await setWaiting(thread.id, false);
   };
   bb.events.on("thread.active", clear);
   bb.events.on("thread.archived", clear);
@@ -119,5 +177,5 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     },
   });
 
-  return { all: get, promised: getPromised };
+  return { all: get, promised: getPromised, waitingOthers: getWaiting };
 }

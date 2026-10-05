@@ -76,6 +76,8 @@ const stateSchema = z.object({
   awaiting: z.record(z.string(), z.number()),
   /** Idle threads whose agent promised to report back by itself (thread id → since). */
   promised: z.record(z.string(), z.number()),
+  /** Idle threads whose next step is someone else's (thread id → since). */
+  waitingOthers: z.record(z.string(), z.number()),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Per thread: every PR it created (any repo), stack-ordered. */
@@ -527,6 +529,7 @@ async function yourMove() {
     state_get: async () => ({
       awaiting: await awaiting.all(),
       promised: await awaiting.promised(),
+      waitingOthers: await awaiting.waitingOthers(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),
@@ -907,13 +910,14 @@ async function yourMove() {
           case "classify": {
             // Debug view: where each open thread lands in the triage sidebar, with
             // the tail of its last agent message to check the call against.
-            const [threads, awaitingAll, byThread, watching, sections, promised] = await Promise.all([
+            const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers] = await Promise.all([
               bb.sdk.threads.list({ limit: 500 }),
               awaiting.all(),
               prTracker.byThread(),
               watchingByThread(),
               bb.sdk.threadSections.list(),
               awaiting.promised(),
+              awaiting.waitingOthers(),
             ]);
             const sectionName = new Map(sections.map((section) => [section.id, section.name]));
             const rows = [];
@@ -934,6 +938,10 @@ async function yourMove() {
                       ? "stalled"
                       : awaitingAll[thread.id] !== undefined
                       ? "your-move"
+                      : thread.sectionId === null &&
+                          (waitingOthers[thread.id] !== undefined ||
+                            (open.length > 0 && open.every((pr) => pr.attention === "review_requested")))
+                        ? "waiting"
                       : thread.sectionId === null && !watching[thread.id] && settled && Date.now() - thread.updatedAt > 2 * 3_600_000
                         ? "done"
                         : "lane";
