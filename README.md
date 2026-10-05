@@ -9,6 +9,7 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 
 - **Groups**, top to bottom:
   - **Needs me**: unread finished threads, errors, and threads waiting for input.
+  - **Stalled** (only when there are some): the agent said it would report back ("I'll report when it finishes", "I'm checking every 30 seconds") but the thread has been idle for over an hour with nothing watching it. **Nudge all** asks each one to check and continue.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. They map onto your existing sections by name.
   - Any other sections, collapsed.
   - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here.

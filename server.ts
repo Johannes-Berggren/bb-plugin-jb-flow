@@ -74,6 +74,8 @@ const stateSchema = z.object({
   stripProjectPrefixes: z.array(z.string()),
   /** Idle threads whose last agent message hands the next move to you (thread id → since). */
   awaiting: z.record(z.string(), z.number()),
+  /** Idle threads whose agent promised to report back by itself (thread id → since). */
+  promised: z.record(z.string(), z.number()),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Per thread: every PR it created (any repo), stack-ordered. */
@@ -523,6 +525,7 @@ async function yourMove() {
   bb.rpc.register(rpcContract, {
     state_get: async () => ({
       awaiting: await awaiting.all(),
+      promised: await awaiting.promised(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),
@@ -903,12 +906,13 @@ async function yourMove() {
           case "classify": {
             // Debug view: where each open thread lands in the triage sidebar, with
             // the tail of its last agent message to check the call against.
-            const [threads, awaitingAll, byThread, watching, sections] = await Promise.all([
+            const [threads, awaitingAll, byThread, watching, sections, promised] = await Promise.all([
               bb.sdk.threads.list({ limit: 500 }),
               awaiting.all(),
               prTracker.byThread(),
               watchingByThread(),
               bb.sdk.threadSections.list(),
+              awaiting.promised(),
             ]);
             const sectionName = new Map(sections.map((section) => [section.id, section.name]));
             const rows = [];
@@ -925,7 +929,9 @@ async function yourMove() {
                   ? "pinned"
                   : busy
                     ? "running"
-                    : awaitingAll[thread.id] !== undefined
+                    : promised[thread.id] !== undefined && !watching[thread.id] && Date.now() - thread.updatedAt > 3_600_000
+                      ? "stalled"
+                      : awaitingAll[thread.id] !== undefined
                       ? "your-move"
                       : thread.sectionId === null && !watching[thread.id] && settled && Date.now() - thread.updatedAt > 2 * 3_600_000
                         ? "done"

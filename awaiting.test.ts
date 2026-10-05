@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksUser } from "./awaiting.ts";
+import { asksUser, promisesFollowUp } from "./awaiting.ts";
 
 test("hands-off messages count as your move", () => {
   assert.ok(asksUser("I've reopened the decision board. Use \"Copy this instead\" and paste the text here."));
@@ -21,4 +21,12 @@ test("wrapped-up messages don't", () => {
   assert.ok(!asksUser("**Blocked:** Waiting for release (last: v6.100.0)."));
   assert.ok(!asksUser("The open item is whether they need an AI block. If they say yes, that's new development."));
   assert.ok(!asksUser("The prod apply is running in the background. I'll report when it finishes."));
+});
+
+test("follow-up promises are detected, asks win", () => {
+  assert.ok(promisesFollowUp("The prod apply is running in the background: 51,600 documents. I'll report when it finishes."));
+  assert.ok(promisesFollowUp("Firebase is still issuing its certificate. I'm checking every 30 seconds for up to 30 minutes and will tell you when it's live."));
+  assert.ok(promisesFollowUp("Still waiting on that CI result; will report when it lands."));
+  assert.ok(!promisesFollowUp("I'll report when it finishes. Should I also merge #12?"));
+  assert.ok(!promisesFollowUp("Merged and deployed. Nothing left to do."));
 });

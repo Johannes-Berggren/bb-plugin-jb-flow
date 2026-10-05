@@ -1118,14 +1118,21 @@ function useSectionDrag(onMove: (key: string, target: string, after: boolean) =>
   return { start, dragging };
 }
 
+/** Sent by "Nudge" on a stalled thread. */
+const NUDGE =
+  "You said you'd report back, but this thread went idle and nothing is running. Check the current state now, then continue or tell me what's blocking.";
+/** A promise to report back counts as stalled after this long idle (matches awaiting.ts). */
+const STALLED_AFTER_MS = 60 * 60_000;
+
 /** An unfiled thread counts as done only after this long without activity. */
 const DONE_AFTER_MS = 2 * 3_600_000;
 
 // --- smart filters (computed sets, not your sections) --------------------------------
 
-type SmartId = "needs" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
+type SmartId = "needs" | "stalled" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
 const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
   { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, failed, or finished and unread" },
+  { id: "stalled", label: "Stalled", glyph: "hourglass", tone: "text-orange-500", hint: "The agent said it would report back, but has been idle for over an hour. Nudge it" },
   { id: "yourMove", label: "Your move", glyph: "question", tone: "text-sky-500", hint: "You've read it, but the agent's last message asks you to decide, answer or act" },
   { id: "running", label: "Running", glyph: "spinner", tone: "text-sky-500", hint: "Agents working right now" },
   { id: "prAction", label: "PR action", glyph: "pr", tone: "text-red-500", hint: "An open PR has failing checks, requested changes or conflicts" },
@@ -1307,10 +1314,17 @@ function TriageThreadList({
     const awake = visible.filter((thread) => thread.sectionId !== snoozedSectionId);
 
     const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";
+    // Promised to report back, but nothing is running and nothing is watching for it.
+    const isStalled = (thread: PluginSidebarThread) =>
+      !busy(thread) &&
+      state?.promised[thread.id] !== undefined &&
+      state?.watching[thread.id] === undefined &&
+      Date.now() - thread.updatedAt > STALLED_AFTER_MS;
     const openPrs = (thread: PluginSidebarThread) =>
       threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
       needs: needsMe,
+      stalled: (thread) => isStalled(thread),
       yourMove: (thread) => !busy(thread) && !needsMe(thread) && state?.awaiting[thread.id] !== undefined,
       running: busy,
       prAction: (thread) =>
@@ -1327,6 +1341,7 @@ function TriageThreadList({
         !needsMe(thread) &&
         state?.watching[thread.id] === undefined &&
         state?.awaiting[thread.id] === undefined &&
+        !isStalled(thread) &&
         allSettled(threadPrs(state?.threadPrs[thread.id], null)),
     };
     const smartCounts = Object.fromEntries(
@@ -1354,9 +1369,10 @@ function TriageThreadList({
       };
     }
 
+    const stalled = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && isStalled(thread));
     const pinned = awake.filter((thread) => thread.isPinned);
     const attention = awake.filter((thread) => !thread.isPinned && needsMe(thread));
-    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && !sets.done(thread));
+    const rest = awake.filter((thread) => !thread.isPinned && !needsMe(thread) && !isStalled(thread) && !sets.done(thread));
 
     const result: Group[] = [];
     if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
@@ -1366,6 +1382,15 @@ function TriageThreadList({
       threads: attention,
       dynamic: { glyph: "question", tone: "text-amber-500" },
     });
+    if (stalled.length > 0) {
+      result.push({
+        id: "stalled",
+        title: "Stalled",
+        threads: stalled,
+        dynamic: { glyph: "hourglass", tone: "text-orange-500" },
+        action: { label: "Nudge all", run: () => stalled.forEach((thread) => void rpc.call("thread_reply", { threadId: thread.id, text: NUDGE })) },
+      });
+    }
     for (const key of sectionKeys) {
       const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
       if (lane) {
