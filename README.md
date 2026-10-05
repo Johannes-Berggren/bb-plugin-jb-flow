@@ -139,7 +139,7 @@ bb jb-flow prs [--self|<thread-id>] [--json]
 bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]
 bb jb-flow watches [--json]
 bb jb-flow check-now
-bb jb-flow your-move [--json]
+bb jb-flow your-move [--json] [--open]
 bb jb-flow focused [--json]
 bb jb-flow decisions [<thread-id>] [--json]
 bb jb-flow tell <text…> [--thread <id>]

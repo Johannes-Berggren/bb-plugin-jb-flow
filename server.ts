@@ -783,7 +783,7 @@ async function yourMove() {
       },
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
-      { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json]" },
+      { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json] [--open]" },
       { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
       { name: "decisions", summary: "Numbered options the focused thread is waiting on", usage: "bb jb-flow decisions [<thread-id>] [--json]" },
       { name: "stop", summary: "Stop a thread's run (default: focused)", usage: "bb jb-flow stop [<thread-id>|--focused]" },
@@ -919,6 +919,14 @@ async function yourMove() {
             return { exitCode: 0, stdout: "Checked releases and CI watches." };
           case "your-move": {
             const { items } = await yourMove();
+            if (argv.includes("--open")) {
+              // Oldest first; skip the one you're already looking at.
+              const focused = focus.focusedThreadId();
+              const next = items.find((item) => item.threadId !== focused) ?? items[0];
+              if (next === undefined) return { exitCode: 0, stdout: "Nothing is waiting on you." };
+              await bb.sdk.threads.open({ threadId: next.threadId, file: null });
+              return { exitCode: 0, stdout: `Opened ${next.threadId}  ${next.title}` };
+            }
             if (json) return { exitCode: 0, stdout: JSON.stringify({ count: items.length, items }) };
             const lines = items.map((item) => `${formatWhen(item.since).padEnd(16)} ${item.threadId}  ${item.title}`);
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "Nothing is waiting on you." };
