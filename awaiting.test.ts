@@ -41,6 +41,10 @@ test("waiting on someone else", () => {
   assert.ok(waitsOnOthers("Everything planned for BOAS is done. The next step depends on Nikolai: which tenant users get access."));
   assert.ok(waitsOnOthers("CI passed. I'm waiting on the fresh review I requested, and will pick it up when it arrives."));
   assert.ok(waitsOnOthers("The two invoices now show as drafts in billing. Håkon can push them to Xledger from there."));
+  assert.ok(waitsOnOthers("I've snoozed this thread until Thursday. When it wakes, I'll check the \"Re: dokumenter\" thread for Nikolai's reply on two points."));
+  assert.ok(waitsOnOthers("When the thread wakes on 12 Oct I'll check for a reply. If Jack still hasn't answered, I'll draft a nudge for you to review."));
+  assert.ok(waitsOnOthers("When the thread wakes, I'll check whether he replied and whether the invoice has been sent."));
+  assert.ok(waitsOnOthers("When it wakes, I'll look for Silje's reply in the thread."));
   assert.ok(waitsOnOthers("Sent the reminder to Martin on Friday; still no reply from him."));
   assert.ok(!waitsOnOthers("Waiting for CI on #1191; I'll merge when it's green."));
   assert.ok(waitsOnOthers("Once Håkon confirms, say \"go\" and I'll switch the setup."), "relaying his answer is waiting on him");

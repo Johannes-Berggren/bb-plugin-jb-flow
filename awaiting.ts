@@ -30,7 +30,7 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 8;
+const AWAITING_VERSION = 9;
 
 /** True when the tail of the message hands the next step to the user. */
 export function asksUser(text: string): boolean {
@@ -74,6 +74,9 @@ const WAITS = new RegExp(
     String.raw`\b(depends on|is up to|pending on|[Bb]locked on) ${PERSON}\b`,
     String.raw`\b(only )?pending reviewers?\b|\bawaiting (review|a reply|reply|response|approval|their|his|her)\b`,
     String.raw`\b(no|nothing|not) (reply|answer|response) (yet )?from\b`,
+    String.raw`\b(check|look) (for|whether|if) (${PERSON}(’s|'s)? (reply|answer|response)|${PERSON} (replied|answered|responded|has (replied|answered)))`,
+    String.raw`\b${PERSON} (still )?(hasn't|hasn’t|has not|haven't|haven’t) (answered|replied|responded|got back)`,
+    String.raw`\bcheck (the [^.\n]{0,40} )?(thread|inbox|mail|email|channel) for (${PERSON}(’s|'s)?|a|any|their|his|her) (reply|answer|response)`,
     String.raw`\b${PERSON} (can|needs to|has to|should|will) (now )?(push|send|review|approve|sign|reply|confirm|answer|check|merge|decide)\b`,
     String.raw`\b([Aa]sked|[Ee]mailed|[Pp]inged|[Mm]essaged|[Nn]udged) ${PERSON}\b[^.\n]{0,60}\b(waiting|reply|answer|back)\b`,
   ].join("|"),

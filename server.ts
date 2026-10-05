@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
-import { createAwaiting } from "./awaiting";
+import { createAwaiting, waitsOnOthers } from "./awaiting";
 import { parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
@@ -302,11 +302,18 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function wake(threadId: string, record: Snooze, reason: "due" | "manual"): Promise<void> {
     const sections = await bb.sdk.threadSections.list();
-    const restoreTo =
+    let restoreTo =
       record.fromSectionId !== null &&
       sections.some((section) => section.id === record.fromSectionId)
         ? record.fromSectionId
         : null;
+    // Snoozed while waiting on someone ("when it wakes, I'll check for Nikolai's
+    // reply"): wake into Waiting for others instead of the old section.
+    const waitingSection = sections.find((section) => /waiting/i.test(section.name));
+    if (waitingSection) {
+      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+      if (waitsOnOthers(output.output ?? "")) restoreTo = waitingSection.id;
+    }
     await bb.sdk.threads.update({ threadId, sectionId: restoreTo });
     if (reason === "due") {
       await bb.sdk.threads.markUnread({ threadId });
