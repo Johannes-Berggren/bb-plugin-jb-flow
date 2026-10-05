@@ -95,6 +95,7 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 - Every BB window reports which thread is focused, including the focused pane in a split view.
 - External controllers can then act on the focused thread without simulating keystrokes:
   - `bb jb-flow focused` prints the focused thread
+  - `bb jb-flow decisions` lists the numbered options it's waiting on (the Stream Deck turns them into keys)
   - `bb jb-flow tell <text>` sends a message to it
   - `bb jb-flow stop` stops its run
   - `bb jb-flow needs-me` lists threads waiting on you
@@ -140,6 +141,7 @@ bb jb-flow watches [--json]
 bb jb-flow check-now
 bb jb-flow your-move [--json]
 bb jb-flow focused [--json]
+bb jb-flow decisions [<thread-id>] [--json]
 bb jb-flow tell <text…> [--thread <id>]
 bb jb-flow stop [<thread-id>|--focused]
 bb jb-flow needs-me [--json]
