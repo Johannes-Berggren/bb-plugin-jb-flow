@@ -145,6 +145,7 @@ bb jb-flow watches [--json]
 bb jb-flow check-now
 bb jb-flow your-move [--json] [--open]
 bb jb-flow pr-radar [--json] [--open]
+bb jb-flow deck                 # one cheap JSON snapshot for the Stream Deck
 bb jb-flow leftovers [--refresh] [--json] [--clean]
 bb jb-flow classify            # debug: where every open thread lands, with its last message
 bb jb-flow focused [--json]

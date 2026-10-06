@@ -504,13 +504,13 @@ export default async function plugin(bb: BbPluginApi) {
     return watching;
   }
 
-async function yourMove() {
+async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const waiting = await awaiting.all();
     const items = [];
     for (const [threadId, since] of Object.entries(waiting)) {
       const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
       if (!thread || thread.archivedAt !== null || thread.status !== "idle") continue;
-      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+      const output = withAsk ? await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })) : { output: null };
       // The ask is at the end of the message: show its last meaningful lines.
       const ask = (output.output ?? "")
         .split("\n")
@@ -797,8 +797,89 @@ async function yourMove() {
     "<when>: 30m, 2h, 3d, 1w, today, tonight, tomorrow, mon…sun, next-week, YYYY-MM-DD, YYYY-MM-DDTHH:MM",
   ].join("\n");
 
-  // The deck polls `decisions` every few seconds; re-parse only when the thread changes.
+  // --- cheap snapshots for external controllers (Stream Deck) ------------------
+  // The deck polls every few seconds while agents keep bb busy, so these read
+  // cached data: one thread list per 10s, no message bodies except the focused
+  // thread's (re-read only when it changes).
+
+  type ListedThread = Awaited<ReturnType<typeof bb.sdk.threads.list>>[number];
+  let threadListCache: { at: number; threads: Promise<ListedThread[]> } | null = null;
+  function listThreadsCached(): Promise<ListedThread[]> {
+    if (threadListCache === null || Date.now() - threadListCache.at > 10_000) {
+      const threads = bb.sdk.threads.list({ limit: 500 });
+      threadListCache = { at: Date.now(), threads };
+      threads.catch(() => {
+        threadListCache = null;
+      });
+    }
+    return threadListCache.threads;
+  }
+
+  async function prRadar() {
+    // Threads with an open PR that needs fixing or is ready to merge,
+    // skipping threads whose agent is already working on it.
+    const byThread = await prTracker.byThread();
+    const live = new Map(
+      (await listThreadsCached())
+        .filter((thread) => thread.archivedAt === null && thread.status !== "active" && thread.status !== "starting")
+        .map((thread) => [thread.id, thread]),
+    );
+    const broken: Array<{ threadId: string; title: string; pr: string }> = [];
+    const ready: Array<{ threadId: string; title: string; pr: string }> = [];
+    for (const [threadId, prs] of Object.entries(byThread)) {
+      const thread = live.get(threadId);
+      if (!thread) continue;
+      const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
+      const bad = open.find((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention));
+      const good = open.find((pr) => pr.attention === "ready_to_merge");
+      const entry = (pr: PrStatus) => ({ threadId, title: thread.title ?? "", pr: `${pr.repo.split("/")[1]}#${pr.number}` });
+      if (bad) broken.push(entry(bad));
+      else if (good) ready.push(entry(good));
+    }
+    return { broken, ready };
+  }
+
+  // Re-parse the focused thread's options only when it changes.
   let decisionCache: { key: string; options: ReturnType<typeof parseDecisionOptions> } | null = null;
+  async function decisionsFor(threadId: string | null) {
+    const thread = threadId === null ? null : await bb.sdk.threads.get({ threadId }).catch(() => null);
+    // Same rule as the composer buttons: only an idle thread is waiting on an answer.
+    let options: ReturnType<typeof parseDecisionOptions> = [];
+    if (thread !== null && thread.status === "idle") {
+      const cacheKey = `${thread.id}:${thread.updatedAt}`;
+      if (decisionCache?.key !== cacheKey) {
+        const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
+        decisionCache = { key: cacheKey, options: parseDecisionOptions(output.output ?? "") };
+      }
+      options = decisionCache.options;
+    }
+    return { threadId: thread?.id ?? null, title: thread?.title ?? null, status: thread?.status ?? null, options };
+  }
+
+  /** Everything the deck shows, in one call. */
+  async function deckSnapshot() {
+    const [threads, waiting, radar, focused] = await Promise.all([
+      listThreadsCached(),
+      awaiting.all(),
+      prRadar(),
+      decisionsFor(focus.focusedThreadId()),
+    ]);
+    const open = threads.filter(
+      (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && thread.parentThreadId === null,
+    );
+    const needs = open.filter((thread) => needsAttention(thread, waiting));
+    const needIds = new Set(needs.map((thread) => thread.id));
+    const moves = open
+      .filter((thread) => thread.status === "idle" && waiting[thread.id] !== undefined && !needIds.has(thread.id))
+      .map((thread) => Math.min(waiting[thread.id]!, thread.updatedAt));
+    return {
+      focused,
+      needsMe: { count: needs.length },
+      yourMove: { count: moves.length, oldestSince: moves.length ? Math.min(...moves) : null },
+      prRadar: { broken: radar.broken.length, ready: radar.ready.length },
+    };
+  }
+
   bb.cli.register({
     name: "jb-flow",
     summary: "Snooze threads and review the stale-thread digest",
@@ -816,6 +897,7 @@ async function yourMove() {
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
       { name: "leftovers", summary: "Worktree checkouts bb no longer tracks (--clean removes the merged ones)", usage: "bb jb-flow leftovers [--refresh] [--json] [--clean]" },
+      { name: "deck", summary: "One JSON snapshot for the Stream Deck: focused thread, Needs me, Your move, PRs", usage: "bb jb-flow deck" },
       { name: "pr-radar", summary: "Threads with a PR to fix or merge (--open: jump to the next one)", usage: "bb jb-flow pr-radar [--json] [--open]" },
       { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json] [--open]" },
       { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
@@ -988,28 +1070,11 @@ async function yourMove() {
             );
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No leftover worktrees." };
           }
+          case "deck": {
+            return { exitCode: 0, stdout: JSON.stringify(await deckSnapshot()) };
+          }
           case "pr-radar": {
-            // Threads with an open PR that needs fixing or is ready to merge,
-            // skipping threads whose agent is already working on it.
-            const byThread = await prTracker.byThread();
-            const threads = await bb.sdk.threads.list({ limit: 500 });
-            const live = new Map(
-              threads
-                .filter((thread) => thread.archivedAt === null && thread.status !== "active" && thread.status !== "starting")
-                .map((thread) => [thread.id, thread]),
-            );
-            const broken: Array<{ threadId: string; title: string; pr: string }> = [];
-            const ready: Array<{ threadId: string; title: string; pr: string }> = [];
-            for (const [threadId, prs] of Object.entries(byThread)) {
-              const thread = live.get(threadId);
-              if (!thread) continue;
-              const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
-              const bad = open.find((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention));
-              const good = open.find((pr) => pr.attention === "ready_to_merge");
-              const entry = (pr: PrStatus) => ({ threadId, title: thread.title ?? "", pr: `${pr.repo.split("/")[1]}#${pr.number}` });
-              if (bad) broken.push(entry(bad));
-              else if (good) ready.push(entry(good));
-            }
+            const { broken, ready } = await prRadar();
             if (argv.includes("--open")) {
               const focused = focus.focusedThreadId();
               const queue = [...broken, ...ready];
@@ -1057,7 +1122,7 @@ async function yourMove() {
             await watchers.checkCi();
             return { exitCode: 0, stdout: "Checked releases and CI watches." };
           case "your-move": {
-            const { items } = await yourMove();
+            const { items } = await yourMove({ withAsk: !argv.includes("--open") });
             if (argv.includes("--open")) {
               // Oldest first; skip the one you're already looking at.
               const focused = focus.focusedThreadId();
@@ -1082,19 +1147,8 @@ async function yourMove() {
             };
           }
           case "decisions": {
-            const threadId = resolveThread(args[0] ?? "--focused") ?? null;
-            const thread = threadId === null ? null : await bb.sdk.threads.get({ threadId }).catch(() => null);
-            // Same rule as the composer buttons: only an idle thread is waiting on an answer.
-            let options: ReturnType<typeof parseDecisionOptions> = [];
-            if (thread !== null && thread.status === "idle") {
-              const cacheKey = `${thread.id}:${thread.updatedAt}`;
-              if (decisionCache?.key !== cacheKey) {
-                const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
-                decisionCache = { key: cacheKey, options: parseDecisionOptions(output.output ?? "") };
-              }
-              options = decisionCache.options;
-            }
-            const result = { threadId: thread?.id ?? null, title: thread?.title ?? null, status: thread?.status ?? null, options };
+            const result = await decisionsFor(resolveThread(args[0] ?? "--focused") ?? null);
+            const options = result.options;
             return {
               exitCode: 0,
               stdout: json
