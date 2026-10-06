@@ -1266,12 +1266,44 @@ function TriageThreadList({
     const section = group.section;
     if (!section) return undefined;
     const ids = group.threads.map((thread) => thread.id);
-    const index = sectionKeys.indexOf(sectionKey(section.id));
+    const key = sectionKey(section.id);
+    const index = sectionKeys.indexOf(key);
+    // The section's project, if set and still there: new threads start in it.
+    const projectId = state?.sectionProjects[key];
+    const project = projectId ? projectById.get(projectId) : undefined;
+    const setProject = (next: string | null) => void rpc.call("section_project_set", { section: key, projectId: next });
     return (
       <>
-        <ContextMenuItem onSelect={() => actions.openNewThread({ ...(section.id ? { sectionId: section.id } : {}), focusPrompt: true })}>
-          <Icon name="Plus" className="size-4" /> New thread here
+        <ContextMenuItem
+          onSelect={() =>
+            actions.openNewThread({
+              ...(section.id ? { sectionId: section.id } : {}),
+              ...(project ? { projectId: project.id } : {}),
+              focusPrompt: true,
+            })
+          }
+        >
+          <Icon name="Plus" className="size-4" />
+          <span className="truncate">{project ? `New thread in ${project.name}` : "New thread here"}</span>
         </ContextMenuItem>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <Icon name="Folder" className="size-4" /> Project for new threads
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent className="max-h-80 w-56 overflow-y-auto">
+            <ContextMenuItem onSelect={() => setProject(null)}>
+              <span className="flex-1">Whatever is selected</span>
+              {!project ? <Icon name="Check" className="size-4" /> : null}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            {projects.map((candidate) => (
+              <ContextMenuItem key={candidate.id} onSelect={() => setProject(candidate.id)}>
+                <span className="flex-1 truncate">{candidate.name}</span>
+                {project?.id === candidate.id ? <Icon name="Check" className="size-4" /> : null}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
         <ContextMenuItem disabled={ids.length === 0} onSelect={() => ids.forEach((id) => void actions.setRead(id, true))}>
           <Icon name="MailOpen" className="size-4" /> Mark all as read
         </ContextMenuItem>

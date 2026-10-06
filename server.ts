@@ -81,6 +81,8 @@ const stateSchema = z.object({
   waitingOthers: z.record(z.string(), z.number()),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
+  /** Per section (section key → project id): where "New thread here" starts threads. */
+  sectionProjects: z.record(z.string(), z.string()),
   /** Per thread: every PR it created (any repo), stack-ordered. */
   threadPrs: z.record(z.string(), z.array(prStatusSchema)),
   /** Running threads: run start and last event, for elapsed time and stuck detection. */
@@ -186,6 +188,10 @@ export const rpcContract = defineRpcContract({
   },
   section_order_set: {
     input: z.object({ order: z.array(z.string()).max(200) }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  section_project_set: {
+    input: z.object({ section: z.string(), projectId: z.string().nullable() }),
     output: z.object({ ok: z.boolean() }),
   },
   focus_report: {
@@ -584,6 +590,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       promised: await awaiting.promised(),
       waitingOthers: await awaiting.waitingOthers(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
+      sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),
       watching: await watchingByThread(),
@@ -687,6 +694,13 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     leftovers_clean: () => leftovers.clean(),
     section_order_set: async ({ order }) => {
       await bb.storage.kv.set("sectionOrder", order);
+      changed();
+      return { ok: true };
+    },
+    section_project_set: async ({ section, projectId }) => {
+      const current = (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {};
+      const { [section]: _previous, ...rest } = current;
+      await bb.storage.kv.set("sectionProjects", projectId === null ? rest : { ...rest, [section]: projectId });
       changed();
       return { ok: true };
     },
