@@ -458,8 +458,10 @@ export default async function plugin(bb: BbPluginApi) {
 
   // Late-bound: the awaiting tracker is created below.
   const focus = createFocus(bb, () => awaiting.all());
-  const watchers = createWatchers(bb, localConfig.releaseWatch, changed);
   const prTracker = createPrTracker(bb, changed);
+  const watchers = createWatchers(bb, localConfig.releaseWatch, changed, async (threadId) =>
+    [...new Set(((await prTracker.byThread())[threadId] ?? []).map((pr) => pr.repo))],
+  );
   const activity = createActivity(bb, changed);
   const awaiting = createAwaiting(bb, changed);
 
@@ -486,8 +488,12 @@ export default async function plugin(bb: BbPluginApi) {
   async function watchingByThread() {
     const status = await watchers.status();
     const watching: FlowState["watching"] = {};
-    for (const [threadId, waiter] of Object.entries(status.releaseWaiters)) {
-      watching[threadId] = { kind: "release", label: `Waiting for the next ${waiter.projectName} release` };
+    const releaseProjects = new Map<string, string[]>();
+    for (const waiter of Object.values(status.releaseWaiters)) {
+      releaseProjects.set(waiter.threadId, [...(releaseProjects.get(waiter.threadId) ?? []), waiter.projectName]);
+    }
+    for (const [threadId, names] of releaseProjects) {
+      watching[threadId] = { kind: "release", label: `Waiting for the next ${names.join(" / ")} release` };
     }
     for (const [threadId, entry] of Object.entries(status.autoContinue)) {
       watching[threadId] = { kind: "continue", label: `Limit hit; auto-continues ${formatWhen(entry.resetsAt + 90_000)}` };

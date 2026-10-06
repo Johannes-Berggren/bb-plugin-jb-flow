@@ -25,6 +25,7 @@
     "decisions.ts",
     "awaiting.ts",
     "leftovers.ts",
+    "release-wait.ts",
     "prs.ts",
     "activity.ts",
     "watchers.ts",

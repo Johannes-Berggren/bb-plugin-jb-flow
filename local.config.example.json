@@ -46,6 +46,9 @@
     "my-app": {
       "base": "main",
       "titlePattern": "^Release\\b"
+    },
+    "my-desktop-app": {
+      "mode": "release"
     }
   }
 }

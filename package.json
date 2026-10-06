@@ -49,7 +49,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts awaiting.test.ts decisions.test.ts"
+    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts awaiting.test.ts decisions.test.ts releases.test.ts"
   },
   "license": "MIT",
   "repository": {

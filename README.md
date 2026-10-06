@@ -126,7 +126,7 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 - `repoCommands`: pinned side-panel commands, keyed by bb project name. A command has `id`, `label`, and `slots[]`. Each slot has a `command`, a `url` (or `null`), and the `ports` it binds.
 - `projectShortNames`: the label shown on a project's sidebar chip.
 - `stripProjectPrefixes`: prefixes removed from project names on chips.
-- `releaseWatch`: per project, `{ "base": "main", "titlePattern": "^Release\\b", "repo"?: "owner/name" }`.
+- `releaseWatch`: per project, either `{ "base": "main", "titlePattern": "^Release\\b" }` (a merged release PR counts, after its workflows finish) or `{ "mode": "release" }` (a published GitHub release counts). Both take an optional `"repo": "owner/name"`.
 
 Pinned commands can also be edited per project under **Settings → JB Flow → Repo commands**. Those edits override the file. Reload the plugin after editing the file.
 

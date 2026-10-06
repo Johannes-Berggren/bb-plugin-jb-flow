@@ -14,10 +14,13 @@ import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { parseLimitHit } from "./limits";
+import { RELEASE_WAIT } from "./release-wait";
 
 export const releaseWatchSchema = z.object({
   /** owner/name; defaults to the project's GitHub remote. */
   repo: z.string().optional(),
+  /** "pr": a merged PR into `base` whose title matches; "release": a published GitHub release. */
+  mode: z.enum(["pr", "release"]).default("pr"),
   base: z.string().default("main"),
   /** Regex a merged PR title must match to count as a release. */
   titlePattern: z.string().default("^Release\\b"),
@@ -25,10 +28,11 @@ export const releaseWatchSchema = z.object({
 export type ReleaseWatchConfig = z.infer<typeof releaseWatchSchema>;
 
 type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
+/** The fields release tracking needs; satisfied by both threads.get and threads.list rows. */
+type ThreadRef = Pick<Thread, "id" | "projectId" | "updatedAt">;
 
 const CONTINUE_DELAY_MS = 90_000;
-const RELEASE_WAIT =
-  /waiting for (a |the )?(new )?(release|deploy)|once (it'?s|it is|you'?ve|this is|that'?s|everything is) (been )?(released|deployed|shipped|live)|once (`?main`? is|the release is|it'?s) (deployed|out|live|released)|after (the )?(next )?release|reply \*{0,2}go\*{0,2} once .{0,40}releas/i;
+const RELEASE_BACKFILL_VERSION = 1;
 const CI_TIMEOUT_MS = 3 * 3_600_000;
 const OK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 /** Deploy-preview and housekeeping bots: their comments are not review feedback. */
@@ -38,7 +42,9 @@ const isBot = (login: string | undefined, body: string) =>
 
 type AutoContinue = { resetsAt: number; queuedMessageId: string | null };
 type ReleaseWaiter = { threadId: string; projectName: string; since: number };
-type Pending = { prNumber: number; title: string; sha: string; mergedAt: number; projectName: string };
+/** A release seen but not yet announced. `sha` is null for GitHub releases (nothing to wait for). */
+type Pending = { prNumber: number | null; title: string; sha: string | null; mergedAt: number; projectName: string };
+type Release = { key: string; prNumber: number | null; title: string; sha: string | null; at: number };
 type CiWatch = {
   threadId: string;
   repo: string;
@@ -76,6 +82,8 @@ export function createWatchers(
   bb: BbPluginApi,
   releaseConfig: Record<string, ReleaseWatchConfig>,
   changed: () => void,
+  /** Repos (owner/name) of the PRs a thread created, for cross-repo release waits. */
+  threadRepos: (threadId: string) => Promise<string[]> = async () => [],
 ) {
   const kv = bb.storage.kv;
   const get = async <T>(key: string, fallback: T): Promise<T> => (await kv.get<T>(key)) ?? fallback;
@@ -89,7 +97,7 @@ export function createWatchers(
     });
   }
 
-  async function projectFor(thread: Thread) {
+  async function projectFor(thread: Pick<Thread, "projectId">) {
     const project = await bb.sdk.projects.get({ projectId: thread.projectId });
     return { name: project.name, slug: repoSlug(project.gitRemoteUrl) };
   }
@@ -112,7 +120,7 @@ export function createWatchers(
       bb.log.info(`auto-continue ${thread.id} at ${new Date(sendAt).toISOString()}`);
       return;
     }
-    if (RELEASE_WAIT.test(text)) await registerReleaseWaiter(thread);
+    if (RELEASE_WAIT.test(text.slice(-1500))) await registerReleaseWaiter(thread);
   }
 
   /** The user resumed the thread before the reset: drop our scheduled "continue". */
@@ -131,15 +139,47 @@ export function createWatchers(
 
   // --- release watcher -------------------------------------------------------
 
-  async function registerReleaseWaiter(thread: Thread) {
-    const { name } = await projectFor(thread);
-    if (releaseConfig[name] === undefined) return;
+  const waiterKey = (threadId: string, projectName: string) => `${threadId}@${projectName}`;
+
+  /** Projects whose release this thread may be waiting for: its own, plus the repos its PRs are in. */
+  async function releaseProjectsFor(thread: ThreadRef): Promise<string[]> {
+    const own = (await projectFor(thread)).name;
+    const repos = new Set(await threadRepos(thread.id));
+    const names = new Set<string>();
+    if (releaseConfig[own] !== undefined) names.add(own);
+    if (repos.size > 0) {
+      for (const name of Object.keys(releaseConfig)) {
+        const repo = await releaseRepo(name);
+        if (repo && repos.has(repo)) names.add(name);
+      }
+    }
+    return [...names];
+  }
+
+  /**
+   * Registers the thread for the next release of each relevant project. A
+   * release that already shipped after the thread said it was waiting is
+   * reported straight away.
+   */
+  async function registerReleaseWaiter(thread: ThreadRef) {
+    const names = await releaseProjectsFor(thread);
     const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
-    if (waiters[thread.id] !== undefined) return;
-    waiters[thread.id] = { threadId: thread.id, projectName: name, since: Date.now() };
+    for (const name of names) {
+      const key = waiterKey(thread.id, name);
+      if (waiters[key] !== undefined) continue;
+      const since = Math.min(Date.now(), thread.updatedAt);
+      const latest = await latestRelease(name).catch(() => null);
+      if (latest && latest.at > since + 60_000 && Date.now() - latest.at > 30 * 60_000) {
+        await tell(thread.id, releasedMessage(name, latest, [])).catch(() => undefined);
+        bb.log.info(`release ${latest.key}: caught up ${thread.id}`);
+        continue;
+      }
+      waiters[key] = { threadId: thread.id, projectName: name, since };
+      bb.log.info(`release waiter: ${thread.id} (${name})`);
+    }
     await kv.set("releaseWaiters", waiters);
-    bb.log.info(`release waiter: ${thread.id} (${name})`);
     changed();
+    return names;
   }
 
   async function releaseRepo(projectName: string): Promise<string | null> {
@@ -150,6 +190,38 @@ export function createWatchers(
     return repoSlug(project?.gitRemoteUrl ?? null);
   }
 
+  /** Recent releases of a project, newest first. */
+  async function recentReleases(projectName: string): Promise<Release[]> {
+    const config = releaseConfig[projectName];
+    const repo = await releaseRepo(projectName);
+    if (!config || !repo) return [];
+    if (config.mode === "release") {
+      const releases = JSON.parse(
+        await gh(["release", "list", "-R", repo, "-L", "10", "--json", "tagName,name,publishedAt,isDraft"]),
+      ) as Array<{ tagName: string; name: string; publishedAt: string; isDraft: boolean }>;
+      return releases
+        .filter((release) => !release.isDraft)
+        .map((release) => ({ key: `${repo}@${release.tagName}`, prNumber: null, title: release.name || release.tagName, sha: null, at: Date.parse(release.publishedAt) }));
+    }
+    const merged = JSON.parse(
+      await gh(["pr", "list", "-R", repo, "--base", config.base, "--state", "merged", "-L", "10", "--json", "number,title,mergedAt,mergeCommit"]),
+    ) as Array<{ number: number; title: string; mergedAt: string; mergeCommit: { oid: string } | null }>;
+    const pattern = new RegExp(config.titlePattern, "i");
+    return merged
+      .filter((pr) => pattern.test(pr.title))
+      .map((pr) => ({ key: `${repo}#${pr.number}`, prNumber: pr.number, title: pr.title, sha: pr.mergeCommit?.oid ?? null, at: Date.parse(pr.mergedAt) }))
+      .sort((a, b) => b.at - a.at);
+  }
+
+  async function latestRelease(projectName: string): Promise<Release | null> {
+    return (await recentReleases(projectName))[0] ?? null;
+  }
+
+  function releasedMessage(projectName: string, release: Pick<Release, "title" | "prNumber" | "at">, runs: unknown[]) {
+    const headline = `${release.title}${release.prNumber !== null ? ` (#${release.prNumber})` : ""} in ${projectName}, ${new Date(release.at).toLocaleString("en-GB")}`;
+    return `released: ${headline}.${runs.length ? ` Its workflows passed (${runs.length} runs).` : ""} First confirm your changes are in it; if they aren't, say you're still waiting for a release and stop. Otherwise continue where you left off.`;
+  }
+
   async function checkReleases() {
     const waiters = Object.values(await get<Record<string, ReleaseWaiter>>("releaseWaiters", {}));
     const pending = await get<Record<string, Pending>>("pendingReleases", {});
@@ -157,23 +229,16 @@ export function createWatchers(
     const seen = await get<Record<string, number>>("seenReleases", {});
 
     for (const projectName of projects) {
-      const config = releaseConfig[projectName];
       const repo = await releaseRepo(projectName);
-      if (!config || !repo) continue;
-      // 1. New release merges become pending until their workflows finish.
-      const merged = JSON.parse(
-        await gh(["pr", "list", "-R", repo, "--base", config.base, "--state", "merged", "-L", "10", "--json", "number,title,mergedAt,mergeCommit"]),
-      ) as Array<{ number: number; title: string; mergedAt: string; mergeCommit: { oid: string } | null }>;
-      const pattern = new RegExp(config.titlePattern, "i");
-      for (const pr of merged) {
-        const key = `${repo}#${pr.number}`;
-        const mergedAt = Date.parse(pr.mergedAt);
-        if (!pattern.test(pr.title) || seen[key] !== undefined || pending[key] !== undefined) continue;
+      if (!releaseConfig[projectName] || !repo) continue;
+      // 1. New releases become pending until their workflows finish.
+      for (const release of await recentReleases(projectName)) {
+        if (seen[release.key] !== undefined || pending[release.key] !== undefined) continue;
         if (seen[repo] === undefined) {
-          seen[key] = mergedAt; // first run: everything already merged is history
+          seen[release.key] = release.at; // first run: everything already released is history
           continue;
         }
-        if (pr.mergeCommit) pending[key] = { prNumber: pr.number, title: pr.title, sha: pr.mergeCommit.oid, mergedAt, projectName };
+        pending[release.key] = { prNumber: release.prNumber, title: release.title, sha: release.sha, mergedAt: release.at, projectName };
       }
       seen[repo] = Date.now();
     }
@@ -182,30 +247,35 @@ export function createWatchers(
     for (const [key, release] of Object.entries(pending)) {
       const repo = await releaseRepo(release.projectName);
       if (!repo) continue;
-      const runs = JSON.parse(
-        await gh(["run", "list", "-R", repo, "--commit", release.sha, "--json", "name,status,conclusion,url"]),
-      ) as Array<{ name: string; status: string; conclusion: string | null; url: string }>;
+      const runs = (release.sha === null
+        ? []
+        : JSON.parse(await gh(["run", "list", "-R", repo, "--commit", release.sha, "--json", "name,status,conclusion,url"]))) as Array<{
+        name: string;
+        status: string;
+        conclusion: string | null;
+        url: string;
+      }>;
       const running = runs.filter((run) => run.status !== "completed");
       const stale = Date.now() - release.mergedAt > 2 * 3_600_000;
       if (running.length > 0 && !stale) continue;
       const failed = runs.filter((run) => run.conclusion && !["success", "skipped", "neutral"].includes(run.conclusion));
       const allWaiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
-      const targets = Object.values(allWaiters).filter(
-        (waiter) => waiter.projectName === release.projectName && waiter.since < release.mergedAt + 60_000,
+      const targets = Object.entries(allWaiters).filter(
+        ([, waiter]) => waiter.projectName === release.projectName && waiter.since < release.mergedAt + 60_000,
       );
-      const headline = `${release.title} (#${release.prNumber}), merged ${new Date(release.mergedAt).toLocaleString("en-GB")}`;
+      const headline = `${release.title}${release.prNumber !== null ? ` (#${release.prNumber})` : ""}, ${new Date(release.mergedAt).toLocaleString("en-GB")}`;
       const message =
         failed.length === 0
-          ? `released: ${headline}. Its workflows passed${runs.length ? ` (${runs.length} runs)` : ""}. First confirm your PRs are in it (merged into ${releaseConfig[release.projectName]?.base ?? "main"} via this release); if they aren't, say you're still waiting for a release and stop. Otherwise continue where you left off.`
+          ? releasedMessage(release.projectName, { title: release.title, prNumber: release.prNumber, at: release.mergedAt }, runs)
           : `The release merged (${headline}), but ${failed.length} workflow run(s) failed: ${failed
               .map((run) => `${run.name} (${run.url})`)
               .join(", ")}. Check whether that affects you before continuing.`;
-      for (const waiter of targets) {
+      for (const [waiterId, waiter] of targets) {
         const thread = await bb.sdk.threads.get({ threadId: waiter.threadId }).catch(() => null);
         if (thread && thread.archivedAt === null) {
           await tell(waiter.threadId, message).catch((error) => bb.log.warn(`release notify: ${String(error)}`));
         }
-        delete allWaiters[waiter.threadId];
+        delete allWaiters[waiterId];
       }
       await kv.set("releaseWaiters", allWaiters);
       seen[key] = release.mergedAt;
@@ -384,13 +454,48 @@ export function createWatchers(
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => onIdle(thread, lastAssistantText));
   bb.events.on("thread.active", ({ thread }) => onActive(thread));
   bb.events.on("thread.archived", async ({ thread }) => {
-    for (const key of ["releaseWaiters", "autoContinue"] as const) {
-      const map = await get<Record<string, unknown>>(key, {});
-      if (thread.id in map) {
-        delete map[thread.id];
-        await kv.set(key, map);
-      }
+    const continues = await get<Record<string, AutoContinue>>("autoContinue", {});
+    if (thread.id in continues) {
+      delete continues[thread.id];
+      await kv.set("autoContinue", continues);
     }
+    // Release waiters are keyed thread@project; one thread can wait on several.
+    const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
+    const keys = Object.keys(waiters).filter((key) => waiters[key]!.threadId === thread.id);
+    if (keys.length > 0) {
+      for (const key of keys) delete waiters[key];
+      await kv.set("releaseWaiters", waiters);
+    }
+  });
+
+  // Register threads that were already waiting before these rules existed. Bump
+  // the version when RELEASE_WAIT or the config changes.
+  bb.background.service("release-backfill", {
+    async start(signal) {
+      // Waiters used to be keyed by thread id alone; move them to thread@project.
+      const stored = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
+      const legacy = Object.keys(stored).filter((key) => !key.includes("@"));
+      if (legacy.length > 0) {
+        for (const key of legacy) {
+          const waiter = stored[key]!;
+          stored[waiterKey(waiter.threadId, waiter.projectName)] ??= waiter;
+          delete stored[key];
+        }
+        await kv.set("releaseWaiters", stored);
+      }
+      if ((await get<number>("releaseBackfill", 0)) !== RELEASE_BACKFILL_VERSION) {
+        const threads = await bb.sdk.threads.list({ limit: 500 });
+        for (const thread of threads) {
+          if (signal.aborted) return;
+          if (thread.archivedAt !== null || thread.status !== "idle" || thread.parentThreadId !== null) continue;
+          const output = await bb.sdk.threads.output({ threadId: thread.id, signal }).catch(() => null);
+          const tail = (output?.output ?? "").slice(-1500);
+          if (RELEASE_WAIT.test(tail)) await registerReleaseWaiter(thread).catch((error) => bb.log.warn(`release backfill ${thread.id}: ${String(error)}`));
+        }
+        if (!signal.aborted) await kv.set("releaseBackfill", RELEASE_BACKFILL_VERSION);
+      }
+      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+    },
   });
 
   let releaseBusy = false;
