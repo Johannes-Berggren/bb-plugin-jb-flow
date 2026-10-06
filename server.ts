@@ -252,7 +252,41 @@ export default async function plugin(bb: BbPluginApi) {
   }
   function changed() {
     bb.realtime.publish(CHANGED, {});
+    bumpDeck();
   }
+
+  // The Stream Deck long-polls `deck --wait <version>`: the call returns as soon
+  // as something it shows may have changed (focus, a thread starting/stopping,
+  // plugin state), so switching threads updates the keys at once.
+  let deckVersion = 0;
+  const deckWaiters = new Set<() => void>();
+  function bumpDeck() {
+    deckVersion += 1;
+    for (const wake of deckWaiters) wake();
+    deckWaiters.clear();
+  }
+  function waitForDeckChange(version: number, timeoutMs: number): Promise<void> {
+    if (version !== deckVersion) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        deckWaiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      deckWaiters.add(done);
+    });
+  }
+  // A thread starting or stopping changes counts too: drop the cached list.
+  const onThreadState = () => {
+    threadListCache = null;
+    bumpDeck();
+  };
+  bb.events.on("thread.active", onThreadState);
+  bb.events.on("thread.idle", onThreadState);
+  bb.onDispose(() => {
+    for (const wake of deckWaiters) wake();
+  });
 
   let snoozedSectionId: string | null = null;
   async function ensureSnoozedSection(): Promise<string> {
@@ -650,7 +684,9 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return { ok: true };
     },
     focus_report: (input) => {
+      const before = focus.focusedThreadId();
       focus.report(input);
+      if (focus.focusedThreadId() !== before) bumpDeck();
       return { ok: true };
     },
     repo_status: ({ threadId }) => repo.status(threadId),
@@ -897,7 +933,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
       { name: "leftovers", summary: "Worktree checkouts bb no longer tracks (--clean removes the merged ones)", usage: "bb jb-flow leftovers [--refresh] [--json] [--clean]" },
-      { name: "deck", summary: "One JSON snapshot for the Stream Deck: focused thread, Needs me, Your move, PRs", usage: "bb jb-flow deck" },
+      { name: "deck", summary: "One JSON snapshot for the Stream Deck: focused thread, Needs me, Your move, PRs", usage: "bb jb-flow deck [--wait <version>]" },
       { name: "pr-radar", summary: "Threads with a PR to fix or merge (--open: jump to the next one)", usage: "bb jb-flow pr-radar [--json] [--open]" },
       { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json] [--open]" },
       { name: "focus-clients", summary: "Debug: the BB windows reporting focus, most recently used first", usage: "bb jb-flow focus-clients" },
@@ -1072,7 +1108,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No leftover worktrees." };
           }
           case "deck": {
-            return { exitCode: 0, stdout: JSON.stringify(await deckSnapshot()) };
+            // --wait <version>: block (max 25s) until something changes, then answer.
+            const waitIndex = argv.indexOf("--wait");
+            if (waitIndex !== -1) await waitForDeckChange(Number(argv[waitIndex + 1]), 25_000);
+            const version = deckVersion;
+            return { exitCode: 0, stdout: JSON.stringify({ version, ...(await deckSnapshot()) }) };
           }
           case "pr-radar": {
             const { broken, ready } = await prRadar();
