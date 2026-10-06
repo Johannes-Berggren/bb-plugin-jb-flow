@@ -2,7 +2,7 @@
 // header, the stale-thread digest on the homepage, and the area-tag migration
 // in settings. All plugin state comes from server.ts over RPC and refreshes on
 // the "jb-flow-changed" realtime signal.
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   definePluginApp,
@@ -2045,12 +2045,33 @@ function FocusReporter() {
     return created;
   });
 
+  const interactedAt = useRef(0);
   useEffect(() => {
     const send = () => {
       void rpc
-        .call("focus_report", { clientId, threadId, windowFocused: document.hasFocus() })
+        .call("focus_report", {
+          clientId,
+          threadId,
+          windowFocused: document.hasFocus(),
+          interactedAt: interactedAt.current,
+          origin: location.origin,
+          userAgent: navigator.userAgent.slice(0, 300),
+        })
         .catch(() => undefined);
     };
+    // The window you last physically used wins, so report interactions promptly
+    // (throttled: at most one extra report per 5s).
+    let lastSent = 0;
+    const interact = () => {
+      interactedAt.current = Date.now();
+      if (Date.now() - lastSent > 5_000) {
+        lastSent = Date.now();
+        send();
+      }
+    };
+    for (const type of ["pointerdown", "keydown", "pointermove", "wheel"] as const) {
+      window.addEventListener(type, interact, { passive: true, capture: true });
+    }
     send();
     window.addEventListener("focus", send);
     window.addEventListener("blur", send);
@@ -2061,6 +2082,9 @@ function FocusReporter() {
       if (document.visibilityState === "visible") send();
     }, 60_000);
     return () => {
+      for (const type of ["pointerdown", "keydown", "pointermove", "wheel"] as const) {
+        window.removeEventListener(type, interact, { capture: true });
+      }
       window.removeEventListener("focus", send);
       window.removeEventListener("blur", send);
       document.removeEventListener("visibilitychange", send);

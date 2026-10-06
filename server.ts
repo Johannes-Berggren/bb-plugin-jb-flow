@@ -900,6 +900,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "deck", summary: "One JSON snapshot for the Stream Deck: focused thread, Needs me, Your move, PRs", usage: "bb jb-flow deck" },
       { name: "pr-radar", summary: "Threads with a PR to fix or merge (--open: jump to the next one)", usage: "bb jb-flow pr-radar [--json] [--open]" },
       { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json] [--open]" },
+      { name: "focus-clients", summary: "Debug: the BB windows reporting focus, most recently used first", usage: "bb jb-flow focus-clients" },
       { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
       { name: "decisions", summary: "Numbered options the focused thread is waiting on", usage: "bb jb-flow decisions [<thread-id>] [--json]" },
       { name: "stop", summary: "Stop a thread's run (default: focused)", usage: "bb jb-flow stop [<thread-id>|--focused]" },
@@ -1134,6 +1135,18 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             if (json) return { exitCode: 0, stdout: JSON.stringify({ count: items.length, items }) };
             const lines = items.map((item) => `${formatWhen(item.since).padEnd(16)} ${item.threadId}  ${item.title}`);
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "Nothing is waiting on you." };
+          }
+          case "focus-clients": {
+            const rows = focus.clients().map((entry) => ({
+              clientId: entry.clientId,
+              threadId: entry.threadId,
+              windowFocused: entry.windowFocused,
+              interacted: entry.interactedAt ? formatWhen(entry.interactedAt) : "never",
+              reported: formatWhen(entry.at),
+              origin: entry.origin ?? "?",
+              userAgent: entry.userAgent ?? "?",
+            }));
+            return { exitCode: 0, stdout: JSON.stringify(rows, null, 2) };
           }
           case "focused": {
             const threadId = focus.focusedThreadId();

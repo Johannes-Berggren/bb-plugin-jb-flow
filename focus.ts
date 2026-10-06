@@ -1,7 +1,8 @@
 // Tracks which thread the user is looking at, so external controllers (a
 // Stream Deck, scripts) can act on "the focused thread" through the CLI
 // instead of synthesizing keystrokes. Every BB window reports its focused pane
-// over RPC; the most recent report from a window that has OS focus wins.
+// over RPC. The window you last physically used (click, key, pointer) wins: with
+// BB open on two Macs, both windows can have OS focus on their own machine.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -9,6 +10,11 @@ export const focusReportSchema = z.object({
   clientId: z.string().min(1).max(64),
   threadId: z.string().nullable(),
   windowFocused: z.boolean(),
+  /** Last click, key press or pointer movement in that window (ms). */
+  interactedAt: z.number().optional(),
+  /** Where the window runs, for `bb jb-flow focus-clients`. */
+  origin: z.string().max(200).optional(),
+  userAgent: z.string().max(300).optional(),
 });
 type FocusReport = z.infer<typeof focusReportSchema> & { at: number };
 
@@ -52,10 +58,23 @@ export function createFocus(bb: BbPluginApi, getAwaiting: () => Promise<Record<s
   }
 
   function focusedThreadId(): string | null {
-    const fresh = [...reports.values()].filter((entry) => Date.now() - entry.at < STALE_MS);
-    const pick = (entries: FocusReport[]) =>
-      entries.sort((a, b) => b.at - a.at).find((entry) => entry.threadId !== null)?.threadId ?? null;
-    return pick(fresh.filter((entry) => entry.windowFocused)) ?? pick(fresh) ?? lastFocused;
+    const fresh = [...reports.values()].filter((entry) => Date.now() - entry.at < STALE_MS && entry.threadId !== null);
+    // Most recently used window first. Without recent use, a window on this
+    // machine (where the deck is plugged in) beats a remote one, then OS focus.
+    const local = (entry: FocusReport) => /^https?:\/\/(127\.0\.0\.1|localhost)(:|$)/.test(entry.origin ?? "");
+    fresh.sort(
+      (a, b) =>
+        (b.interactedAt ?? 0) - (a.interactedAt ?? 0) ||
+        Number(local(b)) - Number(local(a)) ||
+        Number(b.windowFocused) - Number(a.windowFocused) ||
+        b.at - a.at,
+    );
+    return fresh[0]?.threadId ?? lastFocused;
+  }
+
+  /** Debug view of the windows reporting focus. */
+  function clients() {
+    return [...reports.values()].sort((a, b) => (b.interactedAt ?? 0) - (a.interactedAt ?? 0));
   }
 
   async function requireFocused(): Promise<string> {
@@ -87,5 +106,5 @@ export function createFocus(bb: BbPluginApi, getAwaiting: () => Promise<Record<s
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));
   }
 
-  return { report, focusedThreadId, requireFocused, needsMe };
+  return { report, focusedThreadId, requireFocused, needsMe, clients };
 }
