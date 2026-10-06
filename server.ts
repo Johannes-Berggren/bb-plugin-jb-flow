@@ -13,6 +13,7 @@ import { parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
+import { createUnreleased, unreleasedSchema } from "./unreleased";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
 import { createWatchers, releaseWatchSchema } from "./watchers";
@@ -170,6 +171,10 @@ export const rpcContract = defineRpcContract({
         z.object({ threadId: z.string(), title: z.string(), projectId: z.string(), since: z.number(), ask: z.string() }),
       ),
     }),
+  },
+  unreleased: {
+    input: z.object({ projectId: z.string(), refresh: z.boolean() }),
+    output: unreleasedSchema,
   },
   leftovers_get: {
     input: z.object({ refresh: z.boolean() }),
@@ -492,6 +497,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   // Late-bound: the awaiting tracker is created below.
   const focus = createFocus(bb, () => awaiting.all());
+  const unreleased = createUnreleased(bb);
   const prTracker = createPrTracker(bb, changed);
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed, async (threadId) =>
     ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
@@ -676,6 +682,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return { ok: true };
     },
     your_move: () => yourMove(),
+    unreleased: ({ projectId, refresh }) => unreleased(projectId, refresh),
     leftovers_get: ({ refresh }) => leftovers.read(refresh),
     leftovers_clean: () => leftovers.clean(),
     section_order_set: async ({ order }) => {

@@ -43,7 +43,7 @@ type ThreadPrs = { refs: PrRef[]; cursor: number };
 const PR_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
 const key = (ref: PrRef) => `${ref.repo}#${ref.number}`;
 
-function gh(args: string[], timeout = 60_000): Promise<string> {
+export function gh(args: string[], timeout = 60_000): Promise<string> {
   const bin = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {

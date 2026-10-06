@@ -31,7 +31,7 @@ import type { Leftover } from "./leftovers";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
 import {
   DecisionChips,
-  YourMoveSection,
+  UnreleasedSection, YourMoveSection,
   HeaderStatusStrip,
   PR_TONE,
   PullRequestsPanel,
@@ -2261,6 +2261,11 @@ export default definePluginApp((app) => {
     id: "your-move",
     title: "Your move",
     component: YourMoveSection,
+  });
+  app.slots.homepageSection({
+    id: "unreleased",
+    title: "Unreleased",
+    component: UnreleasedSection,
   });
   app.slots.homepageSection({
     id: "stale-digest",

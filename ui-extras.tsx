@@ -8,10 +8,12 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type { JsonValue, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState, rpcContract } from "./server";
+import type { Unreleased as UnreleasedState } from "./unreleased";
 import { formatWhen } from "./when";
 import { Button } from "@/components/ui/button";
 import { Glyph } from "@/components/ui/glyph";
 import type { GlyphName } from "@/components/ui/glyph";
+import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { usePortalScopeProps } from "@/lib/portal-scope";
 import { cn } from "@/lib/utils";
@@ -552,6 +554,96 @@ export function YourMoveSection() {
       {items.length > shown.length ? (
         <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setShowAll(true)}>
           Show all {items.length}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+// --- Unreleased (homepage) ----------------------------------------------------------------
+
+
+const shortAge = (ms: number) => {
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`;
+};
+
+export function UnreleasedSection({ projectId }: { projectId: string | null }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [data, setData] = useState<UnreleasedState | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const load = (refresh: boolean) => {
+    if (projectId === null) return;
+    setLoading(true);
+    rpc
+      .call("unreleased", { projectId, refresh })
+      .then(setData, () => setData(null))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => {
+    setData(null);
+    setShowAll(false);
+    load(false);
+  }, [rpc, projectId]);
+  if (projectId === null) return <p className="text-sm text-muted-foreground">Pick a project to see what's unreleased.</p>;
+  if (data === null) return <p className="text-sm text-muted-foreground">{loading ? "Checking GitHub…" : "Couldn't load."}</p>;
+  if (data.error !== null) return <p className="text-sm text-muted-foreground">{data.error}</p>;
+  const now = Date.now();
+  const shown = showAll ? data.prs : data.prs.slice(0, 8);
+  const since = data.baseKind === "tag" ? `since ${data.base}` : `not yet on ${data.base}`;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <p className="min-w-0 flex-1">
+          {data.prs.length === 0 ? (
+            <>Nothing unreleased on {data.head}: it matches {data.base}.</>
+          ) : (
+            <>
+              {data.prs.length} PR{data.prs.length === 1 ? "" : "s"} on {data.head} {since}
+              {data.directCommits > 0 ? ` (+${data.directCommits} direct commit${data.directCommits === 1 ? "" : "s"})` : ""}
+            </>
+          )}
+          {data.releasedAt !== null ? ` · last release ${shortAge(now - data.releasedAt)} ago` : ""}
+          {data.compareUrl ? (
+            <>
+              {" · "}
+              <a href={data.compareUrl} target="_blank" rel="noreferrer" className="hover:text-foreground hover:underline">
+                compare
+              </a>
+            </>
+          ) : null}
+        </p>
+        <Button size="sm" variant="ghost" disabled={loading} onClick={() => load(true)}>
+          <Icon name="RotateCcw" className={cn("size-3.5", loading && "animate-spin")} /> Refresh
+        </Button>
+      </div>
+      {shown.length > 0 ? (
+        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+          {shown.map((pr) => (
+            <li key={pr.number}>
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex items-baseline gap-3 px-3 py-2 hover:bg-muted/50"
+              >
+                <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">#{pr.number}</span>
+                <span className="min-w-0 flex-1 truncate text-sm group-hover:underline">{pr.title}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{pr.author}</span>
+                <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {pr.mergedAt !== null ? shortAge(now - pr.mergedAt) : ""}
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {data.prs.length > shown.length ? (
+        <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setShowAll(true)}>
+          Show all {data.prs.length}
         </button>
       ) : null}
     </div>
