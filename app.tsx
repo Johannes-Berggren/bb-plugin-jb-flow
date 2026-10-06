@@ -2258,14 +2258,14 @@ export default definePluginApp((app) => {
     banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
   });
   app.slots.homepageSection({
-    id: "your-move",
-    title: "Your move",
-    component: YourMoveSection,
-  });
-  app.slots.homepageSection({
     id: "unreleased",
     title: "Unreleased",
     component: UnreleasedSection,
+  });
+  app.slots.homepageSection({
+    id: "your-move",
+    title: "Your move",
+    component: YourMoveSection,
   });
   app.slots.homepageSection({
     id: "stale-digest",
