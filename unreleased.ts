@@ -128,7 +128,7 @@ export function createUnreleased(bb: BbPluginApi) {
     const repo = repoSlug(project.gitRemoteUrl);
     let result: Unreleased;
     if (repo === null) {
-      result = { repo: null, head: null, base: null, baseKind: null, releasedAt: null, compareUrl: null, prs: [], directCommits: 0, error: `${project.name} has no GitHub remote.`, checkedAt: Date.now() };
+      result = { repo: null, head: null, base: null, baseKind: null, releasedAt: null, compareUrl: null, prs: [], directCommits: 0, error: "Pick a project with a GitHub repo to see what's unreleased.", checkedAt: Date.now() };
     } else {
       try {
         result = await compute(repo);
