@@ -460,7 +460,7 @@ export default async function plugin(bb: BbPluginApi) {
   const focus = createFocus(bb, () => awaiting.all());
   const prTracker = createPrTracker(bb, changed);
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed, async (threadId) =>
-    [...new Set(((await prTracker.byThread())[threadId] ?? []).map((pr) => pr.repo))],
+    ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
   );
   const activity = createActivity(bb, changed);
   const awaiting = createAwaiting(bb, changed);

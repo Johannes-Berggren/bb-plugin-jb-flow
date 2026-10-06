@@ -30,6 +30,8 @@ export const prStatusSchema = z.object({
   attention: prAttention,
   base: z.string(),
   head: z.string(),
+  /** When it merged (ms), for release tracking; absent on older cached entries. */
+  mergedAt: z.number().nullable().optional(),
   /** Number of the PR this one is stacked on (same repo), if any. */
   stackedOn: z.number().nullable(),
   checkedAt: z.number(),
@@ -61,6 +63,7 @@ type GqlPr = {
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
   baseRefName: string;
   headRefName: string;
+  mergedAt: string | null;
   commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }> };
 };
 
@@ -202,7 +205,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
             .join(" ")} }`;
         })
         .join(" ")} }
-        fragment F on PullRequest { number title url state isDraft mergeable reviewDecision baseRefName headRefName
+        fragment F on PullRequest { number title url state isDraft mergeable reviewDecision baseRefName headRefName mergedAt
           commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }`;
       let data: Record<string, Record<string, GqlPr | null> | null>;
       try {
@@ -224,6 +227,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
             attention: attentionOf(pr),
             base: pr.baseRefName,
             head: pr.headRefName,
+            mergedAt: pr.mergedAt ? Date.parse(pr.mergedAt) : null,
             stackedOn: null,
             checkedAt: Date.now(),
           };

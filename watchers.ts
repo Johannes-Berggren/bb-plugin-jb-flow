@@ -41,6 +41,7 @@ const isBot = (login: string | undefined, body: string) =>
   login === undefined || login.endsWith("[bot]") || BOT_LOGINS.has(login) || /^\[vc\]:/.test(body);
 
 type AutoContinue = { resetsAt: number; queuedMessageId: string | null };
+export type ThreadPrRef = { repo: string; state: string; mergedAt?: number | null };
 type ReleaseWaiter = { threadId: string; projectName: string; since: number };
 /** A release seen but not yet announced. `sha` is null for GitHub releases (nothing to wait for). */
 type Pending = { prNumber: number | null; title: string; sha: string | null; mergedAt: number; projectName: string };
@@ -82,8 +83,8 @@ export function createWatchers(
   bb: BbPluginApi,
   releaseConfig: Record<string, ReleaseWatchConfig>,
   changed: () => void,
-  /** Repos (owner/name) of the PRs a thread created, for cross-repo release waits. */
-  threadRepos: (threadId: string) => Promise<string[]> = async () => [],
+  /** The PRs a thread created, for cross-repo release waits. */
+  threadPrs: (threadId: string) => Promise<ThreadPrRef[]> = async () => [],
 ) {
   const kv = bb.storage.kv;
   const get = async <T>(key: string, fallback: T): Promise<T> => (await kv.get<T>(key)) ?? fallback;
@@ -141,17 +142,27 @@ export function createWatchers(
 
   const waiterKey = (threadId: string, projectName: string) => `${threadId}@${projectName}`;
 
-  /** Projects whose release this thread may be waiting for: its own, plus the repos its PRs are in. */
+  /**
+   * Projects whose release this thread may be waiting for: its own, plus repos
+   * where it has a PR that hasn't shipped yet (still open, or merged after that
+   * project's latest release). Long-shipped PRs don't count.
+   */
   async function releaseProjectsFor(thread: ThreadRef): Promise<string[]> {
     const own = (await projectFor(thread)).name;
-    const repos = new Set(await threadRepos(thread.id));
+    const prs = await threadPrs(thread.id);
     const names = new Set<string>();
     if (releaseConfig[own] !== undefined) names.add(own);
-    if (repos.size > 0) {
-      for (const name of Object.keys(releaseConfig)) {
-        const repo = await releaseRepo(name);
-        if (repo && repos.has(repo)) names.add(name);
+    for (const name of Object.keys(releaseConfig)) {
+      if (names.has(name)) continue;
+      const repo = await releaseRepo(name);
+      const inRepo = prs.filter((pr) => pr.repo === repo);
+      if (inRepo.length === 0) continue;
+      if (inRepo.some((pr) => pr.state === "open" || pr.state === "draft")) {
+        names.add(name);
+        continue;
       }
+      const latest = await latestRelease(name).catch(() => null);
+      if (inRepo.some((pr) => pr.state === "merged" && (pr.mergedAt ?? 0) > (latest?.at ?? 0))) names.add(name);
     }
     return [...names];
   }
