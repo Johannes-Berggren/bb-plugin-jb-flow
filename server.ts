@@ -14,6 +14,7 @@ import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createUnreleased, unreleasedSchema } from "./unreleased";
+import { laneSections } from "./lanes";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
 import { createWatchers, releaseWatchSchema } from "./watchers";
@@ -81,6 +82,8 @@ const stateSchema = z.object({
   waitingOthers: z.record(z.string(), z.number()),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
+  /** Lane → section id, pinned so renaming a lane's section keeps its role. */
+  laneSections: z.object({ priority: z.string(), waiting: z.string(), later: z.string(), low: z.string() }).partial(),
   /** Per section (section key → project id): where "New thread here" starts threads. */
   sectionProjects: z.record(z.string(), z.string()),
   /** Per thread: every PR it created (any repo), stack-ordered. */
@@ -354,10 +357,10 @@ export default async function plugin(bb: BbPluginApi) {
         : null;
     // Snoozed while waiting on someone ("when it wakes, I'll check for Nikolai's
     // reply"): wake into Waiting for others instead of the old section.
-    const waitingSection = sections.find((section) => /waiting/i.test(section.name));
-    if (waitingSection) {
+    const { waiting } = await laneSections(bb);
+    if (waiting) {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      if (waitsOnOthers(output.output ?? "")) restoreTo = waitingSection.id;
+      if (waitsOnOthers(output.output ?? "")) restoreTo = waiting;
     }
     await bb.sdk.threads.update({ threadId, sectionId: restoreTo });
     if (reason === "due") {
@@ -591,6 +594,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       waitingOthers: await awaiting.waitingOthers(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
+      laneSections: await laneSections(bb),
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),
       watching: await watchingByThread(),

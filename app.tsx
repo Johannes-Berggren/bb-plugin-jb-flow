@@ -47,6 +47,7 @@ import {
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
 import { formatWhen } from "./when";
+import { matchLanes, type LaneId, type LaneSections } from "./lanes";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -105,44 +106,34 @@ function errorText(cause: unknown): string {
 
 // --- lanes --------------------------------------------------------------------
 
-type LaneId = "priority" | "active" | "waiting" | "later" | "low";
 type Lane = {
-  id: LaneId;
+  id: LaneId | "active";
   title: string;
   sectionId: string | null;
   key: string;
 };
 
-/** Maps the existing sections onto lanes by name, so renames are tolerated. */
-function resolveLanes(sections: readonly PluginSidebarSection[]): Lane[] {
-  const find = (pattern: RegExp) =>
-    sections.find((section) => pattern.test(section.name))?.id ?? null;
+/**
+ * Lanes on top of your sections. The server pins each lane to a section id
+ * (matched by name the first time), so a renamed lane keeps its role and shows
+ * the section's own name. Before state loads, name matching fills in.
+ */
+/** Lane titles copy section names; key memos on them so a rename shows at once. */
+const sectionNames = (sections: readonly PluginSidebarSection[]) => sections.map((section) => `${section.id}:${section.name}`).join("\n");
+
+function resolveLanes(sections: readonly PluginSidebarSection[], pinned: LaneSections = {}): Lane[] {
+  const matched = matchLanes(sections, pinned);
+  const lane = (id: LaneId, fallback: string, key: string): Lane => {
+    const sectionId = matched[id] ?? null;
+    const title = sections.find((section) => section.id === sectionId)?.name ?? fallback;
+    return { id, title, sectionId, key };
+  };
   const lanes: Lane[] = [
-    {
-      id: "priority",
-      title: "Priority",
-      sectionId: find(/^\W*priority/i),
-      key: "1",
-    },
+    lane("priority", "Priority", "1"),
     { id: "active", title: "Active", sectionId: null, key: "2" },
-    {
-      id: "waiting",
-      title: "Waiting for others",
-      sectionId: find(/waiting/i),
-      key: "3",
-    },
-    {
-      id: "later",
-      title: "Pick up later",
-      sectionId: find(/pick up later/i),
-      key: "4",
-    },
-    {
-      id: "low",
-      title: "Low priority",
-      sectionId: find(/low priority/i),
-      key: "5",
-    },
+    lane("waiting", "Waiting for others", "3"),
+    lane("later", "Pick up later", "4"),
+    lane("low", "Low priority", "5"),
   ];
   // A lane whose section is missing is dropped; Active is the unsectioned bucket.
   return lanes.filter(
@@ -1188,8 +1179,19 @@ function TriageThreadList({
   activeThreadId,
   onNavigate,
 }: PluginThreadListProps) {
-  const { threads, projects, sections, status } = useSidebarThreads();
+  const { threads, projects, sections: hostSections, status } = useSidebarThreads();
   const { rpc, state } = useFlowState();
+  // BB saves a section rename but doesn't refresh the sidebar's section list
+  // until reload. Show the new name meanwhile; drop it once BB's name changes.
+  const [renamed, setRenamed] = useState<Record<string, { from: string; to: string }>>({});
+  const sections = useMemo(
+    () =>
+      hostSections.map((section) => {
+        const rename = renamed[section.id];
+        return rename && rename.from === section.name ? { ...section, name: rename.to } : section;
+      }),
+    [hostSections, renamed],
+  );
   const now = useNow();
   const [renameTarget, setRenameTarget] = useState<PluginSidebarThread | null>(
     null,
@@ -1203,7 +1205,7 @@ function TriageThreadList({
     () => new Map(projects.map((project) => [project.id, project])),
     [projects],
   );
-  const lanes = useMemo(() => resolveLanes(sections), [sections]);
+  const lanes = useMemo(() => resolveLanes(sections, state?.laneSections), [sections, sectionNames(sections), state?.laneSections]);
   const otherSections = useMemo(() => {
     const laneIds = new Set(lanes.map((lane) => lane.sectionId));
     return sections.filter(
@@ -1308,7 +1310,7 @@ function TriageThreadList({
           <Icon name="MailOpen" className="size-4" /> Mark all as read
         </ContextMenuItem>
         <ContextMenuSeparator />
-        {!section.isLane && section.id !== null ? (
+        {section.id !== null ? (
           <ContextMenuItem onSelect={() => setSectionDialog({ mode: "rename", id: section.id!, name: section.name })}>
             <Glyph name="pencil" className="size-4" /> Rename…
           </ContextMenuItem>
@@ -1684,7 +1686,11 @@ function TriageThreadList({
           onSave={(name) =>
             sectionDialog.mode === "create"
               ? sdk.threadSections.create({ name })
-              : sdk.threadSections.update({ id: sectionDialog.id!, name })
+              : sdk.threadSections.update({ id: sectionDialog.id!, name }).then((result) => {
+                  const from = hostSections.find((section) => section.id === sectionDialog.id)?.name;
+                  if (from !== undefined) setRenamed((current) => ({ ...current, [sectionDialog.id!]: { from, to: name } }));
+                  return result;
+                })
           }
           onClose={() => setSectionDialog(null)}
         />
@@ -1989,9 +1995,9 @@ function LeftoversBlock() {
 }
 
 function MigrationSettings() {
-  const rpc = useRpc<typeof rpcContract>();
+  const { rpc, state } = useFlowState();
   const { sections } = useSidebarThreads();
-  const lanes = useMemo(() => resolveLanes(sections), [sections]);
+  const lanes = useMemo(() => resolveLanes(sections, state?.laneSections), [sections, sectionNames(sections), state?.laneSections]);
   const laneIds = new Set(lanes.map((lane) => lane.sectionId));
   const candidates = sections.filter(
     (section) =>

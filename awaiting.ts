@@ -4,6 +4,7 @@
 // like finished threads ("Done") even though the agent is waiting on you.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { parseDecisionOptions } from "./decisions.ts";
+import { laneSections } from "./lanes.ts";
 
 // Phrases that hand the next step to the user. Kept specific: status reports
 // mention "decision" or "blocked" without waiting on anyone.
@@ -151,9 +152,8 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     if (waitsOnOthers(text)) return;
     const current = await bb.sdk.threads.get({ threadId: thread.id }).catch(() => null);
     if (current?.sectionId == null) return;
-    const sections = await bb.sdk.threadSections.list().catch(() => []);
-    const waiting = sections.find((section) => /waiting/i.test(section.name));
-    if (waiting && current.sectionId === waiting.id) await bb.sdk.threads.update({ threadId: thread.id, sectionId: null });
+    const { waiting } = await laneSections(bb);
+    if (waiting && current.sectionId === waiting) await bb.sdk.threads.update({ threadId: thread.id, sectionId: null });
   });
   const clear = async ({ thread }: { thread: { id: string } }) => {
     await set(thread.id, false);
