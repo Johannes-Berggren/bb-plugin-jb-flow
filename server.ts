@@ -15,6 +15,7 @@ import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createUnreleased, unreleasedSchema } from "./unreleased";
 import { laneSections } from "./lanes";
+import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
 import { createWatchers, releaseWatchSchema } from "./watchers";
@@ -83,6 +84,8 @@ const stateSchema = z.object({
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Lane → section id, pinned so renaming a lane's section keeps its role. */
+  /** Which machine each thread runs on, for the sidebar's machine filter. */
+  machines: machinesSchema,
   laneSections: z.object({ priority: z.string(), waiting: z.string(), later: z.string(), low: z.string() }).partial(),
   /** Per section (section key → project id): where "New thread here" starts threads. */
   sectionProjects: z.record(z.string(), z.string()),
@@ -294,6 +297,7 @@ export default async function plugin(bb: BbPluginApi) {
   // A thread starting or stopping changes counts too: drop the cached list.
   const onThreadState = () => {
     threadListCache = null;
+    machines.invalidate();
     bumpDeck();
   };
   bb.events.on("thread.active", onThreadState);
@@ -507,6 +511,7 @@ export default async function plugin(bb: BbPluginApi) {
   // Late-bound: the awaiting tracker is created below.
   const focus = createFocus(bb, () => awaiting.all());
   const unreleased = createUnreleased(bb);
+  const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed, async (threadId) =>
     ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
@@ -595,6 +600,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
       laneSections: await laneSections(bb),
+      machines: await machines.read(),
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),
       watching: await watchingByThread(),

@@ -1137,7 +1137,7 @@ const DONE_AFTER_MS = 2 * 3_600_000;
 
 // --- smart filters (computed sets, not your sections) --------------------------------
 
-type SmartId = "needs" | "stalled" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
+type SmartId = "needs" | "stalled" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done" | "machine";
 const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
   { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, failed, or finished and unread" },
   { id: "stalled", label: "Stalled", glyph: "hourglass", tone: "text-orange-500", hint: "The agent said it would report back, but has been idle for over an hour. Nudge it" },
@@ -1147,7 +1147,12 @@ const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string;
   { id: "readyToMerge", label: "Ready to merge", glyph: "pr", tone: "text-green-500", hint: "An open PR is green and ready" },
   { id: "autopilot", label: "Autopilot", glyph: "hourglass", tone: "text-violet-500", hint: "Waiting on CI, a release or a usage-limit reset; you'll be pinged" },
   { id: "done", label: "Done", glyph: "check", tone: "text-green-500", hint: "Unfiled threads whose PRs are all merged or closed" },
+  { id: "machine", label: "This Mac", glyph: "terminal", tone: "text-slate-400", hint: "Threads running on this machine. Right-click to pick another machine" },
 ];
+
+const MACHINE_KEY = "jb-flow:machine";
+/** "Johannes’s Mac Studio" → "Mac Studio". */
+const machineLabel = (name: string) => name.replace(/^[^’']+[’']s\s+/, "");
 
 const COLLAPSE_KEY = "jb-flow:collapsed";
 
@@ -1220,6 +1225,18 @@ function TriageThreadList({
   );
 
   const [smart, setSmart] = useState<SmartId | null>(null);
+  // The machine filter: chosen per window (BB can't tell which Mac a window is
+  // on), defaulting to the machine BB runs on.
+  const [chosenMachine, setChosenMachine] = useState<string | null>(() => localStorage.getItem(MACHINE_KEY));
+  const machines = state?.machines;
+  const machineId =
+    machines?.hosts.find((host) => host.id === chosenMachine)?.id ?? machines?.localHostId ?? null;
+  const machineName = machines?.hosts.find((host) => host.id === machineId)?.name;
+  const chooseMachine = (id: string) => {
+    localStorage.setItem(MACHINE_KEY, id);
+    setChosenMachine(id);
+    setSmart("machine");
+  };
   const [sectionDialog, setSectionDialog] = useState<{ mode: "create" | "rename"; id?: string; name: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
   const sdk = useSdk();
@@ -1378,6 +1395,7 @@ function TriageThreadList({
       needs,
       stalled: (thread) => isStalled(thread),
       yourMove: (thread) => !busy(thread) && !needs(thread) && state?.awaiting[thread.id] !== undefined,
+      machine: (thread) => machineId !== null && state?.machines.threadHosts[thread.id] === machineId,
       running: busy,
       prAction: (thread) =>
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
@@ -1409,7 +1427,7 @@ function TriageThreadList({
         groups: [
           {
             id: `smart:${smart}`,
-            title: entry.label,
+            title: smart === "machine" && machineName ? `On ${machineLabel(machineName)}` : entry.label,
             threads: members,
             dynamic: { glyph: entry.glyph, tone: entry.tone },
             action:
@@ -1503,7 +1521,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId]);
+  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machineId, machineName]);
 
   const defaults = useMemo(
     () =>
@@ -1529,7 +1547,8 @@ function TriageThreadList({
       className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >
       <div className="flex flex-wrap items-center gap-1 px-2 pt-2">
-        {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
+        {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => {
+          const chip = (
           <button
             key={entry.id}
             type="button"
@@ -1543,10 +1562,28 @@ function TriageThreadList({
             )}
           >
             <Glyph name={entry.glyph} className={cn("size-3", entry.tone)} />
-            {entry.label}
+            {entry.id === "machine" && machineName ? machineLabel(machineName) : entry.label}
             <span className="tabular-nums opacity-70">{smartCounts[entry.id]}</span>
           </button>
-        ))}
+          );
+          if (entry.id !== "machine") return chip;
+          return (
+            <ContextMenu key={entry.id}>
+              <ContextMenuTrigger asChild>{chip}</ContextMenuTrigger>
+              <ContextMenuContent className="w-56">
+                {(machines?.hosts ?? []).map((host) => (
+                  <ContextMenuItem key={host.id} onSelect={() => chooseMachine(host.id)}>
+                    <span className={cn("flex-1 truncate", !host.connected && "text-muted-foreground")}>
+                      {machineLabel(host.name)}
+                      {host.id === machines?.localHostId ? " (runs BB)" : ""}
+                    </span>
+                    {host.id === machineId ? <Icon name="Check" className="size-4" /> : null}
+                  </ContextMenuItem>
+                ))}
+              </ContextMenuContent>
+            </ContextMenu>
+          );
+        })}
         <span
           className="ml-auto cursor-help px-1 text-[11px] text-muted-foreground/70"
           title={"Keys on a focused row:\n1–5 move to lane · s snooze · t tag · e archive · u unread · j/k move"}
