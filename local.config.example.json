@@ -50,12 +50,5 @@
     "my-desktop-app": {
       "mode": "release"
     }
-  },
-  "teamUpdates": {
-    "my-app": {
-      "channel": "#releases",
-      "workspace": "Acme",
-      "url": "slack://channel?team=T0123456&id=C0123456"
-    }
   }
 }
