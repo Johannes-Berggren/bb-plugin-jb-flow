@@ -15,7 +15,7 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
   - Any other sections, collapsed.
   - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here.
   - Snoozed threads, collapsed.
-- **Machine filter**: the chip with the machine name (e.g. *Mac Studio 44*) shows only threads whose environment runs on that machine. Right-click it to pick another machine; the choice is remembered per window and defaults to the machine BB runs on.
+- **Machines**: once threads run on more than one machine, each machine gets a filter chip with its thread count (e.g. *Mac Studio 48*, *MacBook Air 2*); click one to see that machine's threads across all sections. Rows on a machine other than the one BB runs on carry a short tag (*Air*, *MBP*), and the hover preview always names the machine.
 - **Rows** show a project chip with a stable colour per project, tags, and an age fade for idle threads.
 - **Keyboard**, on a focused row:
   - `1`–`5` move it to a lane

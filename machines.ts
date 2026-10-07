@@ -11,6 +11,8 @@ export const machinesSchema = z.object({
   hosts: z.array(z.object({ id: z.string(), name: z.string(), connected: z.boolean() })),
   /** Thread id → host id. */
   threadHosts: z.record(z.string(), z.string()),
+  /** Environment id → host id, so a new thread resolves before the next refresh. */
+  environmentHosts: z.record(z.string(), z.string()),
   /** The machine BB itself runs on (this host daemon's id). */
   localHostId: z.string().nullable(),
 });
@@ -49,13 +51,14 @@ export function createMachines(bb: BbPluginApi) {
         .filter((host) => used.has(host.id))
         .map((host) => ({ id: host.id, name: host.name, connected: host.status === "connected" })),
       threadHosts,
+      environmentHosts: Object.fromEntries(environments.map((environment) => [environment.id, environment.hostId])),
       localHostId,
     };
     cached = { at: Date.now(), value };
     return value;
   }
   return {
-    read: () => read().catch(() => cached?.value ?? { hosts: [], threadHosts: {}, localHostId }),
+    read: () => read().catch(() => cached?.value ?? { hosts: [], threadHosts: {}, environmentHosts: {}, localHostId }),
     /** A thread started or moved: recompute on the next read. */
     invalidate: () => {
       cached = null;

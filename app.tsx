@@ -531,9 +531,12 @@ function ThreadRow({
   onUnsnooze,
   onTag,
   onRename,
+  machine,
 }: {
   thread: PluginSidebarThread;
   project: PluginSidebarProject | undefined;
+  /** The machine it runs on; `remote` when it's not the machine BB runs on (tagged on the row). */
+  machine: { name: string; remote: boolean } | null;
   active: boolean;
   tags: readonly string[];
   snoozeUntil: number | undefined;
@@ -607,6 +610,7 @@ function ThreadRow({
         <ThreadHoverPreview
           thread={thread}
           projectName={project?.name ?? null}
+          machineName={machine ? machineLabel(machine.name) : null}
           sectionName={[...lanes.map((lane) => ({ id: lane.sectionId, name: lane.title })), ...otherSections].find((section) => section.id === thread.sectionId)?.name ?? null}
           status={status}
           tags={tags}
@@ -665,6 +669,11 @@ function ThreadRow({
             </span>
           ))}
           <ProjectChip project={project} />
+          {machine?.remote ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground" title={`Runs on ${machineLabel(machine.name)}`}>
+              {machineShort(machine.name)}
+            </span>
+          ) : null}
           {run ? (
             <span className={cn("shrink-0 text-[10px] tabular-nums", run.stuck ? "font-medium text-amber-600" : "text-sky-600")}>
               {run.stuck ? `stuck ${duration(run.silent)}` : duration(run.elapsed)}
@@ -1137,7 +1146,9 @@ const DONE_AFTER_MS = 2 * 3_600_000;
 
 // --- smart filters (computed sets, not your sections) --------------------------------
 
-type SmartId = "needs" | "stalled" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done" | "machine";
+type SmartId = "needs" | "stalled" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
+/** A smart filter, or one machine's threads (`machine:<hostId>`). */
+type Filter = SmartId | `machine:${string}`;
 const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
   { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, failed, or finished and unread" },
   { id: "stalled", label: "Stalled", glyph: "hourglass", tone: "text-orange-500", hint: "The agent said it would report back, but has been idle for over an hour. Nudge it" },
@@ -1147,12 +1158,22 @@ const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string;
   { id: "readyToMerge", label: "Ready to merge", glyph: "pr", tone: "text-green-500", hint: "An open PR is green and ready" },
   { id: "autopilot", label: "Autopilot", glyph: "hourglass", tone: "text-violet-500", hint: "Waiting on CI, a release or a usage-limit reset; you'll be pinged" },
   { id: "done", label: "Done", glyph: "check", tone: "text-green-500", hint: "Unfiled threads whose PRs are all merged or closed" },
-  { id: "machine", label: "This Mac", glyph: "terminal", tone: "text-slate-400", hint: "Threads running on this machine. Right-click to pick another machine" },
 ];
 
-const MACHINE_KEY = "jb-flow:machine";
 /** "Johannes’s Mac Studio" → "Mac Studio". */
-const machineLabel = (name: string) => name.replace(/^[^’']+[’']s\s+/, "");
+export const machineLabel = (name: string) => name.replace(/^[^’']+[’']s\s+/, "");
+/** Row-sized: "MacBook Pro" → "MBP", "Mac Studio" → "Studio". */
+const machineShort = (name: string) => {
+  const label = machineLabel(name);
+  if (/^MacBook Pro/i.test(label)) return "MBP";
+  return label.replace(/^(MacBook|Mac)\s+/i, "");
+};
+
+/** The machine a thread runs on: via its environment, else the server's thread map. */
+function threadHost(thread: PluginSidebarThread, machines: FlowState["machines"] | undefined): string | undefined {
+  if (!machines) return undefined;
+  return (thread.environment?.id ? machines.environmentHosts[thread.environment.id] : undefined) ?? machines.threadHosts[thread.id];
+}
 
 const COLLAPSE_KEY = "jb-flow:collapsed";
 
@@ -1178,6 +1199,34 @@ function useCollapsed(defaults: Record<string, boolean>) {
       return next;
     });
   return { isCollapsed, toggle };
+}
+
+function FilterChip({ hint, active, onClick, glyph, tone, label, count }: {
+  hint: string;
+  active: boolean;
+  onClick: () => void;
+  glyph: GlyphName;
+  tone: string;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      title={hint}
+      onClick={onClick}
+      className={cn(
+        "flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors",
+        active
+          ? "border-foreground/20 bg-accent text-foreground"
+          : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <Glyph name={glyph} className={cn("size-3", tone)} />
+      {label}
+      <span className="tabular-nums opacity-70">{count}</span>
+    </button>
+  );
 }
 
 function TriageThreadList({
@@ -1224,18 +1273,12 @@ function TriageThreadList({
     [tags],
   );
 
-  const [smart, setSmart] = useState<SmartId | null>(null);
-  // The machine filter: chosen per window (BB can't tell which Mac a window is
-  // on), defaulting to the machine BB runs on.
-  const [chosenMachine, setChosenMachine] = useState<string | null>(() => localStorage.getItem(MACHINE_KEY));
+  const [smart, setSmart] = useState<Filter | null>(null);
   const machines = state?.machines;
-  const machineId =
-    machines?.hosts.find((host) => host.id === chosenMachine)?.id ?? machines?.localHostId ?? null;
-  const machineName = machines?.hosts.find((host) => host.id === machineId)?.name;
-  const chooseMachine = (id: string) => {
-    localStorage.setItem(MACHINE_KEY, id);
-    setChosenMachine(id);
-    setSmart("machine");
+  const rowMachine = (thread: PluginSidebarThread) => {
+    const hostId = threadHost(thread, machines);
+    const host = machines?.hosts.find((candidate) => candidate.id === hostId);
+    return host ? { name: host.name, remote: host.id !== machines?.localHostId } : null;
   };
   const [sectionDialog, setSectionDialog] = useState<{ mode: "create" | "rename"; id?: string; name: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
@@ -1371,7 +1414,7 @@ function TriageThreadList({
     );
   };
 
-  const { groups, smartCounts } = useMemo(() => {
+  const { groups, smartCounts, machineCounts } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
     const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
     const visible = threads
@@ -1395,7 +1438,6 @@ function TriageThreadList({
       needs,
       stalled: (thread) => isStalled(thread),
       yourMove: (thread) => !busy(thread) && !needs(thread) && state?.awaiting[thread.id] !== undefined,
-      machine: (thread) => machineId !== null && state?.machines.threadHosts[thread.id] === machineId,
       running: busy,
       prAction: (thread) =>
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
@@ -1417,17 +1459,42 @@ function TriageThreadList({
     const smartCounts = Object.fromEntries(
       SMART.map((entry) => [entry.id, awake.filter(sets[entry.id]).length]),
     ) as Record<SmartId, number>;
+    const machineCounts = new Map<string, number>();
+    for (const thread of awake) {
+      const host = threadHost(thread, machines);
+      if (host) machineCounts.set(host, (machineCounts.get(host) ?? 0) + 1);
+    }
+
+    // One machine's threads, across every section.
+    if (smart?.startsWith("machine:")) {
+      const hostId = smart.slice("machine:".length);
+      const host = machines?.hosts.find((candidate) => candidate.id === hostId);
+      return {
+        smartCounts,
+        machineCounts,
+        groups: [
+          {
+            id: smart,
+            title: `On ${host ? machineLabel(host.name) : "machine"}`,
+            threads: awake.filter((thread) => threadHost(thread, machines) === hostId),
+            dynamic: { glyph: "terminal", tone: "text-slate-400" },
+          },
+        ] satisfies Group[],
+      };
+    }
 
     // A smart filter replaces the list with that one computed set.
     if (smart !== null) {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
-      const members = awake.filter(sets[smart]);
+      const smartId = smart as SmartId;
+      const members = awake.filter(sets[smartId]);
       return {
         smartCounts,
+        machineCounts,
         groups: [
           {
             id: `smart:${smart}`,
-            title: smart === "machine" && machineName ? `On ${machineLabel(machineName)}` : entry.label,
+            title: entry.label,
             threads: members,
             dynamic: { glyph: entry.glyph, tone: entry.tone },
             action:
@@ -1520,8 +1587,8 @@ function TriageThreadList({
       defaultCollapsed: true,
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
-    return { groups: result, smartCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machineId, machineName]);
+    return { groups: result, smartCounts, machineCounts };
+  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines]);
 
   const defaults = useMemo(
     () =>
@@ -1547,43 +1614,38 @@ function TriageThreadList({
       className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >
       <div className="flex flex-wrap items-center gap-1 px-2 pt-2">
-        {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => {
-          const chip = (
-          <button
+        {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
+          <FilterChip
             key={entry.id}
-            type="button"
-            title={entry.hint}
+            hint={entry.hint}
+            active={smart === entry.id}
             onClick={() => setSmart((current) => (current === entry.id ? null : entry.id))}
-            className={cn(
-              "flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors",
-              smart === entry.id
-                ? "border-foreground/20 bg-accent text-foreground"
-                : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            <Glyph name={entry.glyph} className={cn("size-3", entry.tone)} />
-            {entry.id === "machine" && machineName ? machineLabel(machineName) : entry.label}
-            <span className="tabular-nums opacity-70">{smartCounts[entry.id]}</span>
-          </button>
-          );
-          if (entry.id !== "machine") return chip;
-          return (
-            <ContextMenu key={entry.id}>
-              <ContextMenuTrigger asChild>{chip}</ContextMenuTrigger>
-              <ContextMenuContent className="w-56">
-                {(machines?.hosts ?? []).map((host) => (
-                  <ContextMenuItem key={host.id} onSelect={() => chooseMachine(host.id)}>
-                    <span className={cn("flex-1 truncate", !host.connected && "text-muted-foreground")}>
-                      {machineLabel(host.name)}
-                      {host.id === machines?.localHostId ? " (runs BB)" : ""}
-                    </span>
-                    {host.id === machineId ? <Icon name="Check" className="size-4" /> : null}
-                  </ContextMenuItem>
-                ))}
-              </ContextMenuContent>
-            </ContextMenu>
-          );
-        })}
+            glyph={entry.glyph}
+            tone={entry.tone}
+            label={entry.label}
+            count={smartCounts[entry.id]}
+          />
+        ))}
+        {/* One chip per machine, once threads run on more than one. */}
+        {(machines?.hosts.length ?? 0) > 1
+          ? machines!.hosts
+              .filter((host) => (machineCounts.get(host.id) ?? 0) > 0 || smart === `machine:${host.id}`)
+              .map((host) => {
+                const id = `machine:${host.id}` as const;
+                return (
+                  <FilterChip
+                    key={id}
+                    hint={`Threads running on ${machineLabel(host.name)}${host.connected ? "" : " (offline)"}`}
+                    active={smart === id}
+                    onClick={() => setSmart((current) => (current === id ? null : id))}
+                    glyph="terminal"
+                    tone={host.connected ? "text-slate-400" : "text-slate-400/40"}
+                    label={machineLabel(host.name)}
+                    count={machineCounts.get(host.id) ?? 0}
+                  />
+                );
+              })
+          : null}
         <span
           className="ml-auto cursor-help px-1 text-[11px] text-muted-foreground/70"
           title={"Keys on a focused row:\n1–5 move to lane · s snooze · t tag · e archive · u unread · j/k move"}
@@ -1688,6 +1750,7 @@ function TriageThreadList({
                     }
                     onTag={() => setTagTarget(thread.id)}
                     onRename={() => setRenameTarget(thread)}
+                    machine={rowMachine(thread)}
                   />
                 ))}
                 {group.threads.length > limit ? (

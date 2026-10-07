@@ -163,6 +163,8 @@ type HoverPreviewProps = {
   /** The row's status (icon, colour, label), shown first. */
   status: { glyph: GlyphName; tone: string; label: string; spin?: boolean };
   projectName: string | null;
+  /** The machine the thread runs on. */
+  machineName: string | null;
   sectionName: string | null;
   tags: readonly string[];
   prs: readonly ThreadPr[];
@@ -190,7 +192,7 @@ function Field({ label, children, tone }: { label: string; children: ReactNode; 
  * Order is by importance: status, goal, next/blocked, PRs, then details.
  */
 export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProps>(function ThreadHoverPreview(
-  { thread, status, projectName, sectionName, tags, prs, watching, snoozeUntil, children, ...triggerProps },
+  { thread, status, projectName, machineName, sectionName, tags, prs, watching, snoozeUntil, children, ...triggerProps },
   ref,
 ) {
   const rpc = useRpc<typeof rpcContract>();
@@ -210,6 +212,7 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
   const details = [
     projectName === "Personal" ? null : projectName,
     sectionName,
+    machineName ? `on ${machineName}` : null,
     thread.environment?.branchName ? `⎇ ${thread.environment.branchName}` : null,
     `updated ${duration(Date.now() - thread.updatedAt)} ago`,
     preview && preview.prompts > 0 ? `${preview.prompts} prompts` : null,
