@@ -31,7 +31,7 @@ import type { Leftover } from "./leftovers";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
 import {
   DecisionChips,
-  UnreleasedSection, YourMoveSection,
+  TeamUpdateCard, TeamUpdatesSection, UnreleasedSection, YourMoveSection,
   HeaderStatusStrip,
   PR_TONE,
   PullRequestsPanel,
@@ -401,6 +401,23 @@ function PullRequestsTab({ threadId, params }: { threadId: string; params: JsonV
   const { state } = useFlowState();
   const { pullRequest } = useSidebarThreadPullRequest(threadId);
   return <PullRequestsPanel threadId={threadId} params={params} state={state} branchPr={pullRequest} />;
+}
+
+function TeamUpdateBanner() {
+  const view = useComposerView();
+  const threadId = view.scope.kind === "thread" ? view.scope.threadId : null;
+  const { state } = useFlowState();
+  const update = threadId ? state?.teamUpdates[threadId] : undefined;
+  if (!threadId || !update) return null;
+  return <TeamUpdateCard threadId={threadId} update={update} />;
+}
+
+function TeamUpdatesHome() {
+  const { state } = useFlowState();
+  const { threads } = useSidebarThreads();
+  const titles = useMemo(() => new Map(threads.map((thread) => [thread.id, thread.displayTitle])), [threads]);
+  if (!state) return null;
+  return <TeamUpdatesSection updates={state.teamUpdates} titles={titles} />;
 }
 
 function DecisionChipsBanner() {
@@ -2393,7 +2410,15 @@ export default definePluginApp((app) => {
   });
   app.composer.customize({
     id: "decision-chips",
-    banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
+    banners: [
+      { id: "team-update", chrome: "bare", component: TeamUpdateBanner },
+      { id: "decision-chips", chrome: "bare", component: DecisionChipsBanner },
+    ],
+  });
+  app.slots.homepageSection({
+    id: "team-updates",
+    title: "Tell the team",
+    component: TeamUpdatesHome,
   });
   app.slots.homepageSection({
     id: "unreleased",

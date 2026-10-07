@@ -50,6 +50,21 @@ const localConfigSchema = z.object({
   stripProjectPrefixes: z.array(z.string()).default([]),
   /** Projects (by BB name) whose release-blocked threads are woken on release. */
   releaseWatch: z.record(z.string(), releaseWatchSchema).default({}),
+  /**
+   * Projects (by BB name) whose finished work should be announced to the team:
+   * agents propose a short message, you copy it into the channel.
+   */
+  teamUpdates: z
+    .record(
+      z.string(),
+      z.object({
+        channel: z.string(),
+        workspace: z.string(),
+        /** Opens the channel (slack://channel?team=…&id=… or a channel link); else Slack opens as is. */
+        url: z.string().nullable().default(null),
+      }),
+    )
+    .default({}),
 });
 type LocalConfig = z.infer<typeof localConfigSchema>;
 
@@ -72,6 +87,15 @@ function loadLocalConfig(bb: BbPluginApi): LocalConfig {
   return localConfigSchema.parse({});
 }
 
+const teamUpdateSchema = z.object({
+  text: z.string(),
+  channel: z.string(),
+  workspace: z.string(),
+  url: z.string().nullable(),
+  at: z.number(),
+});
+type TeamUpdate = z.infer<typeof teamUpdateSchema>;
+
 const stateSchema = z.object({
   projectShortNames: z.record(z.string(), z.string()),
   stripProjectPrefixes: z.array(z.string()),
@@ -84,6 +108,8 @@ const stateSchema = z.object({
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Lane → section id, pinned so renaming a lane's section keeps its role. */
+  /** Proposed team announcements waiting for you, per thread. */
+  teamUpdates: z.record(z.string(), teamUpdateSchema),
   /** Which machine each thread runs on, for the sidebar's machine filter. */
   machines: machinesSchema,
   laneSections: z.object({ priority: z.string(), waiting: z.string(), later: z.string(), low: z.string() }).partial(),
@@ -194,6 +220,10 @@ export const rpcContract = defineRpcContract({
   },
   section_order_set: {
     input: z.object({ order: z.array(z.string()).max(200) }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  team_update_resolve: {
+    input: z.object({ threadId: z.string() }),
     output: z.object({ ok: z.boolean() }),
   },
   section_project_set: {
@@ -512,6 +542,18 @@ export default async function plugin(bb: BbPluginApi) {
   const focus = createFocus(bb, () => awaiting.all());
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
+  const teamUpdates = async () => (await bb.storage.kv.get<Record<string, TeamUpdate>>("teamUpdates")) ?? {};
+  /** Stores a proposal for the thread's project channel; null when the project has none. */
+  async function proposeTeamUpdate(threadId: string, text: string): Promise<TeamUpdate | null> {
+    const thread = await bb.sdk.threads.get({ threadId });
+    const project = await bb.sdk.projects.get({ projectId: thread.projectId });
+    const target = localConfig.teamUpdates[project.name];
+    if (!target) return null;
+    const update = { text, ...target, at: Date.now() };
+    await bb.storage.kv.set("teamUpdates", { ...(await teamUpdates()), [threadId]: update });
+    changed();
+    return update;
+  }
   const prTracker = createPrTracker(bb, changed);
   const watchers = createWatchers(bb, localConfig.releaseWatch, changed, async (threadId) =>
     ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
@@ -601,6 +643,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
       laneSections: await laneSections(bb),
       machines: await machines.read(),
+      teamUpdates: await teamUpdates(),
       threadPrs: await prTracker.byThread(),
       running: activity.snapshot(),
       watching: await watchingByThread(),
@@ -707,6 +750,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       changed();
       return { ok: true };
     },
+    team_update_resolve: async ({ threadId }) => {
+      const { [threadId]: _done, ...rest } = await teamUpdates();
+      await bb.storage.kv.set("teamUpdates", rest);
+      changed();
+      return { ok: true };
+    },
     section_project_set: async ({ section, projectId }) => {
       const current = (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {};
       const { [section]: _previous, ...rest } = current;
@@ -786,6 +835,25 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       }
     },
   });
+  const teamChannels = Object.entries(localConfig.teamUpdates);
+  if (teamChannels.length > 0) {
+    bb.agents.registerTool({
+      name: "propose_team_update",
+      description:
+        "Propose a short announcement of the change this thread shipped, for the project's team channel. It is not posted: the user sees it above the composer and copies it into Slack (or dismisses it). Calling it again replaces the proposal.",
+      instructions: `When your work in one of these projects lands (PR merged, or the change otherwise shipped), call propose_team_update once with a message for colleagues: ${teamChannels
+        .map(([project, target]) => `${project} → ${target.channel} (${target.workspace} Slack)`)
+        .join(", ")}. Write 1–3 short lines in plain language: what changed and what it means for them (anything they need to do or try). Mention the PR link at the end. Skip it for internal refactors nobody would notice.`,
+      parameters: z.object({
+        text: z.string().min(1).max(1500).describe("The message, ready to paste into Slack"),
+      }),
+      async execute({ text }, ctx) {
+        const update = await proposeTeamUpdate(ctx.threadId, text);
+        if (!update) return "This project has no team channel; nothing to propose.";
+        return `Proposed for ${update.channel}. The user decides whether to post it; don't post it yourself.`;
+      },
+    });
+  }
   bb.agents.registerTool({
     name: "wait_for_ci",
     description:
@@ -962,6 +1030,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         usage: "bb jb-flow unsnooze <thread-id|--self>",
       },
       { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
+      {
+        name: "team-update",
+        summary: "Propose a team-channel announcement for a thread's shipped change (shown to you, never posted)",
+        usage: "bb jb-flow team-update <thread-id|--self> <text>",
+      },
       { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
       { name: "leftovers", summary: "Worktree checkouts bb no longer tracks (--clean removes the merged ones)", usage: "bb jb-flow leftovers [--refresh] [--json] [--clean]" },
       { name: "deck", summary: "One JSON snapshot for the Stream Deck: focused thread, Needs me, Your move, PRs", usage: "bb jb-flow deck [--wait <version>]" },
@@ -1014,6 +1087,15 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 ? JSON.stringify(record)
                 : `Snoozed ${threadId} until ${formatWhen(record.until)}.`,
             };
+          }
+          case "team-update": {
+            const threadId = resolveThread(args[0]);
+            const text = args.slice(1).join(" ").trim();
+            if (threadId === undefined || text === "") break;
+            const update = await proposeTeamUpdate(threadId, text);
+            return update
+              ? { exitCode: 0, stdout: `Proposed for ${update.channel}.` }
+              : { exitCode: 1, stderr: "This thread's project has no team channel (teamUpdates in local.config.json)." };
           }
           case "unsnooze": {
             const threadId = resolveThread(args[0]);
