@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   definePluginApp,
+  experimental_useSidebarNavigation as useSidebarNavigation,
   experimental_useSidebarThreadActions as useSidebarThreadActions,
   experimental_useSidebarThreads as useSidebarThreads,
   ThreadTitle,
@@ -413,7 +414,13 @@ function DecisionChipsBanner() {
 }
 
 /** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
+// Set by CommandHost (always mounted) so the "new thread in split" command can
+// reach the host's navigation actions outside React.
+let navActions: ReturnType<typeof useSidebarNavigation>["actions"] | null = null;
+const NEW_THREAD_ITEM = "__bb__/new-thread";
+
 function CommandHost() {
+  navActions = useSidebarNavigation().actions;
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   useEffect(() => {
     const onSnooze = (event: Event) => setSnoozeThreadId((event as CustomEvent<string>).detail);
@@ -2309,6 +2316,13 @@ export default definePluginApp((app) => {
   });
   app.slots.experimental_appOverlay({ id: "command-host", component: CommandHost });
   const inThread = ({ threadId }: { threadId: string | null }) => threadId !== null;
+  app.commands.register({
+    id: "new-thread-split",
+    title: "New thread in a split",
+    run: () => {
+      navActions?.activate(NEW_THREAD_ITEM, { openInSplit: true });
+    },
+  });
   app.commands.register({
     id: "snooze",
     title: "Snooze this thread…",
