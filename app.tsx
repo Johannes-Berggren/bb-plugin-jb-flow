@@ -419,8 +419,27 @@ function DecisionChipsBanner() {
 let navActions: ReturnType<typeof useSidebarNavigation>["actions"] | null = null;
 const NEW_THREAD_ITEM = "__bb__/new-thread";
 
+function newThreadInSplit() {
+  navActions?.activate(NEW_THREAD_ITEM, { openInSplit: true });
+}
+
+// Cmd+N opens the new thread in a split. Caught here rather than through the
+// command's keybinding: bb's own thread.new owns Mod+N on the desktop app and a
+// plugin binding on the same key never fires.
+function onNewThreadKey(event: globalThis.KeyboardEvent) {
+  if (event.key.toLowerCase() !== "n" || !event.metaKey) return;
+  if (event.shiftKey || event.altKey || event.ctrlKey) return;
+  event.preventDefault();
+  event.stopPropagation();
+  newThreadInSplit();
+}
+
 function CommandHost() {
   navActions = useSidebarNavigation().actions;
+  useEffect(() => {
+    window.addEventListener("keydown", onNewThreadKey, true);
+    return () => window.removeEventListener("keydown", onNewThreadKey, true);
+  }, []);
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   useEffect(() => {
     const onSnooze = (event: Event) => setSnoozeThreadId((event as CustomEvent<string>).detail);
@@ -2319,9 +2338,7 @@ export default definePluginApp((app) => {
   app.commands.register({
     id: "new-thread-split",
     title: "New thread in a split",
-    run: () => {
-      navActions?.activate(NEW_THREAD_ITEM, { openInSplit: true });
-    },
+    run: newThreadInSplit,
   });
   app.commands.register({
     id: "snooze",
