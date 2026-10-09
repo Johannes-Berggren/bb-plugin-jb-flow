@@ -18,6 +18,7 @@ import { laneSections } from "./lanes";
 import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
+import { boardClear, boardSnooze, boardSnoozes } from "./focus-board";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
@@ -29,6 +30,8 @@ const snoozeSchema = z.object({
   note: z.string().nullable(),
   fromSectionId: z.string().nullable(),
   snoozedAt: z.number(),
+  // Also snoozed on the Focus Board (see focus-board.ts); clearing it there unsnoozes here.
+  mirrored: z.boolean().optional(),
 });
 export type Snooze = z.infer<typeof snoozeSchema>;
 
@@ -387,7 +390,22 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function snooze(threadId: string, when: string, note: string | null): Promise<Snooze> {
-    const until = parseWhen(when);
+    const record = await snoozeUntil(threadId, parseWhen(when), note);
+    void boardSnooze(threadId, record.until).then(async (mirrored) => {
+      if (!mirrored) return;
+      await updateSnoozes((all) => {
+        if (all[threadId]?.snoozedAt === record.snoozedAt) all[threadId] = { ...record, mirrored };
+      });
+    });
+    return record;
+  }
+
+  async function snoozeUntil(
+    threadId: string,
+    until: number,
+    note: string | null,
+    mirrored?: boolean,
+  ): Promise<Snooze> {
     const sectionId = await ensureSnoozedSection();
     const thread = await bb.sdk.threads.get({ threadId });
     const snoozes = await getSnoozes();
@@ -399,6 +417,7 @@ export default async function plugin(bb: BbPluginApi) {
       fromSectionId:
         previous?.fromSectionId ?? (thread.sectionId === sectionId ? null : thread.sectionId),
       snoozedAt: Date.now(),
+      ...(mirrored ? { mirrored } : {}),
     };
     await bb.sdk.threads.update({ threadId, sectionId });
     await updateSnoozes((all) => {
@@ -417,7 +436,8 @@ export default async function plugin(bb: BbPluginApi) {
         : null;
     // Snoozed while waiting on someone ("when it wakes, I'll check for Sam's
     // reply"): wake into Waiting for others instead of the old section.
-    const { waiting } = await laneSections(bb);
+    // Only for a snooze that ran out; cancelling one puts the thread back where it was.
+    const { waiting } = reason === "due" ? await laneSections(bb) : { waiting: null };
     if (waiting) {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
       if (waitsOnOthers(output.output ?? "")) restoreTo = waiting;
@@ -443,8 +463,38 @@ export default async function plugin(bb: BbPluginApi) {
     await updateSnoozes((all) => {
       delete all[threadId];
     });
+    await boardClear([threadId]);
     changed();
     return true;
+  }
+
+  // Keeps jb-flow and Focus Board snoozes in step, in both directions:
+  // board snoozes jb-flow doesn't know get adopted (thread moves to Snoozed),
+  // and mirrored snoozes the board no longer has (unsnoozed or acted on there)
+  // are unsnoozed here. A board that can't be reached changes nothing.
+  async function syncBoard(): Promise<void> {
+    const board = await boardSnoozes();
+    if (board === null) return;
+    const snoozes = await getSnoozes();
+    const onBoard = new Map(board.map((row) => [row.id, Date.parse(row.wakeAt)]));
+    for (const [threadId, wakeAt] of onBoard) {
+      if (!Number.isFinite(wakeAt) || wakeAt <= Date.now()) continue;
+      const mine = snoozes[threadId];
+      if (mine?.mirrored && mine.until === wakeAt) continue;
+      try {
+        const thread = await bb.sdk.threads.get({ threadId });
+        if (thread.archivedAt !== null) continue;
+        // Adopted, or re-timed on the board: the board's wake time wins.
+        await snoozeUntil(threadId, wakeAt, mine?.note ?? null, true);
+      } catch (error) {
+        bb.log.warn(`adopt board snooze ${threadId} failed: ${String(error)}`);
+      }
+    }
+    for (const [threadId, record] of Object.entries(snoozes)) {
+      // Due ones are wakeDue's; the board wakes them at the same time.
+      if (!record.mirrored || onBoard.has(threadId) || record.until <= Date.now() + 60_000) continue;
+      await unsnooze(threadId).catch((error) => bb.log.warn(`board unsnooze ${threadId} failed: ${String(error)}`));
+    }
   }
 
   async function wakeDue(): Promise<number> {
@@ -480,6 +530,7 @@ export default async function plugin(bb: BbPluginApi) {
       await updateSnoozes((all) => {
         for (const [threadId, snoozedAt] of done) if (all[threadId]?.snoozedAt === snoozedAt) delete all[threadId];
       });
+      await boardClear([...done.keys()]);
       changed();
     }
     return woken;
@@ -816,6 +867,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const woken = await wakeDue();
     if (woken > 0) bb.log.info(`woke ${woken} snoozed thread(s)`);
   });
+  bb.background.schedule("sync-focus-board", "*/2 * * * *", syncBoard);
   bb.background.schedule("stale-digest", "0 8 * * 1-5", async () => {
     const digest = await buildDigest();
     bb.log.info(`digest: ${digest.items.length} stale thread(s)`);
