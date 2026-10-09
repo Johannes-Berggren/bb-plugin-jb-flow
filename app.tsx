@@ -19,6 +19,7 @@ import {
   useComposerView,
   useSidebarSplitLayout,
   useSidebarThreadShortcut,
+  useSettings,
 } from "@get-bb/plugin-sdk/app";
 import type {
   JsonValue,
@@ -48,7 +49,7 @@ import {
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
 import { formatWhen } from "./when";
-import { matchLanes, type LaneId, type LaneSections } from "./lanes";
+import { LANE_NAMES, matchLanes, type LaneId, type LaneSections } from "./lanes";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -423,9 +424,9 @@ function newThreadInSplit() {
   navActions?.activate(NEW_THREAD_ITEM, { openInSplit: true });
 }
 
-// Cmd+N opens the new thread in a split. Caught here rather than through the
-// command's keybinding: bb's own thread.new owns Mod+N on the desktop app and a
-// plugin binding on the same key never fires.
+// With the "Cmd+N opens the new thread in a split" setting on. Caught here
+// rather than through the command's keybinding: bb's own thread.new owns Mod+N
+// on the desktop app and a plugin binding on the same key never fires.
 function onNewThreadKey(event: globalThis.KeyboardEvent) {
   if (event.key.toLowerCase() !== "n" || !event.metaKey) return;
   if (event.shiftKey || event.altKey || event.ctrlKey) return;
@@ -436,10 +437,19 @@ function onNewThreadKey(event: globalThis.KeyboardEvent) {
 
 function CommandHost() {
   navActions = useSidebarNavigation().actions;
+  const settings = useSettings().values;
+  const splitOnCmdN = settings?.newThreadInSplit === true;
+  const expandPlans = settings?.expandPlans === true;
   useEffect(() => {
+    if (!splitOnCmdN) return;
     window.addEventListener("keydown", onNewThreadKey, true);
     return () => window.removeEventListener("keydown", onNewThreadKey, true);
-  }, []);
+  }, [splitOnCmdN]);
+  useEffect(() => {
+    // Read by the plan-expander content script, which can't use hooks.
+    if (expandPlans) document.documentElement.dataset[EXPAND_PLANS_FLAG] = "";
+    else delete document.documentElement.dataset[EXPAND_PLANS_FLAG];
+  }, [expandPlans]);
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   useEffect(() => {
     const onSnooze = (event: Event) => setSnoozeThreadId((event as CustomEvent<string>).detail);
@@ -1186,7 +1196,7 @@ const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string;
   { id: "done", label: "Done", glyph: "check", tone: "text-green-500", hint: "Unfiled threads whose PRs are all merged or closed" },
 ];
 
-/** "Johannes’s Mac Studio" → "Mac Studio". */
+/** "Alex’s Mac Studio" → "Mac Studio". */
 export const machineLabel = (name: string) => name.replace(/^[^’']+[’']s\s+/, "");
 /** Row-sized: "MacBook Pro" → "MBP", "Mac Studio" → "Studio". */
 const machineShort = (name: string) => {
@@ -2120,6 +2130,41 @@ function LeftoversBlock() {
   );
 }
 
+function LaneSettings() {
+  const sdk = useSdk();
+  const { state } = useFlowState();
+  const { sections } = useSidebarThreads();
+  const matched = matchLanes(sections, state?.laneSections ?? {});
+  const missing = (Object.keys(LANE_NAMES) as LaneId[]).filter((lane) => !matched[lane]);
+  const [pending, setPending] = useState(false);
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-muted-foreground">
+        The Triage list's lanes (keys 1, 3, 4 and 5) are sections named Priority, Waiting for others, Pick up later and
+        Low priority. Active (key 2) is always there. Rename a lane's section later and it keeps its role.
+      </p>
+      {missing.length === 0 ? (
+        <p>All lanes have a section.</p>
+      ) : (
+        <Button
+          size="sm"
+          disabled={pending}
+          onClick={async () => {
+            setPending(true);
+            try {
+              for (const lane of missing) await sdk.threadSections.create({ name: LANE_NAMES[lane] });
+            } finally {
+              setPending(false);
+            }
+          }}
+        >
+          Create {missing.map((lane) => LANE_NAMES[lane]).join(", ")}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function MigrationSettings() {
   const { rpc, state } = useFlowState();
   const { sections } = useSidebarThreads();
@@ -2128,7 +2173,7 @@ function MigrationSettings() {
   const candidates = sections.filter(
     (section) =>
       !laneIds.has(section.id) &&
-      !/snoozed|agents|commands/i.test(section.name),
+      section.id !== state?.snoozedSectionId,
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<string | null>(null);
@@ -2265,7 +2310,9 @@ function FocusReporter() {
 // once when it appears (a manual collapse sticks) and lets it take ~75% of the
 // window with a single scroll area. Selectors are BB's own test ids.
 
-const PLAN_BANNER = 'section[data-testid="plan-review-banner"]';
+// Only with the "Expand plan reviews" setting on: CommandHost sets this flag on <html>.
+const EXPAND_PLANS_FLAG = "jbFlowExpandPlans";
+const PLAN_BANNER = 'html[data-jb-flow-expand-plans] section[data-testid="plan-review-banner"]';
 const PLAN_STYLE = `
 ${PLAN_BANNER}[data-expanded] {
   max-height: 80dvh !important;
@@ -2291,6 +2338,7 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 
   const seen = new WeakSet<Element>();
   const expand = () => {
+    if (!(EXPAND_PLANS_FLAG in document.documentElement.dataset)) return;
     for (const banner of Array.from(document.querySelectorAll<HTMLElement>(PLAN_BANNER))) {
       if (seen.has(banner)) continue;
       seen.add(banner);
@@ -2302,6 +2350,7 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
   expand();
   const observer = new MutationObserver(expand);
   observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-jb-flow-expand-plans"] });
   signal.addEventListener("abort", () => observer.disconnect(), { once: true });
   return () => {
     observer.disconnect();
@@ -2440,6 +2489,12 @@ export default definePluginApp((app) => {
     id: "stale-digest",
     title: "Stale threads",
     component: DigestSection,
+  });
+  app.slots.settingsSection({
+    id: "lanes",
+    title: "Triage lanes",
+    description: "Sections the Triage list uses as numbered lanes.",
+    component: LaneSettings,
   });
   app.slots.settingsSection({
     id: "area-tags",

@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { parseLimitHit } from "./limits";
+import { GH_MISSING, ghError } from "./prs";
 import { RELEASE_WAIT } from "./release-wait";
 
 export const releaseWatchSchema = z.object({
@@ -64,10 +65,16 @@ function ghPath(): string {
 function gh(args: string[], timeout = 30_000): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(ghPath(), args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(new Error(`gh ${args.slice(0, 3).join(" ")}: ${stderr || error.message}`.slice(0, 500)));
+      if (error) reject(ghError(`gh ${args.slice(0, 3).join(" ")}`, error, stderr, 500));
       else resolve(stdout);
     });
   });
+}
+
+/** "{}" for a failed lookup, but a missing gh is reported as such. */
+function orEmpty(error: Error): string {
+  if (error.message === GH_MISSING) throw error;
+  return "{}";
 }
 
 function repoSlug(remote: string | null): string | null {
@@ -82,6 +89,7 @@ function truncate(text: string, max: number): string {
 export function createWatchers(
   bb: BbPluginApi,
   releaseConfig: Record<string, ReleaseWatchConfig>,
+  autoContinueEnabled: () => Promise<boolean>,
   changed: () => void,
   /** The PRs a thread created, for cross-repo release waits. */
   threadPrs: (threadId: string) => Promise<ThreadPrRef[]> = async () => [],
@@ -109,6 +117,7 @@ export function createWatchers(
     if (text === null || thread.parentThreadId !== null) return;
     const hit = parseLimitHit(text);
     if (hit !== null) {
+      if (!(await autoContinueEnabled())) return;
       const pending = await get<Record<string, AutoContinue>>("autoContinue", {});
       if (pending[thread.id]?.resetsAt === hit.resetsAt) return;
       const sendAt = hit.resetsAt + CONTINUE_DELAY_MS;
@@ -243,7 +252,12 @@ export function createWatchers(
       const repo = await releaseRepo(projectName);
       if (!releaseConfig[projectName] || !repo) continue;
       // 1. New releases become pending until their workflows finish.
-      for (const release of await recentReleases(projectName)) {
+      const releases = await recentReleases(projectName).catch((error) => {
+        bb.log.warn(`release-watch ${projectName}: ${String(error)}`);
+        return null;
+      });
+      if (releases === null) continue;
+      for (const release of releases) {
         if (seen[release.key] !== undefined || pending[release.key] !== undefined) continue;
         if (seen[repo] === undefined) {
           seen[release.key] = release.at; // first run: everything already released is history
@@ -258,9 +272,15 @@ export function createWatchers(
     for (const [key, release] of Object.entries(pending)) {
       const repo = await releaseRepo(release.projectName);
       if (!repo) continue;
-      const runs = (release.sha === null
-        ? []
-        : JSON.parse(await gh(["run", "list", "-R", repo, "--commit", release.sha, "--json", "name,status,conclusion,url"]))) as Array<{
+      const runList =
+        release.sha === null
+          ? "[]"
+          : await gh(["run", "list", "-R", repo, "--commit", release.sha, "--json", "name,status,conclusion,url"]).catch((error) => {
+              bb.log.warn(`release-watch ${key}: ${String(error)}`);
+              return null;
+            });
+      if (runList === null) continue;
+      const runs = JSON.parse(runList) as Array<{
         name: string;
         status: string;
         conclusion: string | null;
@@ -314,7 +334,7 @@ export function createWatchers(
         : null;
       if (!environment?.branchName) throw new Error("No PR number given and the thread has no branch.");
       const found = JSON.parse(
-        await gh(["pr", "view", environment.branchName, "-R", slug, "--json", "number"]).catch(() => "{}"),
+        await gh(["pr", "view", environment.branchName, "-R", slug, "--json", "number"]).catch(orEmpty),
       ) as { number?: number };
       if (found.number === undefined) throw new Error(`No open PR for branch ${environment.branchName}.`);
       pr = found.number;
@@ -322,7 +342,7 @@ export function createWatchers(
     // Refuse closed/merged PRs up front: a wrong repo guess (same number, other
     // repo) shows up here instead of as a bogus "merged" notice later.
     const current = JSON.parse(
-      await gh(["pr", "view", String(pr), "-R", slug, "--json", "state,title,createdAt"]).catch(() => "{}"),
+      await gh(["pr", "view", String(pr), "-R", slug, "--json", "state,title,createdAt"]).catch(orEmpty),
     ) as { state?: string; title?: string; createdAt?: string };
     if (current.state === undefined) throw new Error(`${slug}#${pr} doesn't exist or isn't accessible. Pass repo explicitly.`);
     if (current.state !== "OPEN") {
@@ -376,7 +396,15 @@ export function createWatchers(
           await gh(["pr", "view", String(watch.pr), "-R", watch.repo, "--json", "state,headRefOid,url,statusCheckRollup,reviews,comments"]),
         ) as PrState;
       } catch (error) {
-        bb.log.warn(`ci ${key}: ${String(error)}`);
+        // gh missing, logged out or the PR gone: give up after the usual timeout
+        // instead of warning every cycle forever.
+        if (Date.now() - watch.since > CI_TIMEOUT_MS) {
+          delete watches[key];
+          await kv.set("ciWatches", watches);
+          bb.log.warn(`ci ${key}: dropped after repeated errors: ${String(error)}`);
+        } else {
+          bb.log.warn(`ci ${key}: ${String(error)}`);
+        }
         continue;
       }
       me ??= (await gh(["api", "user", "-q", ".login"]).catch(() => "")).trim();

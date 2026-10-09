@@ -23,3 +23,13 @@ test("a deleted pin is matched again, never stealing another lane's section", ()
   assert.equal(result.priority, "d");
   assert.equal(result.low, undefined);
 });
+
+test("only whole lane names match", () => {
+  const others = [
+    { id: "x", name: "Priority customers" },
+    { id: "y", name: "Waiting on legal" },
+    { id: "z", name: "🔥 Priority" },
+    { id: "w", name: "Waiting" },
+  ];
+  assert.deepEqual(matchLanes(others, {}), { priority: "z", waiting: "w" });
+});

@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -27,7 +27,8 @@ export type Leftover = z.infer<typeof leftoverSchema>;
 export type LeftoverReport = { checkedAt: number; items: Leftover[] };
 
 /** bb's old worktree root, from before worktrees moved into the plugin's host data. */
-const LEGACY_ROOT = join(homedir(), ".bb", "worktrees");
+const BB_HOME = join(homedir(), ".bb");
+const LEGACY_ROOT = join(BB_HOME, "worktrees");
 
 function run(bin: string, args: string[], cwd?: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -38,6 +39,10 @@ function run(bin: string, args: string[], cwd?: string): Promise<string> {
 }
 const gitBin = () => ["/opt/homebrew/bin/git", "/usr/bin/git"].find(existsSync) ?? "git";
 const ghBin = () => ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
+
+async function isFile(path: string): Promise<boolean> {
+  return stat(path).then((info) => info.isFile(), () => false);
+}
 
 async function subdirs(path: string): Promise<string[]> {
   const entries = await readdir(path, { withFileTypes: true }).catch(() => []);
@@ -51,13 +56,23 @@ export function createLeftovers(bb: BbPluginApi) {
       (environment) => environment.isWorktree && environment.path && environment.lifecycle?.phase !== "destroyed",
     );
     // Each worktree lives at <root>/<env folder>/<repo>; any env folder bb doesn't know is left over.
+    // Only roots inside ~/.bb count: a worktree environment some other plugin put
+    // elsewhere would otherwise turn an ordinary folder like ~/code into a "root".
     const liveFolders = new Set(worktrees.map((environment) => dirname(environment.path!)));
-    const roots = new Set([LEGACY_ROOT, ...worktrees.map((environment) => dirname(dirname(environment.path!)))]);
+    const roots = new Set(
+      [LEGACY_ROOT, ...worktrees.map((environment) => dirname(dirname(environment.path!)))].filter((root) =>
+        root.startsWith(BB_HOME + sep),
+      ),
+    );
     const items: Leftover[] = [];
     for (const root of roots) {
       for (const folder of await subdirs(root)) {
         if (liveFolders.has(folder)) continue;
-        for (const path of await subdirs(folder)) items.push(await inspect(path));
+        for (const path of await subdirs(folder)) {
+          // Only git worktrees: a linked worktree has a .git file, not a folder.
+          if (!(await isFile(join(path, ".git")))) continue;
+          items.push(await inspect(path));
+        }
       }
     }
     const report = { checkedAt: Date.now(), items };
@@ -67,6 +82,7 @@ export function createLeftovers(bb: BbPluginApi) {
 
   async function inspect(path: string): Promise<Leftover> {
     const git = (...args: string[]) => run(gitBin(), args, path).catch(() => "");
+    const topLevel = await git("rev-parse", "--show-toplevel");
     const branch = (await git("rev-parse", "--abbrev-ref", "HEAD")) || "?";
     const dirty = (await git("status", "--porcelain", "--untracked-files=no")).split("\n").filter(Boolean).length;
     const ownCommits = (await git("log", "HEAD", "--not", "--remotes", "--oneline")).split("\n").filter(Boolean).length;
@@ -91,7 +107,8 @@ export function createLeftovers(bb: BbPluginApi) {
       dirty,
       nodeModules: existsSync(join(path, "node_modules")),
       modifiedAt: info.mtimeMs,
-      safe: dirty === 0 && (prState === "merged" || ownCommits === 0),
+      // Anything git can't read as this exact checkout is never safe to delete.
+      safe: topLevel === path && dirty === 0 && (prState === "merged" || ownCommits === 0),
     };
   }
 

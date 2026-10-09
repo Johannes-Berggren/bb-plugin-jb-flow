@@ -1,17 +1,23 @@
 # bb-plugin-jb-flow
 
-A personal [bb](https://getbb.app) plugin for triaging a lot of agent threads. It adds snooze, a stale-thread digest, a Triage sidebar, dev-server buttons in the side panel, and expanded plan reviews.
+A [bb](https://getbb.app) plugin for people who run a lot of agent threads at once. It adds a Triage sidebar that puts threads waiting on you at the top, snooze, a stale-thread digest, PR and CI tracking that wakes threads instead of having agents poll, and dev-server buttons in the side panel.
+
+## Requirements
+
+- bb 0.44 or later.
+- The [GitHub CLI](https://cli.github.com) (`gh`), logged in with `gh auth login`, for everything PR-related: PR tracking, `wait_for_ci`, `pr_status`, the release watcher and the Unreleased section. Repos must be on github.com. Snooze, the digest and the Triage list work without it.
+- Auto-continue after usage limits recognises Claude Code's limit message only. Everything else works with any provider.
 
 ## Features
 
 ### Triage sidebar
-A replacement thread list. Pick it under **Settings → Appearance → Thread list → Triage**.
+A replacement thread list. Pick it under **Settings → Appearance → Thread list → Triage**, then create the lane sections under **Settings → JB Flow → Triage lanes** (one click).
 
 - **Groups**, top to bottom:
   - **Needs me**: threads blocked on a prompt or permission, failed threads, and unread threads whose last message asks you something. Unread status updates stay in their section, in bold.
   - **Stalled** (only when there are some): the agent said it would report back ("I'll report when it finishes", "I'm checking every 30 seconds") but the thread has been idle for over an hour with nothing watching it. **Nudge all** asks each one to check and continue.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. Each is matched to one of your sections by name the first time, then remembered by id, so you can rename a lane's section (right-click → Rename…) and it keeps its number key and behaviour. Active is the unsectioned bucket and can't be renamed.
-  - **Waiting for others** fills itself (marked *auto*): unfiled threads whose agent says it's waiting on someone else ("Knut is the only pending reviewer", "once he sends the invoices", "tell me when he replies"), or whose open PRs all wait on a reviewer. Threads you file there yourself go back to Active by themselves when a turn ends without waiting on anyone. Snoozed threads that were waiting on someone ("when it wakes, I'll check for Nikolai's reply") wake into Waiting for others instead of their old section.
+  - **Waiting for others** fills itself (marked *auto*): unfiled threads whose agent says it's waiting on someone else ("Alex is the only pending reviewer", "once he sends the invoices", "tell me when he replies"), or whose open PRs all wait on a reviewer. Threads you file there yourself go back to Active by themselves when a turn ends without waiting on anyone. Snoozed threads that were waiting on someone ("when it wakes, I'll check for Sam's reply") wake into Waiting for others instead of their old section.
   - Any other sections, collapsed.
   - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here.
   - Snoozed threads, collapsed.
@@ -37,7 +43,7 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 
 ### Snooze
 - A clock button in the thread header, `bb jb-flow snooze <thread|--self> <when> [--note …]`, and a `snooze_thread` agent tool.
-- A snoozed thread moves to a hidden "😴 Snoozed" section.
+- A snoozed thread moves to a "😴 Snoozed" section, which the Triage list keeps collapsed at the bottom.
 - When it's due, it goes back to its previous section and is marked unread. If a note was set, the note is sent as a prompt.
 - `<when>` accepts `2h`, `3d`, `1w`, `tomorrow`, `mon`…`sun`, `next-week`, or `YYYY-MM-DD[THH:MM]`.
 
@@ -53,6 +59,7 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
 - **Start dev servers** runs a project's pinned `dev` command in one click.
 
 ### Plan reviews
+- Off by default; turn on **Expand plan reviews** in the plugin settings.
 - Plans awaiting approval open expanded and can use up to 75% of the window height instead of 288px.
 - This is a content script, so it depends on bb's plan-banner markup.
 
@@ -87,13 +94,13 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
   | Alt+Shift+W | Watch CI |
 
 ### Watchers (no polling)
-- **Auto-continue after usage limits:** when Claude Code stops with "You've hit your session limit · resets 10pm", "continue" is scheduled for 90 seconds after the reset.
+- **Auto-continue after usage limits** (off by default, setting *Continue after usage-limit resets*): when Claude Code stops with "You've hit your session limit · resets 10pm", "continue" is scheduled for 90 seconds after the reset.
   - If you resume the thread yourself first, the scheduled message is cancelled.
   - Spend limits are left alone, since they need a human to raise them.
 - **Release watcher:** threads that go idle "waiting for release" are woken with a "released: …" message.
   - This happens once a PR matching `titlePattern` merges into `base` and its workflow runs finish.
   - If the release workflow fails, the message names the failed runs instead.
-  - Configure it per project in `local.config.json` → `releaseWatch`.
+  - Configure it per project with `releaseWatch` (see [Configuration](#configuration)).
 - **CI and review watcher:** agents call the `wait_for_ci` tool (or `bb jb-flow wait-ci`) and end their turn, instead of polling `gh`.
   - The plugin polls once every 2 minutes for all watches.
   - It messages the thread when checks finish (with the failed log), when reviews or comments arrive, or when the PR merges.
@@ -107,31 +114,41 @@ A replacement thread list. Pick it under **Settings → Appearance → Thread li
   - `bb jb-flow stop` stops its run
   - `bb jb-flow needs-me` lists threads waiting on you
   - `bb jb-flow next` opens the next waiting thread
-- Built for [streamdeck-controller](https://github.com/Johannes-Berggren/streamdeck-controller), a private repo.
+- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script.
 
 ## Install
+
+Install **JB Flow** from the bb plugin marketplace, or from source:
 
 ```sh
 git clone https://github.com/Johannes-Berggren/bb-plugin-jb-flow
 cd bb-plugin-jb-flow
 npm install
-cp local.config.example.json local.config.json   # optional, see below
 bb plugin build
 bb plugin install . --yes
 ```
 
 After code changes: `bb plugin build && bb plugin reload jb-flow`.
 
-## Local config
+## Settings
 
-`local.config.json` is gitignored. It holds machine-specific setup:
+Under **Settings → JB Flow**:
 
-- `repoCommands`: pinned side-panel commands, keyed by bb project name. A command has `id`, `label`, and `slots[]`. Each slot has a `command`, a `url` (or `null`), and the `ports` it binds.
+- **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
+- **Continue after usage-limit resets**: auto-continue for Claude Code (off by default).
+- **Cmd+N opens the new thread in a split**: replaces bb's own Cmd+N (off by default). The *New thread in a split* command works either way.
+- **Expand plan reviews** (off by default).
+- **Advanced config (JSON)**: see below.
+- **Triage lanes**, **Repo commands** and **Area tags** have their own sections.
+
+## Configuration
+
+Release watches and sidebar chip names are set in JSON, either in the **Advanced config** setting or in `local.config.json` in the plugin folder (gitignored; see `local.config.example.json`). The setting wins key by key. Reload the plugin after a change.
+
+- `repoCommands`: pinned side-panel commands, keyed by bb project name. A command has `id`, `label`, and `slots[]`. Each slot has a `command`, a `url` (or `null`), and the `ports` it binds. These can also be edited per project under **Settings → JB Flow → Repo commands**, which overrides the JSON.
 - `projectShortNames`: the label shown on a project's sidebar chip.
 - `stripProjectPrefixes`: prefixes removed from project names on chips.
 - `releaseWatch`: per project, either `{ "base": "main", "titlePattern": "^Release\\b" }` (a merged release PR counts, after its workflows finish) or `{ "mode": "release" }` (a published GitHub release counts). Both take an optional `"repo": "owner/name"`.
-
-Pinned commands can also be edited per project under **Settings → JB Flow → Repo commands**. Those edits override the file. Reload the plugin after editing the file.
 
 ## CLI
 
@@ -167,7 +184,7 @@ bb jb-flow repo-config <project-name> '<json>'|reset
 
 ```sh
 npm run typecheck
-npm test          # when.ts date parsing
+npm test
 ```
 
 Several bb APIs used here are `experimental_` and may change between bb releases.

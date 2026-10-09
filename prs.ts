@@ -43,11 +43,19 @@ type ThreadPrs = { refs: PrRef[]; cursor: number };
 const PR_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
 const key = (ref: PrRef) => `${ref.repo}#${ref.number}`;
 
+export const GH_MISSING = "The GitHub CLI (gh) isn't installed or isn't on PATH. Install it and run `gh auth login`.";
+
+/** A readable gh failure; a missing binary gets setup instructions instead of "spawn gh ENOENT". */
+export function ghError(prefix: string, error: Error & { code?: string | number | null }, stderr: string, max: number): Error {
+  if (error.code === "ENOENT") return new Error(GH_MISSING);
+  return new Error(`${prefix}: ${stderr || error.message}`.slice(0, max));
+}
+
 export function gh(args: string[], timeout = 60_000): Promise<string> {
   const bin = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(new Error(`gh: ${stderr || error.message}`.slice(0, 400)));
+      if (error) reject(ghError("gh", error, stderr, 400));
       else resolve(stdout);
     });
   });
