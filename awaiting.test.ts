@@ -54,3 +54,15 @@ test("waiting on someone else", () => {
   assert.ok(!waitsOnOthers("Merged and deployed. Nothing left to do."));
   assert.ok(!waitsOnOthers("The job is scheduled. It will check the numbers every night."));
 });
+
+test("sign-offs, summaries and other people's steps aren't asks", () => {
+  assert.ok(!asksUser("Done. PR #42 is merged and deployed. Let me know if you need anything else."));
+  assert.ok(!asksUser("Fixed. Please note the migration takes ~3 minutes on prod."));
+  assert.ok(!asksUser("Shipped in v1.4.2. I couldn't decide between two names so I kept the old one."));
+  assert.ok(!asksUser("Summary of changes:\n\n1. Renamed the config loader\n2. Added tests for it\n3. Updated the README"));
+  assert.ok(asksUser("Let me know which name you prefer."));
+  assert.ok(waitsOnOthers("The PR is up. Sam needs to approve it before I can merge."));
+  assert.ok(!waitsOnOthers("Pushed the fix. Waiting for the pipeline to go green."));
+  assert.ok(!waitsOnOthers("Waiting for the tests to finish before merging."));
+  assert.ok(promisesFollowUp("I’ll report back when the build finishes."));
+});

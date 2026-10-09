@@ -1,7 +1,6 @@
 // Which machine each thread runs on (its environment's host), for the sidebar's
 // machine filter. Cached briefly: state_get runs on every change.
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -20,9 +19,10 @@ export type Machines = z.infer<typeof machinesSchema>;
 
 const CACHE_MS = 30_000;
 
-function readLocalHostId(): string | null {
+function readLocalHostId(dataDir: string): string | null {
   try {
-    return readFileSync(join(homedir(), ".bb", "host-id"), "utf8").trim() || null;
+    // bb's data dir, not ~/.bb: a second instance (or a dev build) has its own.
+    return readFileSync(join(dataDir, "host-id"), "utf8").trim() || null;
   } catch {
     return null;
   }
@@ -30,7 +30,7 @@ function readLocalHostId(): string | null {
 
 export function createMachines(bb: BbPluginApi) {
   let cached: { at: number; value: Machines } | null = null;
-  const localHostId = readLocalHostId();
+  const localHostId = readLocalHostId(bb.server.experimental_dataDir);
   async function read(): Promise<Machines> {
     if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
     const [threads, environments, hosts] = await Promise.all([

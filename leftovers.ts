@@ -6,7 +6,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -26,9 +25,6 @@ export const leftoverSchema = z.object({
 export type Leftover = z.infer<typeof leftoverSchema>;
 export type LeftoverReport = { checkedAt: number; items: Leftover[] };
 
-/** bb's old worktree root, from before worktrees moved into the plugin's host data. */
-const BB_HOME = join(homedir(), ".bb");
-const LEGACY_ROOT = join(BB_HOME, "worktrees");
 
 function run(bin: string, args: string[], cwd?: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -50,6 +46,10 @@ async function subdirs(path: string): Promise<string[]> {
 }
 
 export function createLeftovers(bb: BbPluginApi) {
+  // This bb's data dir, not ~/.bb: another instance's live worktrees are not leftovers.
+  const BB_HOME = bb.server.experimental_dataDir;
+  /** bb's old worktree root, from before worktrees moved into the plugin's host data. */
+  const LEGACY_ROOT = join(BB_HOME, "worktrees");
   async function scan(): Promise<LeftoverReport> {
     const environments = await bb.sdk.environments.list({ limit: 1000 });
     const worktrees = environments.filter(

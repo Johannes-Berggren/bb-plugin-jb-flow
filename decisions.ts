@@ -36,6 +36,13 @@ export function parseDecisionOptions(message: string): DecisionOption[] {
   // "When it's green, I'll: 1. Merge 2. Release" is the agent's own plan, not a choice.
   const intro = lines.slice(0, first).reverse().find((line) => line.trim() !== "" && !/^\s*(?:>\s*)*$/.test(line)) ?? "";
   if (/\bI('ll| will|'m going to)\b[^?]*:\s*\**\s*$/i.test(intro) && !options.some((option) => option.recommended)) return [];
+  // "Summary of changes: 1. Renamed… 2. Added…" reports what happened.
+  const recommended = options.some((option) => option.recommended);
+  const summaryIntro = /\b(summary|changes|changed|what (i|we) did|completed|fixed|shipped|included)\b[^?]*:\s*\**\s*$/i.test(intro);
+  const pastTense = options.every(
+    (option) => /^(?!(need|feed|seed|speed|proceed|succeed|exceed)\b)(\w{3,}ed|built|wrote|made|ran|set|kept|put|left|found|took|got|sent|split|cut)\b/i.test(option.text),
+  );
+  if ((summaryIntro || pastTense) && !recommended) return [];
   // A real choice: 2–9 consecutive options numbered from 1.
   if (options.length < 2 || options.length > 9 || options[0]!.n !== 1) return [];
   if (options.some((option, index) => option.n !== index + 1)) return [];

@@ -11,6 +11,15 @@
 
 const MORNING_HOUR = 8;
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const DAY_SUFFIX: Record<string, string> = {
+  sun: "day",
+  mon: "day",
+  tue: "s|sday",
+  wed: "nesday",
+  thu: "r|rs|rsday",
+  fri: "day",
+  sat: "urday",
+};
 
 function atHour(date: Date, hour: number): Date {
   const next = new Date(date);
@@ -52,7 +61,8 @@ export function parseWhen(input: string, now: Date = new Date()): number {
     return atHour(addDays(now, delta), MORNING_HOUR).getTime();
   }
 
-  const weekday = WEEKDAYS.findIndex((day) => value.startsWith(day) && /^[a-z]+$/.test(value));
+  // "mon", "monday", "tues", "wednesday"; not "monster" or "satisfied".
+  const weekday = WEEKDAYS.findIndex((day) => new RegExp(`^${day}(?:${DAY_SUFFIX[day]})?$`).test(value));
   if (weekday !== -1 && value.length <= 9) {
     const delta = ((weekday - now.getDay() + 7) % 7) || 7;
     return atHour(addDays(now, delta), MORNING_HOUR).getTime();

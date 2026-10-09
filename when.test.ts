@@ -44,3 +44,10 @@ test("garbage is rejected", () => {
   assert.throws(() => parseWhen("someday", now), /Cannot parse/);
   assert.throws(() => parseWhen("0h", now), /future/);
 });
+
+test("only real day names are weekdays", () => {
+  assert.throws(() => parseWhen("monster"));
+  assert.throws(() => parseWhen("satisfied"));
+  assert.doesNotThrow(() => parseWhen("thursday"));
+  assert.doesNotThrow(() => parseWhen("tues"));
+});
