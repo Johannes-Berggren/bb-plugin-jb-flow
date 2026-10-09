@@ -6,11 +6,21 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 export type LaneId = "priority" | "waiting" | "later" | "low";
 export type LaneSections = Partial<Record<LaneId, string>>;
 
+// Whole names only (a leading emoji is fine), so "Priority customers" or
+// "Waiting on legal" stay ordinary sections.
 export const LANE_PATTERNS: Record<LaneId, RegExp> = {
-  priority: /^\W*priority/i,
-  waiting: /waiting/i,
-  later: /pick up later/i,
-  low: /low priority/i,
+  priority: /^\W*priority\W*$/i,
+  waiting: /^\W*waiting(?: for| on)?(?: others| someone)?\W*$/i,
+  later: /^\W*pick up later\W*$/i,
+  low: /^\W*low priority\W*$/i,
+};
+
+/** Section names "Create lanes" uses; each matches its pattern above. */
+export const LANE_NAMES: Record<LaneId, string> = {
+  priority: "Priority",
+  waiting: "Waiting for others",
+  later: "Pick up later",
+  low: "Low priority",
 };
 
 /** Pins stay while their section exists; missing lanes match by name, skipping sections another lane holds. */

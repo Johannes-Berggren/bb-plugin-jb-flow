@@ -59,9 +59,10 @@ its own ports, so parallel worktrees don't clash.
 - `bb jb-flow repo-stop <command-id> [--self|<thread-id>]`
 - `bb jb-flow repo-config <project-name> '<json>'|reset`
 
-When the user asks you to start the dev servers, use `repo-run dev --self`.
-Don't start `pnpm dev` in your own shell: that leaves the user without the
-terminal and browser tabs.
+When the user asks you to start the dev servers, run `repo --self` to see the
+project's commands, then `repo-run <id> --self` (usually `dev`, or a
+`script:<name>` such as `script:dev`). Don't start the dev server in your own
+shell: that leaves the user without the terminal and browser tabs.
 
 ## Waiting on CI, reviews and releases (don't poll)
 
@@ -87,6 +88,6 @@ Every PR a thread opens with `gh pr create` is linked to it automatically, in an
 - `pr_status` (agent tool) returns the state of all of them in one call, from the plugin's cache, or live with `refresh: true`. Use it instead of `gh pr view` / `gh pr checks` for state; use `gh` only for full review comments or logs.
 - `wait_for_ci` with no `pr` watches every open PR this thread created. Pass `repo` (owner/name) for a PR in another repo that this thread didn't create. News from all of a thread's PRs arrives as one message per check cycle.
 
-## Asking the user
+## Decision buttons
 
-When you need a decision, end your message with numbered options, one line each, and mark one "(recommended)". The user sees them as one-click reply buttons above the composer; the reply is just the number. For the obvious next step of agreed work, don't ask: do it.
+When your message ends with a numbered list of options (one line each), the user sees them as one-click reply buttons above the composer, and an option marked "(recommended)" is highlighted. The reply is just the number.

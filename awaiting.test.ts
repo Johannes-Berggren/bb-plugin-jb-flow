@@ -9,7 +9,7 @@ test("hands-off messages count as your move", () => {
   assert.ok(asksUser("Complete any password prompts. Tell me whether the second command succeeds."));
   assert.ok(asksUser("Please name the exact Slack channel for the alerts."));
   assert.ok(asksUser("If you want, I can snooze this thread for 3 days."));
-  assert.ok(asksUser('Once Håkon confirms, say "go" and I\'ll switch the setup.'));
+  assert.ok(asksUser('Once Chris confirms, say "go" and I\'ll switch the setup.'));
   assert.ok(asksUser("Draft created in the Amesto thread. It remains unsent."));
   assert.ok(asksUser("Merging doesn't ship anything yet.\n\n1. Merge the three PRs now (recommended)\n2. Hold the merge\n3. You review first"));
   assert.ok(asksUser("Two things:\n> 1. **Check** the starts after login.\n> 2. **Clean up:** remove this worktree.\n\n*2026-10-04*"));
@@ -36,18 +36,18 @@ test("follow-up promises are detected, asks win", () => {
 });
 
 test("waiting on someone else", () => {
-  assert.ok(waitsOnOthers("On #1136 and #1137, Knut is now the only pending reviewer. Their approvals are on older commits."));
-  assert.ok(waitsOnOthers("Løvenskiold stays cancelled.\n\nOnce he sends the invoices, I can check that Xledger numbered them."));
-  assert.ok(waitsOnOthers("Everything planned for BOAS is done. The next step depends on Nikolai: which tenant users get access."));
+  assert.ok(waitsOnOthers("On #1136 and #1137, Alex is now the only pending reviewer. Their approvals are on older commits."));
+  assert.ok(waitsOnOthers("The old order stays cancelled.\n\nOnce he sends the invoices, I can check that accounting numbered them."));
+  assert.ok(waitsOnOthers("Everything planned for the pilot is done. The next step depends on Sam: which tenant users get access."));
   assert.ok(waitsOnOthers("CI passed. I'm waiting on the fresh review I requested, and will pick it up when it arrives."));
-  assert.ok(waitsOnOthers("The two invoices now show as drafts in billing. Håkon can push them to Xledger from there."));
-  assert.ok(waitsOnOthers("I've snoozed this thread until Thursday. When it wakes, I'll check the \"Re: dokumenter\" thread for Nikolai's reply on two points."));
-  assert.ok(waitsOnOthers("When the thread wakes on 12 Oct I'll check for a reply. If Jack still hasn't answered, I'll draft a nudge for you to review."));
+  assert.ok(waitsOnOthers("The two invoices now show as drafts in billing. Chris can push them to accounting from there."));
+  assert.ok(waitsOnOthers("I've snoozed this thread until Thursday. When it wakes, I'll check the \"Re: documents\" thread for Sam's reply on two points."));
+  assert.ok(waitsOnOthers("When the thread wakes on 12 Oct I'll check for a reply. If Jamie still hasn't answered, I'll draft a nudge for you to review."));
   assert.ok(waitsOnOthers("When the thread wakes, I'll check whether he replied and whether the invoice has been sent."));
-  assert.ok(waitsOnOthers("When it wakes, I'll look for Silje's reply in the thread."));
-  assert.ok(waitsOnOthers("Sent the reminder to Martin on Friday; still no reply from him."));
+  assert.ok(waitsOnOthers("When it wakes, I'll look for Taylor's reply in the thread."));
+  assert.ok(waitsOnOthers("Sent the reminder to Morgan on Friday; still no reply from him."));
   assert.ok(!waitsOnOthers("Waiting for CI on #1191; I'll merge when it's green."));
-  assert.ok(waitsOnOthers("Once Håkon confirms, say \"go\" and I'll switch the setup."), "relaying his answer is waiting on him");
+  assert.ok(waitsOnOthers("Once Chris confirms, say \"go\" and I'll switch the setup."), "relaying his answer is waiting on him");
   assert.ok(waitsOnOthers("4. I apply the remaining eight pairs.\n\nTell me when he replies, or paste his answer here."));
   assert.ok(waitsOnOthers("> 1. Rebase the contract.\n> 2. Cancel 11506 if he agrees.\n>\n> Reply **go** with his answer and I'll do both."));
   assert.ok(!waitsOnOthers("Should I merge #12 now?"), "a real ask to you");

@@ -42,8 +42,10 @@ const digestItemSchema = z.object({
 export type DigestItem = z.infer<typeof digestItemSchema>;
 type Digest = { generatedAt: number; items: DigestItem[] };
 
-// Personal, machine-local setup that stays out of git: pinned repo commands and
-// how project names are shortened in the sidebar. See local.config.example.json.
+// Machine-local setup: pinned repo commands, how project names are shortened in
+// the sidebar, and release watches. Comes from local.config.json in the plugin
+// folder (see local.config.example.json) and/or the "Advanced config" setting,
+// which wins key by key.
 const localConfigSchema = z.object({
   repoCommands: z.record(z.string(), z.array(repoCommandSchema)).default({}),
   projectShortNames: z.record(z.string(), z.string()).default({}),
@@ -53,7 +55,19 @@ const localConfigSchema = z.object({
 });
 type LocalConfig = z.infer<typeof localConfigSchema>;
 
-function loadLocalConfig(bb: BbPluginApi): LocalConfig {
+function loadLocalConfig(bb: BbPluginApi, settingJson: string): LocalConfig {
+  const file = readLocalConfigFile(bb);
+  if (!settingJson.trim()) return file;
+  try {
+    const fromSetting = localConfigSchema.partial().parse(JSON.parse(settingJson));
+    return { ...file, ...Object.fromEntries(Object.entries(fromSetting).filter(([, value]) => value !== undefined)) };
+  } catch (error) {
+    bb.log.warn(`ignoring invalid Advanced config setting: ${String(error)}`);
+    return file;
+  }
+}
+
+function readLocalConfigFile(bb: BbPluginApi): LocalConfig {
   // The bundle may run from the plugin root or from dist/, so try both.
   for (const relative of ["./local.config.json", "../local.config.json"]) {
     const path = fileURLToPath(new URL(relative, import.meta.url));
@@ -252,9 +266,36 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Unsectioned threads idle this long show up in the daily digest.",
       default: 7,
     },
+    autoContinue: {
+      type: "boolean",
+      label: "Continue after usage-limit resets",
+      description:
+        "When Claude Code stops on a session limit, send \"continue\" to the thread 90 seconds after the limit resets.",
+      default: false,
+    },
+    newThreadInSplit: {
+      type: "boolean",
+      label: "Cmd+N opens the new thread in a split",
+      description: "Replaces BB's own Cmd+N. The \"New thread in a split\" command works either way.",
+      default: false,
+    },
+    expandPlans: {
+      type: "boolean",
+      label: "Expand plan reviews",
+      description: "Plans awaiting approval open expanded and use up to 75% of the window height.",
+      default: false,
+    },
+    advancedConfig: {
+      type: "string",
+      label: "Advanced config (JSON)",
+      description:
+        "releaseWatch, projectShortNames, stripProjectPrefixes and repoCommands, in the local.config.json format from the README. Reload the plugin after a change.",
+      experimental_multiline: true,
+      default: "",
+    },
   });
-  const { staleDays } = await settings.get();
-  const localConfig = loadLocalConfig(bb);
+  const { staleDays, advancedConfig } = await settings.get();
+  const localConfig = loadLocalConfig(bb, advancedConfig);
 
   // --- storage --------------------------------------------------------------
 
@@ -359,7 +400,7 @@ export default async function plugin(bb: BbPluginApi) {
       sections.some((section) => section.id === record.fromSectionId)
         ? record.fromSectionId
         : null;
-    // Snoozed while waiting on someone ("when it wakes, I'll check for Nikolai's
+    // Snoozed while waiting on someone ("when it wakes, I'll check for Sam's
     // reply"): wake into Waiting for others instead of the old section.
     const { waiting } = await laneSections(bb);
     if (waiting) {
@@ -513,7 +554,7 @@ export default async function plugin(bb: BbPluginApi) {
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
-  const watchers = createWatchers(bb, localConfig.releaseWatch, changed, async (threadId) =>
+  const watchers = createWatchers(bb, localConfig.releaseWatch, async () => (await settings.get()).autoContinue, changed, async (threadId) =>
     ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
   );
   const activity = createActivity(bb, changed);
