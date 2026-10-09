@@ -294,7 +294,7 @@ export default async function plugin(bb: BbPluginApi) {
       default: "",
     },
   });
-  const { staleDays, advancedConfig } = await settings.get();
+  const { advancedConfig } = await settings.get();
   const localConfig = loadLocalConfig(bb, advancedConfig);
 
   // --- storage --------------------------------------------------------------
@@ -373,6 +373,19 @@ export default async function plugin(bb: BbPluginApi) {
 
   // --- snooze ---------------------------------------------------------------
 
+  // Every snoozes write goes through here: bulk snoozes and the every-minute
+  // wake check run concurrently, and a stale read-then-write loses records.
+  let snoozeLock: Promise<unknown> = Promise.resolve();
+  function updateSnoozes(apply: (snoozes: Record<string, Snooze>) => void): Promise<void> {
+    const run = snoozeLock.then(async () => {
+      const snoozes = await getSnoozes();
+      apply(snoozes);
+      await bb.storage.kv.set("snoozes", snoozes);
+    });
+    snoozeLock = run.catch(() => undefined);
+    return run;
+  }
+
   async function snooze(threadId: string, when: string, note: string | null): Promise<Snooze> {
     const until = parseWhen(when);
     const sectionId = await ensureSnoozedSection();
@@ -388,7 +401,9 @@ export default async function plugin(bb: BbPluginApi) {
       snoozedAt: Date.now(),
     };
     await bb.sdk.threads.update({ threadId, sectionId });
-    await bb.storage.kv.set("snoozes", { ...snoozes, [threadId]: record });
+    await updateSnoozes((all) => {
+      all[threadId] = record;
+    });
     changed();
     return record;
   }
@@ -425,8 +440,9 @@ export default async function plugin(bb: BbPluginApi) {
     const record = snoozes[threadId];
     if (record === undefined) return false;
     await wake(threadId, record, "manual");
-    delete snoozes[threadId];
-    await bb.storage.kv.set("snoozes", snoozes);
+    await updateSnoozes((all) => {
+      delete all[threadId];
+    });
     changed();
     return true;
   }
@@ -435,34 +451,35 @@ export default async function plugin(bb: BbPluginApi) {
     const sectionId = await ensureSnoozedSection();
     const snoozes = await getSnoozes();
     let woken = 0;
-    let dirty = false;
+    // Removed at the end against a fresh read, keyed by the record we saw, so
+    // a snooze set meanwhile (or a re-snooze) survives.
+    const done = new Map<string, number>();
     for (const [threadId, record] of Object.entries(snoozes)) {
       let thread: { sectionId: string | null; archivedAt: number | null };
       try {
         thread = await bb.sdk.threads.get({ threadId });
       } catch {
-        delete snoozes[threadId];
-        dirty = true;
+        done.set(threadId, record.snoozedAt);
         continue;
       }
       // Moved out of Snoozed by hand, or archived: the snooze no longer applies.
       if (thread.sectionId !== sectionId || thread.archivedAt !== null) {
-        delete snoozes[threadId];
-        dirty = true;
+        done.set(threadId, record.snoozedAt);
         continue;
       }
       if (record.until > Date.now()) continue;
       try {
         await wake(threadId, record, "due");
-        delete snoozes[threadId];
-        dirty = true;
+        done.set(threadId, record.snoozedAt);
         woken += 1;
       } catch (error) {
         bb.log.warn(`wake ${threadId} failed: ${String(error)}`);
       }
     }
-    if (dirty) {
-      await bb.storage.kv.set("snoozes", snoozes);
+    if (done.size > 0) {
+      await updateSnoozes((all) => {
+        for (const [threadId, snoozedAt] of done) if (all[threadId]?.snoozedAt === snoozedAt) delete all[threadId];
+      });
       changed();
     }
     return woken;
@@ -486,6 +503,8 @@ export default async function plugin(bb: BbPluginApi) {
     const now = Date.now();
     const kept = await getKept();
     const snoozes = await getSnoozes();
+    // Read per build so a changed setting applies without a reload.
+    const { staleDays } = await settings.get();
     const stale = (await listAllActiveThreads())
       .filter(
         (thread) =>
@@ -550,7 +569,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   // Late-bound: the awaiting tracker is created below.
-  const focus = createFocus(bb, () => awaiting.all());
+  const focus = createFocus(bb, () => awaiting.all(), () => ensureSnoozedSection());
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
@@ -601,10 +620,11 @@ export default async function plugin(bb: BbPluginApi) {
 
 async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const waiting = await awaiting.all();
+    const snoozedSection = await ensureSnoozedSection();
     const items = [];
     for (const [threadId, since] of Object.entries(waiting)) {
       const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
-      if (!thread || thread.archivedAt !== null || thread.status !== "idle") continue;
+      if (!thread || thread.archivedAt !== null || thread.status !== "idle" || thread.sectionId === snoozedSection) continue;
       const output = withAsk ? await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })) : { output: null };
       // The ask is at the end of the message: show its last meaningful lines.
       const ask = (output.output ?? "")
@@ -1127,12 +1147,15 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             const rows = [];
             for (const thread of threads) {
               if (thread.archivedAt !== null || thread.visibility !== "visible" || thread.parentThreadId !== null) continue;
+              const snoozed = thread.sectionId === snoozedSectionId;
               const busy = thread.status === "active" || thread.status === "starting";
               const prs = (byThread[thread.id] ?? []).map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`);
               const open = (byThread[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft");
               const settled = (byThread[thread.id] ?? []).every((pr) => pr.state === "merged" || pr.state === "closed");
-              const needs = needsAttention(thread, awaitingAll);
-              const group = needs
+              const needs = !snoozed && needsAttention(thread, awaitingAll);
+              const group = snoozed
+                ? "snoozed"
+                : needs
                 ? "needs-me"
                 : thread.pinnedAt
                   ? "pinned"
@@ -1328,11 +1351,18 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             if (threadId === undefined) break;
             const result = await repo.status(threadId);
             if (json) return { exitCode: 0, stdout: JSON.stringify(result) };
-            const lines = result.commands.map((command) => {
-              const run = result.runs.find((candidate) => candidate.commandId === command.id);
-              return `${command.id.padEnd(12)} ${command.label}${run ? `  [${run.status}${run.url ? ` ${run.url}` : ""}]` : ""}`;
-            });
-            return { exitCode: 0, stdout: `${result.projectName}\n${lines.join("\n") || "No commands configured."}` };
+            const runLabel = (id: string) => {
+              const run = result.runs.find((candidate) => candidate.commandId === id);
+              return run ? `  [${run.status}${run.url ? ` ${run.url}` : ""}]` : "";
+            };
+            const pinned = result.commands.map((command) => `${command.id.padEnd(16)} ${command.label}${runLabel(command.id)}`);
+            const scripts = result.scripts.map((script) => `${script.id.padEnd(16)} ${script.command}${runLabel(script.id)}`);
+            const out = [result.projectName];
+            if (pinned.length) out.push("", "Pinned:", ...pinned);
+            if (scripts.length) out.push("", "Scripts:", ...scripts);
+            else if (result.scriptsError) out.push("", `Scripts: ${result.scriptsError}`);
+            if (!pinned.length && !scripts.length && !result.scriptsError) out.push("No commands or scripts.");
+            return { exitCode: 0, stdout: out.join("\n") };
           }
           case "repo-run":
           case "repo-stop": {

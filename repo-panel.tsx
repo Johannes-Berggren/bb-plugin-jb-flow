@@ -150,6 +150,8 @@ export function RepoCommandsPanel({
     if (autorun === null || autoran.current || status === null) return;
     autoran.current = true;
     if (status.commands.some((command) => command.id === autorun)) void act(autorun, "run");
+    // No pinned command: fall back to the package.json script of that name.
+    else if (status.scripts.some((script) => script.id === `script:${autorun}`)) void act(`script:${autorun}`, "run");
   }, [autorun, status, act]);
 
   if (status === null) {

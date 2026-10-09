@@ -178,16 +178,63 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     await refresh([ref]);
   }
 
+  /** Ids of threads that are neither archived nor deleted. */
+  async function liveThreadIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    for (let offset = 0; ; offset += 500) {
+      const page = await bb.sdk.threads.list({ limit: 500, offset });
+      for (const thread of page) if (thread.archivedAt === null && thread.deletedAt === null) ids.add(thread.id);
+      if (page.length < 500) return ids;
+    }
+  }
+
+  /**
+   * Drops archived and deleted threads, and the PRs only they referenced. kv
+   * values are capped at 256KB, and a busy user links hundreds of PRs a month.
+   */
+  async function prune(live: Set<string>, status: Record<string, PrStatus>) {
+    const kept = await exclusive(async () => {
+      const all = await getThreads();
+      let removed = 0;
+      for (const threadId of Object.keys(all)) {
+        if (!live.has(threadId)) {
+          delete all[threadId];
+          removed += 1;
+        }
+      }
+      if (removed > 0) await kv.set("threadPrs", all);
+      return all;
+    });
+    const referenced = new Set(Object.values(kept).flatMap((entry) => entry.refs.map(key)));
+    for (const prKey of Object.keys(status)) if (!referenced.has(prKey)) delete status[prKey];
+    return kept;
+  }
+
   /** Fetches status for the given PRs (default: all linked to active threads). */
-  async function refresh(only?: PrRef[]) {
+  let refreshLock: Promise<unknown> = Promise.resolve();
+  function refresh(only?: PrRef[]): Promise<void> {
+    // One at a time: each run writes the whole prStatus map.
+    const run = refreshLock.then(() => refreshNow(only), () => refreshNow(only));
+    refreshLock = run.catch(() => undefined);
+    return run;
+  }
+
+  async function fetchBatch(query: string): Promise<Record<string, Record<string, GqlPr | null> | null> | null> {
+    try {
+      return (JSON.parse(await gh(["api", "graphql", "-f", `query=${query}`])) as { data: Record<string, Record<string, GqlPr | null> | null> }).data;
+    } catch (error) {
+      bb.log.warn(`pr refresh: ${String(error)}`);
+      return null;
+    }
+  }
+
+  async function refreshNow(only?: PrRef[]) {
     const status = await getStatus();
     let refs = only;
     if (refs === undefined) {
-      const all = await getThreads();
+      const all = await prune(await liveThreadIds(), status);
       const live = new Set<string>();
-      for (const [threadId, entry] of Object.entries(all)) {
-        const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
-        if (thread === null || thread.archivedAt !== null) continue;
+      for (const entry of Object.values(all)) {
         for (const ref of entry.refs) {
           const known = status[key(ref)];
           // Merged/closed PRs are settled; re-check them at most hourly.
@@ -204,8 +251,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
       const batch = refs.slice(index, index + 40);
       const byRepo = new Map<string, number[]>();
       for (const ref of batch) byRepo.set(ref.repo, [...(byRepo.get(ref.repo) ?? []), ref.number]);
-      const repos = [...byRepo.entries()];
-      const query = `query { ${repos
+      const allRepos = [...byRepo.entries()];
+      const queryFor = (repos: typeof allRepos) => `query { ${repos
         .map(([repo, numbers], r) => {
           const [owner, name] = repo.split("/");
           return `r${r}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${numbers
@@ -215,14 +262,18 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         .join(" ")} }
         fragment F on PullRequest { number title url state isDraft mergeable reviewDecision baseRefName headRefName mergedAt
           commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }`;
-      let data: Record<string, Record<string, GqlPr | null> | null>;
-      try {
-        data = (JSON.parse(await gh(["api", "graphql", "-f", `query=${query}`])) as { data: typeof data }).data;
-      } catch (error) {
-        bb.log.warn(`pr refresh: ${String(error)}`);
-        continue;
+      // One deleted repo or inaccessible PR fails the whole query; then retry
+      // repo by repo so the rest still updates.
+      const whole = await fetchBatch(queryFor(allRepos));
+      const parts: Array<[typeof allRepos, Record<string, Record<string, GqlPr | null> | null>]> = [];
+      if (whole) parts.push([allRepos, whole]);
+      else if (allRepos.length > 1) {
+        for (const single of allRepos) {
+          const data = await fetchBatch(queryFor([single]));
+          if (data) parts.push([[single], data]);
+        }
       }
-      repos.forEach(([repo, numbers], r) => {
+      for (const [repos, data] of parts) repos.forEach(([repo, numbers], r) => {
         for (const number of numbers) {
           const pr = data[`r${r}`]?.[`p${number}`];
           if (!pr) continue;

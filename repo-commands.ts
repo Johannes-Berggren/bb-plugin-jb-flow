@@ -63,9 +63,15 @@ export type DevRun = z.infer<typeof devRunSchema>;
 
 const READY_TIMEOUT_MS = 5 * 60_000;
 
-function portOpen(port: number): Promise<boolean> {
+// Both stacks: Vite and other servers that bind "localhost" on macOS listen on ::1 only.
+async function portOpen(port: number): Promise<boolean> {
+  const [v4, v6] = await Promise.all([probe(port, "127.0.0.1"), probe(port, "::1")]);
+  return v4 || v6;
+}
+
+function probe(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = connect({ port, host: "127.0.0.1" });
+    const socket = connect({ port, host });
     const done = (open: boolean) => {
       socket.destroy();
       resolve(open);

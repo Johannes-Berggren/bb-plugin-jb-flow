@@ -16,10 +16,14 @@ const ASKS = new RegExp(
     String.raw`\b(want me to|should i|shall i|would you like|do you want|if you('d)? (want|like|prefer))\b`,
     String.raw`\bif you (place|send|run|give|share|paste|confirm|approve|sign)\b`,
     String.raw`\b(can|could|would) you\b`,
-    String.raw`\b(let me know|tell me|please)\b`,
+    // Sign-offs ("Let me know if you need anything else", "Please note…") aren't asks.
+    String.raw`\blet me know\b(?!\s+if (you )?(need|have|want anything|there's anything|anything|something))`,
+    String.raw`\btell me\b`,
+    String.raw`\bplease\b(?!\s+(note|be aware|keep in mind|feel free|ignore))`,
     String.raw`\byour (call|decision|input|answer|go-ahead)\b`,
     String.raw`\bdecisions? (needed|for you|board)\b`,
-    String.raw`\b(decide|choose|approve)\b|\bpick (one|an option|between|which|a|the)\b(?! up)`,
+    // Addressed to you only: "Sam needs to approve it" waits on Sam.
+    String.raw`\byou (decide|choose|approve)\b|\bpick (one|an option|between|which|a|the)\b(?! up)`,
     String.raw`\bpaste (it|the text|them|his|her|their)\b`,
     String.raw`\b(waiting|blocked) (for|on|until) you\b`,
     String.raw`\bonce you('ve| have)?\b`,
@@ -31,10 +35,14 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 9;
+const AWAITING_VERSION = 10;
 
 /** True when the tail of the message hands the next step to the user. */
+/** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
+const straight = (text: string) => text.replace(/[’‘]/g, "'");
+
 export function asksUser(text: string): boolean {
+  text = straight(text);
   // Conditional fallbacks ("If it still breaks, tell me what you did") aren't
   // asks; conditions addressed to you ("If you want, I can…") still are.
   const tail = text
@@ -62,6 +70,7 @@ const PROMISES = new RegExp(
 
 /** True when the message ends with the agent promising to follow up by itself. */
 export function promisesFollowUp(text: string): boolean {
+  text = straight(text);
   return PROMISES.test(text.trim().slice(-600)) && !asksUser(text);
 }
 
@@ -70,7 +79,7 @@ export function promisesFollowUp(text: string): boolean {
 const PERSON = String.raw`(?:he|she|they|(?!(?:You|It|This|That|These|Those|We|There|Then|Once|When|CI|GitHub|Vercel|Linear|Sentry|Slack)\b)\p{Lu}[\p{L}'’-]+(?: \p{Lu}[\p{L}'’-]+)?)`;
 const WAITS = new RegExp(
   [
-    String.raw`\b([Ww]aiting|[Ww]ait) (for|on) (?![Yy]ou\b|CI\b|ci\b|(the|that) CI\b|[Cc]hecks?\b|(the|that|it|a) (CI|build|deploy|release|certificate|run|job|result)\b|release\b|deploy\b)\w`,
+    String.raw`\b([Ww]aiting|[Ww]ait) (for|on) (?![Yy]ou\b|CI\b|ci\b|(the|that) CI\b|[Cc]hecks?\b|(the|that|it|a|its|all) (CI|build|deploy|release|certificate|run|job|result|pipeline|tests?|workflows?|suite|checks?|migration|merge|GitHub Actions)\b|release\b|deploy\b|pipeline\b|tests?\b|workflows?\b|GitHub Actions\b|[Aa]ctions\b)\w`,
     String.raw`\b([Oo]nce|[Ww]hen|[Uu]ntil|[Aa]fter) ${PERSON} (replies|responds|answers|confirms|approves|reviews|sends|signs|gets back|has (replied|answered|confirmed|reviewed))`,
     String.raw`\b(depends on|is up to|pending on|[Bb]locked on) ${PERSON}\b`,
     String.raw`\b(only )?pending reviewers?\b|\bawaiting (review|a reply|reply|response|approval|their|his|her)\b`,
@@ -96,11 +105,12 @@ const RELAY = new RegExp(
 );
 
 export function relaysOthers(text: string): boolean {
-  return RELAY.test(text.trim().slice(-600));
+  return RELAY.test(straight(text).trim().slice(-600));
 }
 
 /** True when the message hands the next step to someone other than you. */
 export function waitsOnOthers(text: string): boolean {
+  text = straight(text);
   if (relaysOthers(text)) return true;
   return WAITS.test(text.trim().slice(-700)) && !asksUser(text);
 }
@@ -110,34 +120,27 @@ export const STALLED_AFTER_MS = 60 * 60_000;
 
 export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
+  // Threads go idle together; one queue for all three maps so a write never
+  // replaces another thread's result with a stale copy.
+  let lock: Promise<unknown> = Promise.resolve();
+  const flag = (key: string) => async (threadId: string, value: boolean) => {
+    const run = lock.then(async () => {
+      const all = (await kv.get<Record<string, number>>(key)) ?? {};
+      if (value === (threadId in all)) return false;
+      if (value) all[threadId] = Date.now();
+      else delete all[threadId];
+      await kv.set(key, all);
+      return true;
+    });
+    lock = run.catch(() => undefined);
+    if (await run) changed();
+  };
   const get = async () => (await kv.get<Record<string, number>>("awaiting")) ?? {};
-  const set = async (threadId: string, value: boolean) => {
-    const all = await get();
-    if (value === (threadId in all)) return;
-    if (value) all[threadId] = Date.now();
-    else delete all[threadId];
-    await kv.set("awaiting", all);
-    changed();
-  };
-
+  const set = flag("awaiting");
   const getPromised = async () => (await kv.get<Record<string, number>>("promised")) ?? {};
-  const setPromised = async (threadId: string, value: boolean) => {
-    const all = await getPromised();
-    if (value === (threadId in all)) return;
-    if (value) all[threadId] = Date.now();
-    else delete all[threadId];
-    await kv.set("promised", all);
-    changed();
-  };
+  const setPromised = flag("promised");
   const getWaiting = async () => (await kv.get<Record<string, number>>("waitingOthers")) ?? {};
-  const setWaiting = async (threadId: string, value: boolean) => {
-    const all = await getWaiting();
-    if (value === (threadId in all)) return;
-    if (value) all[threadId] = Date.now();
-    else delete all[threadId];
-    await kv.set("waitingOthers", all);
-    changed();
-  };
+  const setWaiting = flag("waitingOthers");
   const classify = async (threadId: string, text: string) => {
     await set(threadId, asksUser(text) && !relaysOthers(text));
     await setPromised(threadId, promisesFollowUp(text));

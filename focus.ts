@@ -38,7 +38,11 @@ export function needsAttention(thread: Thread, awaiting: Record<string, number>)
   );
 }
 
-export function createFocus(bb: BbPluginApi, getAwaiting: () => Promise<Record<string, number>>) {
+export function createFocus(
+  bb: BbPluginApi,
+  getAwaiting: () => Promise<Record<string, number>>,
+  getSnoozedSectionId: () => Promise<string>,
+) {
   const reports = new Map<string, FocusReport>();
 
   // Last known focus survives plugin reloads and quiet windows, so a deck key
@@ -94,6 +98,8 @@ export function createFocus(bb: BbPluginApi, getAwaiting: () => Promise<Record<s
       if (page.length < 500) break;
     }
     const awaiting = await getAwaiting();
+    // Snoozed threads stay hidden until they wake, as in the sidebar.
+    const snoozedSectionId = await getSnoozedSectionId();
     return threads
       .filter(
         (thread) =>
@@ -101,6 +107,7 @@ export function createFocus(bb: BbPluginApi, getAwaiting: () => Promise<Record<s
           thread.deletedAt === null &&
           thread.visibility === "visible" &&
           thread.parentThreadId === null &&
+          thread.sectionId !== snoozedSectionId &&
           needsAttention(thread, awaiting),
       )
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));

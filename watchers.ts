@@ -35,6 +35,7 @@ type ThreadRef = Pick<Thread, "id" | "projectId" | "updatedAt">;
 const CONTINUE_DELAY_MS = 90_000;
 const RELEASE_BACKFILL_VERSION = 1;
 const CI_TIMEOUT_MS = 3 * 3_600_000;
+const NO_CHECKS_AFTER_MS = 10 * 60_000;
 const OK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 /** Deploy-preview and housekeeping bots: their comments are not review feedback. */
 const BOT_LOGINS = new Set(["vercel", "github-actions", "dependabot", "linear", "changeset-bot", "codecov", "netlify", "sonarcloud"]);
@@ -56,6 +57,8 @@ type CiWatch = {
   /** Reviews/comments newer than this are reported; advances after each report. */
   reviewsSince?: number;
   headSha: string | null;
+  /** "both" after its checks were reported: keep listening for reviews, end silently. */
+  quiet?: boolean;
 };
 
 function ghPath(): string {
@@ -96,6 +99,19 @@ export function createWatchers(
 ) {
   const kv = bb.storage.kv;
   const get = async <T>(key: string, fallback: T): Promise<T> => (await kv.get<T>(key)) ?? fallback;
+  // Read-modify-write of one kv record, one at a time per key: a CI check runs
+  // for tens of seconds and must not erase a watch registered meanwhile.
+  const locks = new Map<string, Promise<unknown>>();
+  function update<T>(key: string, fallback: T, apply: (value: T) => void): Promise<T> {
+    const run = (locks.get(key) ?? Promise.resolve()).then(async () => {
+      const value = await get<T>(key, fallback);
+      apply(value);
+      await kv.set(key, value);
+      return value;
+    });
+    locks.set(key, run.catch(() => undefined));
+    return run;
+  }
 
   async function tell(threadId: string, text: string, sendAt?: number) {
     return bb.sdk.threads.send({
@@ -122,11 +138,12 @@ export function createWatchers(
       if (pending[thread.id]?.resetsAt === hit.resetsAt) return;
       const sendAt = hit.resetsAt + CONTINUE_DELAY_MS;
       const result = await tell(thread.id, "continue", sendAt);
-      pending[thread.id] = {
-        resetsAt: hit.resetsAt,
-        queuedMessageId: result.delivery === "queued" ? result.queuedMessage.id : null,
-      };
-      await kv.set("autoContinue", pending);
+      await update<Record<string, AutoContinue>>("autoContinue", {}, (all) => {
+        all[thread.id] = {
+          resetsAt: hit.resetsAt,
+          queuedMessageId: result.delivery === "queued" ? result.queuedMessage.id : null,
+        };
+      });
       bb.log.info(`auto-continue ${thread.id} at ${new Date(sendAt).toISOString()}`);
       return;
     }
@@ -138,8 +155,9 @@ export function createWatchers(
     const pending = await get<Record<string, AutoContinue>>("autoContinue", {});
     const entry = pending[thread.id];
     if (entry === undefined) return;
-    delete pending[thread.id];
-    await kv.set("autoContinue", pending);
+    await update<Record<string, AutoContinue>>("autoContinue", {}, (all) => {
+      delete all[thread.id];
+    });
     if (entry.queuedMessageId !== null && Date.now() < entry.resetsAt) {
       await bb.sdk.threads.queuedMessages
         .delete({ threadId: thread.id, queuedMessageId: entry.queuedMessageId })
@@ -184,6 +202,7 @@ export function createWatchers(
   async function registerReleaseWaiter(thread: ThreadRef) {
     const names = await releaseProjectsFor(thread);
     const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
+    const added: Record<string, ReleaseWaiter> = {};
     for (const name of names) {
       const key = waiterKey(thread.id, name);
       if (waiters[key] !== undefined) continue;
@@ -194,10 +213,14 @@ export function createWatchers(
         bb.log.info(`release ${latest.key}: caught up ${thread.id}`);
         continue;
       }
-      waiters[key] = { threadId: thread.id, projectName: name, since };
+      added[key] = { threadId: thread.id, projectName: name, since };
       bb.log.info(`release waiter: ${thread.id} (${name})`);
     }
-    await kv.set("releaseWaiters", waiters);
+    if (Object.keys(added).length > 0) {
+      await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
+        for (const [key, waiter] of Object.entries(added)) all[key] ??= waiter;
+      });
+    }
     changed();
     return names;
   }
@@ -242,7 +265,7 @@ export function createWatchers(
     return `released: ${headline}.${runs.length ? ` Its workflows passed (${runs.length} runs).` : ""} First confirm your changes are in it; if they aren't, say you're still waiting for a release and stop. Otherwise continue where you left off.`;
   }
 
-  async function checkReleases() {
+  async function checkReleasesNow() {
     const waiters = Object.values(await get<Record<string, ReleaseWaiter>>("releaseWaiters", {}));
     const pending = await get<Record<string, Pending>>("pendingReleases", {});
     const projects = new Set([...waiters.map((waiter) => waiter.projectName), ...Object.values(pending).map((p) => p.projectName)]);
@@ -306,9 +329,10 @@ export function createWatchers(
         if (thread && thread.archivedAt === null) {
           await tell(waiter.threadId, message).catch((error) => bb.log.warn(`release notify: ${String(error)}`));
         }
-        delete allWaiters[waiterId];
       }
-      await kv.set("releaseWaiters", allWaiters);
+      await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
+        for (const [waiterId] of targets) delete all[waiterId];
+      });
       seen[key] = release.mergedAt;
       delete pending[key];
       bb.log.info(`release ${key}: notified ${targets.length} thread(s)`);
@@ -350,12 +374,13 @@ export function createWatchers(
         `${slug}#${pr} is already ${current.state.toLowerCase()} ("${current.title}", opened ${current.createdAt?.slice(0, 10)}). If you meant a PR in another repo, pass repo (owner/name).`,
       );
     }
-    const watches = await get<Record<string, CiWatch>>("ciWatches", {});
     const key = `${threadId}:${slug}#${pr}`;
-    watches[key] = { threadId, repo: slug, pr, watchFor: options.watchFor ?? "both", since: Date.now(), headSha: null };
-    await kv.set("ciWatches", watches);
+    const watch: CiWatch = { threadId, repo: slug, pr, watchFor: options.watchFor ?? "both", since: Date.now(), headSha: null };
+    await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
+      all[key] = watch;
+    });
     changed();
-    return watches[key]!;
+    return watch;
   }
 
   type PrState = {
@@ -384,10 +409,12 @@ export function createWatchers(
     return lines.length > 1 ? `\n\`\`\`\n${truncate(lines.join("\n"), 4000)}\n\`\`\`` : "";
   }
 
-  async function checkCi() {
+  async function checkCiNow() {
     const watches = await get<Record<string, CiWatch>>("ciWatches", {});
     // One message per thread per cycle, however many of its PRs have news.
     const outbox = new Map<string, { notes: string[]; stillWatching: boolean }>();
+    // Applied to a fresh read at the end, so watches added during the check survive.
+    const removed = new Set<string>();
     let me: string | null = null;
     for (const [key, watch] of Object.entries(watches)) {
       let pr: PrState;
@@ -400,7 +427,7 @@ export function createWatchers(
         // instead of warning every cycle forever.
         if (Date.now() - watch.since > CI_TIMEOUT_MS) {
           delete watches[key];
-          await kv.set("ciWatches", watches);
+          removed.add(key);
           bb.log.warn(`ci ${key}: dropped after repeated errors: ${String(error)}`);
         } else {
           bb.log.warn(`ci ${key}: ${String(error)}`);
@@ -410,6 +437,7 @@ export function createWatchers(
       me ??= (await gh(["api", "user", "-q", ".login"]).catch(() => "")).trim();
       const notes: string[] = [];
       let done = false;
+      let checksReported = false;
 
       if (pr.state !== "OPEN") {
         notes.push(`PR ${watch.repo.split("/")[1]}#${watch.pr} is now ${pr.state.toLowerCase()}.`);
@@ -436,7 +464,19 @@ export function createWatchers(
               `❌ CI failed on ${watch.repo.split("/")[1]}#${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${failed.map((check) => check.name).join(", ")}.${log}`,
             );
           }
-          done = true;
+          // "both" keeps listening for reviews (review bots often answer after CI).
+          if (watch.watchFor === "both") {
+            watch.watchFor = "reviews";
+            watch.quiet = true;
+            checksReported = true;
+          } else done = true;
+        } else if (checks.length === 0 && Date.now() - watch.since > NO_CHECKS_AFTER_MS) {
+          notes.push(`${watch.repo.split("/")[1]}#${watch.pr} has no CI checks after 10 minutes; nothing to wait for.`);
+          if (watch.watchFor === "both") {
+            watch.watchFor = "reviews";
+            watch.quiet = true;
+            checksReported = true;
+          } else done = true;
         }
       }
 
@@ -461,17 +501,25 @@ export function createWatchers(
       }
 
       if (!done && Date.now() - watch.since > CI_TIMEOUT_MS) {
-        notes.push(`Still waiting on ${watch.repo.split("/")[1]}#${watch.pr} after 3 hours; stopped watching. ${pr.url}`);
+        // A quiet review watch already told the agent about its checks.
+        if (!watch.quiet) notes.push(`Still waiting on ${watch.repo.split("/")[1]}#${watch.pr} after 3 hours; stopped watching. ${pr.url}`);
         done = true;
       }
 
-      if (done || reviewNews) {
+      if (done || reviewNews || checksReported) {
         const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
         entry.notes.push(...notes);
         if (!done) entry.stillWatching = true;
+        if (notes.length === 0) {
+          delete watches[key];
+          removed.add(key);
+          continue;
+        }
         outbox.set(watch.threadId, entry);
-        if (done) delete watches[key];
-        else watch.reviewsSince = Date.now();
+        if (done) {
+          delete watches[key];
+          removed.add(key);
+        } else watch.reviewsSince = Date.now();
       }
     }
     for (const [threadId, entry] of outbox) {
@@ -484,7 +532,13 @@ export function createWatchers(
         bb.log.warn(`ci notify: ${String(error)}`),
       );
     }
-    await kv.set("ciWatches", watches);
+    await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
+      for (const key of removed) delete all[key];
+      for (const [key, watch] of Object.entries(watches)) {
+        const current = all[key];
+        if (current) Object.assign(current, { since: watch.since, headSha: watch.headSha, reviewsSince: watch.reviewsSince, watchFor: watch.watchFor, quiet: watch.quiet });
+      }
+    });
     changed();
   }
 
@@ -493,18 +547,17 @@ export function createWatchers(
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => onIdle(thread, lastAssistantText));
   bb.events.on("thread.active", ({ thread }) => onActive(thread));
   bb.events.on("thread.archived", async ({ thread }) => {
-    const continues = await get<Record<string, AutoContinue>>("autoContinue", {});
-    if (thread.id in continues) {
-      delete continues[thread.id];
-      await kv.set("autoContinue", continues);
-    }
+    await update<Record<string, AutoContinue>>("autoContinue", {}, (all) => {
+      delete all[thread.id];
+    });
     // Release waiters are keyed thread@project; one thread can wait on several.
-    const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
-    const keys = Object.keys(waiters).filter((key) => waiters[key]!.threadId === thread.id);
-    if (keys.length > 0) {
-      for (const key of keys) delete waiters[key];
-      await kv.set("releaseWaiters", waiters);
-    }
+    await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
+      for (const key of Object.keys(all)) if (all[key]!.threadId === thread.id) delete all[key];
+    });
+    await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
+      for (const key of Object.keys(all)) if (all[key]!.threadId === thread.id) delete all[key];
+    });
+    changed();
   });
 
   // Register threads that were already waiting before these rules existed. Bump
@@ -537,28 +590,23 @@ export function createWatchers(
     },
   });
 
-  let releaseBusy = false;
+  // Single flight: the schedules and `check-now` share one run, so a thread
+  // never gets the same "CI is green" twice.
+  let releaseRun: Promise<void> | null = null;
+  const checkReleases = () => (releaseRun ??= checkReleasesNow().finally(() => (releaseRun = null)));
+  let ciRun: Promise<void> | null = null;
+  const checkCi = () => (ciRun ??= checkCiNow().finally(() => (ciRun = null)));
+
   bb.background.schedule("release-watch", "*/3 * * * *", async () => {
-    if (releaseBusy || Object.keys(releaseConfig).length === 0) return;
+    if (releaseRun !== null || Object.keys(releaseConfig).length === 0) return;
     const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
     const pending = await get<Record<string, Pending>>("pendingReleases", {});
     if (Object.keys(waiters).length + Object.keys(pending).length === 0) return;
-    releaseBusy = true;
-    try {
-      await checkReleases();
-    } finally {
-      releaseBusy = false;
-    }
+    await checkReleases();
   });
-  let ciBusy = false;
   bb.background.schedule("ci-watch", "*/2 * * * *", async () => {
-    if (ciBusy || Object.keys(await get<Record<string, CiWatch>>("ciWatches", {})).length === 0) return;
-    ciBusy = true;
-    try {
-      await checkCi();
-    } finally {
-      ciBusy = false;
-    }
+    if (ciRun !== null || Object.keys(await get<Record<string, CiWatch>>("ciWatches", {})).length === 0) return;
+    await checkCi();
   });
 
   async function status() {

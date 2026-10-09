@@ -414,6 +414,21 @@ function DecisionChipsBanner() {
   return <DecisionChips threadId={threadId} updatedAt={thread?.updatedAt ?? null} idle={thread?.status === "idle"} />;
 }
 
+/** The row after this one (or before, at the end), to keep focus on after this row moves away. */
+function neighbourRowId(row: HTMLElement): string | null {
+  const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-jb-flow-row]"));
+  const index = rows.indexOf(row);
+  return (rows[index + 1] ?? rows[index - 1])?.dataset.jbFlowRow ?? null;
+}
+
+/** Focuses a row once the list has re-rendered. */
+function focusRowSoon(threadId: string | null) {
+  if (threadId === null) return;
+  window.setTimeout(() => {
+    document.querySelector<HTMLElement>(`[data-jb-flow-row="${CSS.escape(threadId)}"]`)?.focus();
+  }, 150);
+}
+
 /** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
 // Set by CommandHost (always mounted) so the "new thread in split" command can
 // reach the host's navigation actions outside React.
@@ -614,12 +629,14 @@ function ThreadRow({
     const lane = lanes.find((candidate) => candidate.key === event.key);
     if (lane) {
       event.preventDefault();
-      void sdk.threads.update({
-        threadId: thread.id,
-        sectionId: lane.sectionId,
-      });
+      // The row leaves its place; keep the keyboard on the list (inbox style).
+      const next = neighbourRowId(event.currentTarget);
+      void sdk.threads
+        .update({ threadId: thread.id, sectionId: lane.sectionId })
+        .then(() => focusRowSoon(next));
     } else if (event.key === "e") {
       event.preventDefault();
+      focusRowSoon(neighbourRowId(event.currentTarget));
       actions.archive(thread.id);
     } else if (event.key === "s") {
       event.preventDefault();
@@ -661,7 +678,7 @@ function ThreadRow({
             split.splitProps.onPointerDown?.(event);
             drag.start(thread, event);
           }}
-          data-jb-flow-row=""
+          data-jb-flow-row={thread.id}
           data-sidebar-thread-shortcut-target=""
           aria-current={active ? "page" : undefined}
           aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
@@ -1314,7 +1331,9 @@ function TriageThreadList({
   const rowMachine = (thread: PluginSidebarThread) => {
     const hostId = threadHost(thread, machines);
     const host = machines?.hosts.find((candidate) => candidate.id === hostId);
-    return host ? { name: host.name, remote: host.id !== machines?.localHostId } : null;
+    // Tag rows only when there is more than one machine and we know which one is local.
+    const remote = (machines?.hosts.length ?? 0) > 1 && machines?.localHostId != null && host?.id !== machines.localHostId;
+    return host ? { name: host.name, remote } : null;
   };
   const [sectionDialog, setSectionDialog] = useState<{ mode: "create" | "rename"; id?: string; name: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
