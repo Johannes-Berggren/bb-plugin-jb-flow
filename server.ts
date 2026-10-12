@@ -112,7 +112,7 @@ const stateSchema = z.object({
   running: z.record(z.string(), z.object({ since: z.number(), lastEventAt: z.number() })),
   /** Per thread: what the plugin is waiting on for it (CI, release, auto-continue). */
   watching: z.record(z.string(), z.object({ kind: z.enum(["ci", "release", "continue"]), label: z.string() })),
-  snoozedSectionId: z.string(),
+  snoozedSectionId: z.string().nullable(),
   snoozes: z.record(z.string(), snoozeSchema),
   tags: z.record(z.string(), z.array(z.string())),
 });
@@ -125,6 +125,8 @@ export const rpcContract = defineRpcContract({
       threadId: z.string(),
       when: z.string().min(1).max(64),
       note: z.string().max(2000).nullable(),
+      /** `when` resolved in the browser's time zone; the server's may differ (bb Connect). */
+      until: z.number().optional(),
     }),
     output: snoozeSchema,
   },
@@ -311,10 +313,20 @@ export default async function plugin(bb: BbPluginApi) {
   async function getKept(): Promise<Record<string, number>> {
     return (await bb.storage.kv.get<Record<string, number>>("kept")) ?? {};
   }
+  // One thread event can change several stores within milliseconds; publish
+  // once after they settle so every window refetches once, not four times.
+  let publishTimer: ReturnType<typeof setTimeout> | null = null;
   function changed() {
-    bb.realtime.publish(CHANGED, {});
     bumpDeck();
+    if (publishTimer !== null) return;
+    publishTimer = setTimeout(() => {
+      publishTimer = null;
+      bb.realtime.publish(CHANGED, {});
+    }, 250);
   }
+  bb.onDispose(() => {
+    if (publishTimer !== null) clearTimeout(publishTimer);
+  });
 
   // The Stream Deck long-polls `deck --wait <version>`: the call returns as soon
   // as something it shows may have changed (focus, a thread starting/stopping,
@@ -339,9 +351,10 @@ export default async function plugin(bb: BbPluginApi) {
     });
   }
   // A thread starting or stopping changes counts too: drop the cached list.
-  const onThreadState = () => {
+  const onThreadState = ({ thread }: { thread: { id: string } }) => {
     threadListCache = null;
-    machines.invalidate();
+    // Only a thread the cache doesn't know (new, or new environment) can change machines.
+    machines.invalidateFor(thread.id);
     bumpDeck();
   };
   bb.events.on("thread.active", onThreadState);
@@ -350,13 +363,24 @@ export default async function plugin(bb: BbPluginApi) {
     for (const wake of deckWaiters) wake();
   });
 
+  // The Snoozed section is created by the first snooze, not on install, so
+  // people who never snooze don't get an empty section. Looked up by name and
+  // cached briefly; the user may delete or recreate it at any time.
   let snoozedSectionId: string | null = null;
-  async function ensureSnoozedSection(): Promise<string> {
-    if (snoozedSectionId !== null) return snoozedSectionId;
+  let snoozedCheckedAt = 0;
+  async function findSnoozedSection(): Promise<string | null> {
+    if (Date.now() - snoozedCheckedAt < 10_000) return snoozedSectionId;
     const sections = await bb.sdk.threadSections.list();
-    const existing = sections.find((section) => section.name === SNOOZED_SECTION_NAME);
-    snoozedSectionId =
-      existing?.id ?? (await bb.sdk.threadSections.create({ name: SNOOZED_SECTION_NAME })).id;
+    snoozedSectionId = sections.find((section) => section.name === SNOOZED_SECTION_NAME)?.id ?? null;
+    snoozedCheckedAt = Date.now();
+    return snoozedSectionId;
+  }
+  async function ensureSnoozedSection(): Promise<string> {
+    snoozedCheckedAt = 0;
+    const existing = await findSnoozedSection();
+    if (existing !== null) return existing;
+    snoozedSectionId = (await bb.sdk.threadSections.create({ name: SNOOZED_SECTION_NAME })).id;
+    snoozedCheckedAt = Date.now();
     return snoozedSectionId;
   }
 
@@ -389,8 +413,9 @@ export default async function plugin(bb: BbPluginApi) {
     return run;
   }
 
-  async function snooze(threadId: string, when: string, note: string | null): Promise<Snooze> {
-    const record = await snoozeUntil(threadId, parseWhen(when), note);
+  async function snooze(threadId: string, when: string, note: string | null, until?: number): Promise<Snooze> {
+    if (until !== undefined && until <= Date.now()) throw new Error(`"${when}" is in the past.`);
+    const record = await snoozeUntil(threadId, until ?? parseWhen(when), note);
     void boardSnooze(threadId, record.until).then(async (mirrored) => {
       if (!mirrored) return;
       await updateSnoozes((all) => {
@@ -498,8 +523,10 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function wakeDue(): Promise<number> {
-    const sectionId = await ensureSnoozedSection();
     const snoozes = await getSnoozes();
+    if (Object.keys(snoozes).length === 0) return 0;
+    // No section (never created, or deleted): every record below is stale.
+    const sectionId = await findSnoozedSection();
     let woken = 0;
     // Removed at the end against a fresh read, keyed by the record we saw, so
     // a snooze set meanwhile (or a re-snooze) survives.
@@ -620,7 +647,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   // Late-bound: the awaiting tracker is created below.
-  const focus = createFocus(bb, () => awaiting.all(), () => ensureSnoozedSection());
+  const focus = createFocus(bb, () => awaiting.all(), () => findSnoozedSection());
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
@@ -671,30 +698,42 @@ export default async function plugin(bb: BbPluginApi) {
 
 async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const waiting = await awaiting.all();
-    const snoozedSection = await ensureSnoozedSection();
-    const items = [];
-    for (const [threadId, since] of Object.entries(waiting)) {
-      const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
-      if (!thread || thread.archivedAt !== null || thread.status !== "idle" || thread.sectionId === snoozedSection) continue;
-      const output = withAsk ? await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })) : { output: null };
-      // The ask is at the end of the message: show its last meaningful lines.
-      const ask = (output.output ?? "")
-        .split("\n")
-        .map((line) => line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`>#]+/g, "").trim())
-        .filter((line) => line.length > 0 && !/^\d{1,2}[./]\d{1,2}[./]\d{2,4}|^\d{4}-\d{2}-\d{2}|^stamped/i.test(line))
-        .slice(-3)
-        .join(" ")
-        .slice(0, 240);
+    const snoozedSection = await findSnoozedSection();
+    // One list instead of a get per entry; outputs fetched in parallel below.
+    const byId = new Map((await listAllActiveThreads()).map((thread) => [thread.id, thread]));
+    const candidates = Object.entries(waiting).flatMap(([threadId, since]) => {
+      const thread = byId.get(threadId);
+      if (!thread || thread.status !== "idle" || thread.sectionId === snoozedSection) return [];
+      return [{ thread, since }];
+    });
+    const asks = new Map<string, string>();
+    if (withAsk) {
+      for (let index = 0; index < candidates.length; index += 8) {
+        await Promise.all(
+          candidates.slice(index, index + 8).map(async ({ thread }) => {
+            const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
+            // The ask is at the end of the message: show its last meaningful lines.
+            const ask = (output.output ?? "")
+              .split("\n")
+              .map((line) => line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`>#]+/g, "").trim())
+              .filter((line) => line.length > 0 && !/^\d{1,2}[./]\d{1,2}[./]\d{2,4}|^\d{4}-\d{2}-\d{2}|^stamped/i.test(line))
+              .slice(-3)
+              .join(" ")
+              .slice(0, 240);
+            asks.set(thread.id, ask);
+          }),
+        );
+      }
+    }
+    const items = candidates.map(({ thread, since }) => ({
+      threadId: thread.id,
+      title: thread.title ?? thread.titleFallback ?? "Untitled",
+      projectId: thread.projectId,
       // Date the ask by the thread's last activity: backfilled entries carry the
       // classification time, not when the agent actually asked.
-      items.push({
-        threadId,
-        title: thread.title ?? thread.titleFallback ?? "Untitled",
-        projectId: thread.projectId,
-        since: Math.min(since, thread.updatedAt),
-        ask,
-      });
-    }
+      since: Math.min(since, thread.updatedAt),
+      ask: asks.get(thread.id) ?? "",
+    }));
     items.sort((a, b) => a.since - b.since);
     return { items };
   }
@@ -704,8 +743,9 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
 
   // --- RPC ------------------------------------------------------------------
 
-  bb.rpc.register(rpcContract, {
-    state_get: async () => ({
+  let stateBuild: Promise<FlowState> | null = null;
+  async function buildState(): Promise<FlowState> {
+    return {
       awaiting: await awaiting.all(),
       promised: await awaiting.promised(),
       waitingOthers: await awaiting.waitingOthers(),
@@ -718,11 +758,16 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       watching: await watchingByThread(),
       projectShortNames: localConfig.projectShortNames,
       stripProjectPrefixes: localConfig.stripProjectPrefixes,
-      snoozedSectionId: await ensureSnoozedSection(),
+      snoozedSectionId: await findSnoozedSection(),
       snoozes: await getSnoozes(),
       tags: await getTags(),
-    }),
-    snooze: ({ threadId, when, note }) => snooze(threadId, when, note),
+    };
+  }
+
+  bb.rpc.register(rpcContract, {
+    // Concurrent callers (every open window refetches on the same publish) share one build.
+    state_get: () => (stateBuild ??= buildState().finally(() => (stateBuild = null))),
+    snooze: ({ threadId, when, note, until }) => snooze(threadId, when, note, until),
     unsnooze: async ({ threadId }) => ({ removed: await unsnooze(threadId) }),
     tags_set: async ({ threadId, tags }) => {
       const all = await getTags();
@@ -1184,6 +1229,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PRs linked." };
           }
           case "classify": {
+            const snoozedSection = await findSnoozedSection();
             // Debug view: where each open thread lands in the triage sidebar, with
             // the tail of its last agent message to check the call against.
             const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers] = await Promise.all([
@@ -1199,7 +1245,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             const rows = [];
             for (const thread of threads) {
               if (thread.archivedAt !== null || thread.visibility !== "visible" || thread.parentThreadId !== null) continue;
-              const snoozed = thread.sectionId === snoozedSectionId;
+              const snoozed = snoozedSection !== null && thread.sectionId === snoozedSection;
               const busy = thread.status === "active" || thread.status === "starting";
               const prs = (byThread[thread.id] ?? []).map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`);
               const open = (byThread[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft");
@@ -1466,6 +1512,5 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     },
   });
 
-  await ensureSnoozedSection();
   bb.log.info("loaded");
 }

@@ -1,4 +1,5 @@
-// Parses a human "when" into an epoch-ms timestamp, in server-local time.
+// Parses a human "when" into an epoch-ms timestamp, in the local time of
+// whoever runs it: the browser for the snooze dialog, the server for the CLI.
 //
 // Accepted forms:
 //   30m, 2h, 3d, 1w           relative offsets
@@ -40,11 +41,11 @@ export function parseWhen(input: string, now: Date = new Date()): number {
   const relative = /^(\d+)\s*(m|min|h|d|w)$/.exec(value);
   if (relative !== null) {
     const amount = Number(relative[1]);
-    const unitMs = { m: 60_000, min: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[
-      relative[2] as "m" | "min" | "h" | "d" | "w"
-    ];
+    const unit = relative[2] as "m" | "min" | "h" | "d" | "w";
     if (amount <= 0) throw new Error(`"${input}" must be in the future.`);
-    return now.getTime() + amount * unitMs;
+    // Days and weeks are calendar days: same clock time across a DST change.
+    if (unit === "d" || unit === "w") return addDays(now, amount * (unit === "w" ? 7 : 1)).getTime();
+    return now.getTime() + amount * (unit === "h" ? 3_600_000 : 60_000);
   }
 
   if (value === "today") {

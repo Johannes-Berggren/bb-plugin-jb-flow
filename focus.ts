@@ -41,7 +41,7 @@ export function needsAttention(thread: Thread, awaiting: Record<string, number>)
 export function createFocus(
   bb: BbPluginApi,
   getAwaiting: () => Promise<Record<string, number>>,
-  getSnoozedSectionId: () => Promise<string>,
+  getSnoozedSectionId: () => Promise<string | null>,
 ) {
   const reports = new Map<string, FocusReport>();
 

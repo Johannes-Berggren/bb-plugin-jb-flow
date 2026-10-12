@@ -51,3 +51,11 @@ test("only real day names are weekdays", () => {
   assert.doesNotThrow(() => parseWhen("thursday"));
   assert.doesNotThrow(() => parseWhen("tues"));
 });
+
+test("days keep the clock time across a DST change", () => {
+  const now = new Date(2026, 9, 23, 9, 30); // the weekend before EU clocks go back
+  const later = new Date(parseWhen("3d", now));
+  assert.equal(later.getHours(), 9);
+  assert.equal(later.getMinutes(), 30);
+  assert.equal(later.getDate(), 26);
+});

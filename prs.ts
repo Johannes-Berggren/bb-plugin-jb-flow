@@ -117,7 +117,42 @@ export function orderStack(prs: PrStatus[]): PrStatus[] {
 
 export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
-  const getThreads = async () => (await kv.get<Record<string, ThreadPrs>>("threadPrs")) ?? {};
+  // PR data lives in the plugin's own SQLite database: kv values are capped at
+  // 256KB, and a busy user links hundreds of PRs a month.
+  const db = () => bb.storage.database();
+  bb.storage.migrate(db(), [
+    "CREATE TABLE pr_status (key TEXT PRIMARY KEY, json TEXT NOT NULL)",
+    "CREATE TABLE thread_prs (thread_id TEXT PRIMARY KEY, json TEXT NOT NULL)",
+  ]);
+  function readTable<T>(table: "pr_status" | "thread_prs", column: "key" | "thread_id"): Record<string, T> {
+    const rows = db().prepare(`SELECT ${column} AS id, json FROM ${table}`).all() as Array<{ id: string; json: string }>;
+    return Object.fromEntries(rows.map((row) => [row.id, JSON.parse(row.json) as T]));
+  }
+  function writeTable(table: "pr_status" | "thread_prs", column: "key" | "thread_id", value: Record<string, unknown>) {
+    const handle = db();
+    const insert = handle.prepare(`INSERT INTO ${table} (${column}, json) VALUES (?, ?)`);
+    handle.transaction(() => {
+      handle.prepare(`DELETE FROM ${table}`).run();
+      for (const [id, entry] of Object.entries(value)) insert.run(id, JSON.stringify(entry));
+    })();
+  }
+  // One-time move out of kv (v0.1.1 and earlier).
+  const moved = (async () => {
+    for (const [kvKey, table, column] of [
+      ["prStatus", "pr_status", "key"],
+      ["threadPrs", "thread_prs", "thread_id"],
+    ] as const) {
+      const old = await kv.get<Record<string, unknown>>(kvKey);
+      if (old === null || old === undefined) continue;
+      writeTable(table, column, old);
+      await kv.delete(kvKey);
+    }
+  })().catch((error) => bb.log.warn(`pr storage move: ${String(error)}`));
+  const getThreads = async () => {
+    await moved;
+    return readTable<ThreadPrs>("thread_prs", "thread_id");
+  };
+  const setThreads = async (value: Record<string, ThreadPrs>) => writeTable("thread_prs", "thread_id", value);
   // Scans (backfill, idle events, CLI) interleave; serialize read-modify-write
   // of the threadPrs map so one never overwrites another's results.
   let lock: Promise<unknown> = Promise.resolve();
@@ -132,10 +167,13 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
       const entry = all[threadId] ?? { refs: [], cursor: 0 };
       apply(entry);
       all[threadId] = entry;
-      await kv.set("threadPrs", all);
+      await setThreads(all);
       return entry;
     });
-  const getStatus = async () => (await kv.get<Record<string, PrStatus>>("prStatus")) ?? {};
+  const getStatus = async () => {
+    await moved;
+    return readTable<PrStatus>("pr_status", "key");
+  };
 
   /** Reads new completed commands since the thread's cursor and links PRs it created. */
   async function scan(threadId: string, signal?: AbortSignal): Promise<PrRef[]> {
@@ -202,7 +240,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
           removed += 1;
         }
       }
-      if (removed > 0) await kv.set("threadPrs", all);
+      if (removed > 0) await setThreads(all);
       return all;
     });
     const referenced = new Set(Object.values(kept).flatMap((entry) => entry.refs.map(key)));
@@ -293,7 +331,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         }
       });
     }
-    await kv.set("prStatus", status);
+    writeTable("pr_status", "key", status);
     changed();
   }
 
@@ -326,7 +364,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   bb.background.service("pr-backfill", {
     async start(signal) {
       if ((await kv.get<number>("threadPrsVersion")) !== 2) {
-        await exclusive(() => kv.set("threadPrs", {}));
+        await exclusive(() => setThreads({}));
         await kv.set("threadPrsVersion", 2);
       }
       const threads = await bb.sdk.threads.list({ limit: 500 });
