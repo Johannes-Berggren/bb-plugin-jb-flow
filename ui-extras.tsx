@@ -4,7 +4,7 @@
 import { forwardRef, useEffect, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import * as HoverCard from "@radix-ui/react-hover-card";
-import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useComposers, useRpc } from "@get-bb/plugin-sdk/app";
 import type { JsonValue, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState, rpcContract } from "./server";
@@ -575,16 +575,10 @@ const shortAge = (ms: number) => {
 
 // BB hands homepage sections the project from the URL, which is null on the
 // global New Thread page. The project picked in the composer lives in the
-// new-thread composer's scope; the host runtime exposes every live composer via
-// useComposers(), which this SDK version doesn't declare yet.
-type ComposerHandle = { scope: { kind: string; projectId?: string | null } };
-const runtimeSdk = (globalThis as { __bbPluginRuntime?: { pluginSdkApp?: { useComposers?: () => readonly ComposerHandle[] } } })
-  .__bbPluginRuntime?.pluginSdkApp;
-const useComposers = runtimeSdk?.useComposers ?? (() => [] as readonly ComposerHandle[]);
-
+// new-thread composer's scope.
 function useComposeProject(fallback: string | null): string | null {
-  const composer = useComposers().find((handle) => handle.scope.kind === "new-thread");
-  return composer?.scope.projectId ?? fallback;
+  for (const { scope } of useComposers()) if (scope.kind === "new-thread") return scope.projectId ?? fallback;
+  return fallback;
 }
 
 export function UnreleasedSection({ projectId: routeProjectId }: { projectId: string | null }) {

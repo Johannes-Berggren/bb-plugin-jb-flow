@@ -6,8 +6,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   definePluginApp,
-  experimental_useSidebarNavigation as useSidebarNavigation,
-  experimental_useSidebarThreadActions as useSidebarThreadActions,
   experimental_useSidebarThreads as useSidebarThreads,
   ThreadTitle,
   useRealtime,
@@ -16,7 +14,8 @@ import {
   experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
   useBbContext,
-  useComposerView,
+  useBbNavigate,
+  useComposer,
   useSidebarSplitLayout,
   useSidebarThreadShortcut,
   useSettings,
@@ -29,6 +28,7 @@ import type {
   PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import type { DigestItem, FlowState, rpcContract } from "./server";
+import { useSidebarThreadActions } from "./thread-actions";
 import type { Leftover } from "./leftovers";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
 import {
@@ -406,11 +406,11 @@ function PullRequestsTab({ threadId, params }: { threadId: string; params: JsonV
 }
 
 function DecisionChipsBanner() {
-  const view = useComposerView();
-  const threadId = view.scope.kind === "thread" ? view.scope.threadId : null;
+  const composer = useComposer();
+  const threadId = composer.scope.kind === "thread" ? composer.scope.threadId : null;
   const { threads } = useSidebarThreads();
   const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
-  if (view.run.isRunning || !view.draft.isEmpty) return null;
+  if (composer.isRunning || !composer.isEmpty) return null;
   return <DecisionChips threadId={threadId} updatedAt={thread?.updatedAt ?? null} idle={thread?.status === "idle"} />;
 }
 
@@ -430,13 +430,23 @@ function focusRowSoon(threadId: string | null) {
 }
 
 /** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
-// Set by CommandHost (always mounted) so the "new thread in split" command can
-// reach the host's navigation actions outside React.
-let navActions: ReturnType<typeof useSidebarNavigation>["actions"] | null = null;
+// SDK 0.6 dropped the sidebar navigation hook, and with it the only way to
+// open New thread in a split. Use it while the host runtime still has it;
+// otherwise the command opens the new-thread page normally.
+type NavActions = { activate(itemId: string, options: { openInSplit: boolean }): void };
+const legacyUseNavigation = (
+  globalThis as { __bbPluginRuntime?: { pluginSdkApp?: { experimental_useSidebarNavigation?: () => { actions: NavActions } } } }
+).__bbPluginRuntime?.pluginSdkApp?.experimental_useSidebarNavigation;
+const useNavActions = (): NavActions | null => legacyUseNavigation?.().actions ?? null;
+
+// Set by CommandHost (always mounted) so the command can reach them outside React.
+let navActions: NavActions | null = null;
+let openCompose: (() => void) | null = null;
 const NEW_THREAD_ITEM = "__bb__/new-thread";
 
 function newThreadInSplit() {
-  navActions?.activate(NEW_THREAD_ITEM, { openInSplit: true });
+  if (navActions) navActions.activate(NEW_THREAD_ITEM, { openInSplit: true });
+  else openCompose?.();
 }
 
 // With the "Cmd+N opens the new thread in a split" setting on. Caught here
@@ -451,7 +461,9 @@ function onNewThreadKey(event: globalThis.KeyboardEvent) {
 }
 
 function CommandHost() {
-  navActions = useSidebarNavigation().actions;
+  navActions = useNavActions();
+  const navigate = useBbNavigate();
+  openCompose = () => navigate.toCompose({ focusPrompt: true });
   const settings = useSettings().values;
   const splitOnCmdN = settings?.newThreadInSplit === true;
   const expandPlans = settings?.expandPlans === true;
