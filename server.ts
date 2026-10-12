@@ -916,7 +916,33 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.background.schedule("stale-digest", "0 8 * * 1-5", async () => {
     const digest = await buildDigest();
     bb.log.info(`digest: ${digest.items.length} stale thread(s)`);
+    await pruneThreadData().catch((error) => bb.log.warn(`prune: ${String(error)}`));
   });
+
+  // Tags, "keep" marks and dev-server runs are per thread; drop them once the
+  // thread is archived or deleted so the stored maps (sent with every state
+  // load) stop growing and the tag filter only offers tags still in use.
+  async function forgetThreads(isGone: (threadId: string) => boolean) {
+    const tags = await getTags();
+    const kept = await getKept();
+    const runs = (await bb.storage.kv.get<Record<string, { threadId: string }>>("devRuns")) ?? {};
+    const goneTags = Object.keys(tags).filter(isGone);
+    const goneKept = Object.entries(kept).filter(([threadId, until]) => isGone(threadId) || until < Date.now());
+    const goneRuns = Object.entries(runs).filter(([, run]) => isGone(run.threadId));
+    if (goneTags.length + goneKept.length + goneRuns.length === 0) return;
+    for (const threadId of goneTags) delete tags[threadId];
+    for (const [threadId] of goneKept) delete kept[threadId];
+    for (const [key] of goneRuns) delete runs[key];
+    await bb.storage.kv.set("tags", tags);
+    await bb.storage.kv.set("kept", kept);
+    await bb.storage.kv.set("devRuns", runs);
+    changed();
+  }
+  async function pruneThreadData() {
+    const live = new Set((await listAllActiveThreads()).map((thread) => thread.id));
+    await forgetThreads((threadId) => !live.has(threadId));
+  }
+  bb.events.on("thread.archived", ({ thread }) => forgetThreads((threadId) => threadId === thread.id));
 
   // --- agent tool -----------------------------------------------------------
 

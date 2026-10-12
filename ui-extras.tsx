@@ -200,6 +200,9 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
   // Portaled to <body>: these attributes put the card inside the plugin's CSS scope.
   const portalScope = usePortalScopeProps();
   const [open, setOpen] = useState(false);
+  // A right-click opens the row's context menu; the card would cover it. Stay
+  // closed until the pointer leaves the row.
+  const [suppressed, setSuppressed] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   useEffect(() => {
     if (!open || preview !== null) return;
@@ -221,8 +224,21 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
   ].filter(Boolean);
 
   return (
-    <HoverCard.Root open={open} onOpenChange={setOpen} openDelay={1000} closeDelay={60}>
-      <HoverCard.Trigger asChild {...triggerProps} ref={ref}>
+    <HoverCard.Root open={open} onOpenChange={(next) => setOpen(next && !suppressed)} openDelay={1000} closeDelay={60}>
+      <HoverCard.Trigger
+        asChild
+        {...triggerProps}
+        onContextMenu={(event) => {
+          setSuppressed(true);
+          setOpen(false);
+          triggerProps.onContextMenu?.(event);
+        }}
+        onPointerLeave={(event) => {
+          setSuppressed(false);
+          triggerProps.onPointerLeave?.(event);
+        }}
+        ref={ref}
+      >
         {children}
       </HoverCard.Trigger>
       <HoverCard.Portal>
