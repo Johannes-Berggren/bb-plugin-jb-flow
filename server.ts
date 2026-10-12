@@ -540,7 +540,7 @@ export default async function plugin(bb: BbPluginApi) {
         continue;
       }
       // Moved out of Snoozed by hand, or archived: the snooze no longer applies.
-      if (thread.sectionId !== sectionId || thread.archivedAt !== null) {
+      if (sectionId === null || thread.sectionId !== sectionId || thread.archivedAt !== null) {
         done.set(threadId, record.snoozedAt);
         continue;
       }
@@ -703,7 +703,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const byId = new Map((await listAllActiveThreads()).map((thread) => [thread.id, thread]));
     const candidates = Object.entries(waiting).flatMap(([threadId, since]) => {
       const thread = byId.get(threadId);
-      if (!thread || thread.status !== "idle" || thread.sectionId === snoozedSection) return [];
+      if (!thread || thread.status !== "idle" || (snoozedSection !== null && thread.sectionId === snoozedSection)) return [];
       return [{ thread, since }];
     });
     const asks = new Map<string, string>();

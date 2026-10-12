@@ -1532,8 +1532,11 @@ function TriageThreadList({
       .filter((thread) => !thread.isHidden && !thread.isArchived && thread.parentThreadId === null)
       .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter))
       .sort((a, b) => b.updatedAt - a.updatedAt);
-    const snoozed = visible.filter((thread) => thread.sectionId === snoozedSectionId);
-    const awake = visible.filter((thread) => thread.sectionId !== snoozedSectionId);
+    // No Snoozed section until the first snooze: then nothing is snoozed (a null
+    // sectionId is "unsectioned", not "in a missing section").
+    const isSnoozed = (thread: PluginSidebarThread) => snoozedSectionId !== null && thread.sectionId === snoozedSectionId;
+    const snoozed = visible.filter(isSnoozed);
+    const awake = visible.filter((thread) => !isSnoozed(thread));
 
     const needs = (thread: PluginSidebarThread) => needsMe(thread, state?.awaiting);
     const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";

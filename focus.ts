@@ -107,7 +107,7 @@ export function createFocus(
           thread.deletedAt === null &&
           thread.visibility === "visible" &&
           thread.parentThreadId === null &&
-          thread.sectionId !== snoozedSectionId &&
+          (snoozedSectionId === null || thread.sectionId !== snoozedSectionId) &&
           needsAttention(thread, awaiting),
       )
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));
