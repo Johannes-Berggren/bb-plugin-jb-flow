@@ -4,7 +4,7 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 ## Requirements
 
-- bb 0.44 or later.
+- bb 0.46 or later.
 - The [GitHub CLI](https://cli.github.com) (`gh`), logged in with `gh auth login`, for everything PR-related: PR tracking, `wait_for_ci`, `pr_status`, the release watcher and the Unreleased section. Repos must be on github.com. Snooze, the digest and the Triage list work without it.
 - Auto-continue after usage limits recognises Claude Code's limit message only. Everything else works with any provider.
 
