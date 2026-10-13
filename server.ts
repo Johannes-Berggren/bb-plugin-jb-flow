@@ -18,7 +18,7 @@ import { laneSections } from "./lanes";
 import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
-import { boardClear, boardSnooze, boardSnoozes } from "./focus-board";
+import { createFocusBoard } from "./focus-board";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
@@ -264,6 +264,7 @@ export const rpcContract = defineRpcContract({
 type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
 
 export default async function plugin(bb: BbPluginApi) {
+  const { boardClear, boardSnooze, boardSnoozes } = createFocusBoard(bb);
   const settings = bb.settings.define({
     staleDays: {
       type: "number",
@@ -299,7 +300,20 @@ export default async function plugin(bb: BbPluginApi) {
       default: "",
     },
   });
-  const { advancedConfig } = await settings.get();
+  let { advancedConfig } = await settings.get();
+  // A marketplace update replaces the plugin folder, and local.config.json with
+  // it. Copy the file into the setting once, while it's still there.
+  if (advancedConfig.trim() === "") {
+    const file = readLocalConfigFile(bb);
+    const used = Object.entries(file).filter(([, value]) => (Array.isArray(value) ? value.length : Object.keys(value).length) > 0);
+    if (used.length > 0) {
+      advancedConfig = JSON.stringify(Object.fromEntries(used), null, 2);
+      await settings
+        .experimental_set({ advancedConfig })
+        .then(() => bb.log.info("copied local.config.json into the Advanced config setting; the file is no longer needed"))
+        .catch((error) => bb.log.warn(`copying local.config.json failed: ${String(error)}`));
+    }
+  }
   const localConfig = loadLocalConfig(bb, advancedConfig);
 
   // --- storage --------------------------------------------------------------
@@ -941,6 +955,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   async function pruneThreadData() {
     const live = new Set((await listAllActiveThreads()).map((thread) => thread.id));
     await forgetThreads((threadId) => !live.has(threadId));
+    await awaiting.prune((threadId) => live.has(threadId));
   }
   bb.events.on("thread.archived", ({ thread }) => forgetThreads((threadId) => threadId === thread.id));
 

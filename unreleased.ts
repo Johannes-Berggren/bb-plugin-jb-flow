@@ -7,7 +7,7 @@
 // "Merge pull request #123" merges), with details from one GraphQL query.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { gh } from "./prs.ts";
+import { gh, ghGraphql } from "./prs.ts";
 
 export const unreleasedSchema = z.object({
   repo: z.string().nullable(),
@@ -70,10 +70,10 @@ async function prDetails(repo: string, numbers: number[]): Promise<GqlPr[]> {
       .map((n) => `p${n}: pullRequest(number: ${n}) { number title url mergedAt author { login } }`)
       .join("\n");
     const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${fields} } }`;
-    const data = JSON.parse(await gh(["api", "graphql", "-f", `query=${query}`])) as {
-      data?: { repository?: Record<string, GqlPr | null> };
-    };
-    out.push(...Object.values(data.data?.repository ?? {}).filter((pr): pr is GqlPr => pr !== null));
+    // An issue number in a commit subject ("(#123)") resolves to null with an
+    // error; the PRs around it still come back.
+    const data = await ghGraphql<{ repository?: Record<string, GqlPr | null> }>(query);
+    out.push(...Object.values(data.repository ?? {}).filter((pr): pr is GqlPr => pr !== null));
   }
   return out;
 }

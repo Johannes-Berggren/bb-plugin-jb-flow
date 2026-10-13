@@ -20,7 +20,7 @@ Off until you turn them on in the plugin settings:
 ## Requirements
 
 - The GitHub CLI (`gh`), logged in with `gh auth login`, for all PR, CI and release features. Repos must be on github.com. The thread list, snooze and digests work without it.
-- To get the lanes, pick **Triage** under Settings → Appearance → Thread list, then create the lane sections under Settings → JB Flow → Triage lanes.
+- Installing JB Flow makes the Triage list your sidebar (while Settings → Appearance → Thread list is on Automatic); switch back there at any time. The list offers to create its lane sections on first use.
 - Several bb APIs used here are experimental and may change between bb releases.
 
 Source and full documentation: https://github.com/Johannes-Berggren/bb-plugin-jb-flow

@@ -184,5 +184,21 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     },
   });
 
-  return { all: get, promised: getPromised, waitingOthers: getWaiting };
+  /** Drops every thread that isn't live any more (archived ones are cleared on archive; this catches deletes). */
+  async function prune(isLive: (threadId: string) => boolean) {
+    for (const key of ["awaiting", "promised", "waitingOthers"]) {
+      const run = lock.then(async () => {
+        const all = (await kv.get<Record<string, number>>(key)) ?? {};
+        const gone = Object.keys(all).filter((threadId) => !isLive(threadId));
+        if (gone.length === 0) return false;
+        for (const threadId of gone) delete all[threadId];
+        await kv.set(key, all);
+        return true;
+      });
+      lock = run.catch(() => undefined);
+      if (await run) changed();
+    }
+  }
+
+  return { all: get, promised: getPromised, waitingOthers: getWaiting, prune };
 }

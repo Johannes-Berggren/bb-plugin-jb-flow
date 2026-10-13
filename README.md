@@ -11,7 +11,7 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 ## Features
 
 ### Triage sidebar
-A replacement thread list. Pick it under **Settings → Appearance → Thread list → Triage**, then create the lane sections under **Settings → JB Flow → Triage lanes** (one click).
+A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 
 - **Groups**, top to bottom:
   - **Needs me**: threads blocked on a prompt or permission, failed threads, and unread threads whose last message asks you something. Unread status updates stay in their section, in bold.
@@ -145,7 +145,7 @@ Under **Settings → JB Flow**:
 
 ## Configuration
 
-Release watches and sidebar chip names are set in JSON, either in the **Advanced config** setting or in `local.config.json` in the plugin folder (gitignored; see `local.config.example.json`). The setting wins key by key. Reload the plugin after a change.
+Release watches and sidebar chip names are set in JSON in the **Advanced config** setting. A `local.config.json` in the plugin folder (gitignored; see `local.config.example.json`) still works, and is copied into the setting the first time the plugin loads with the setting empty, because a marketplace update replaces the plugin folder. The setting wins key by key. Reload the plugin after a change.
 
 - `repoCommands`: pinned side-panel commands, keyed by bb project name. A command has `id`, `label`, and `slots[]`. Each slot has a `command`, a `url` (or `null`), and the `ports` it binds. These can also be edited per project under **Settings → JB Flow → Repo commands**, which overrides the JSON.
 - `projectShortNames`: the label shown on a project's sidebar chip.

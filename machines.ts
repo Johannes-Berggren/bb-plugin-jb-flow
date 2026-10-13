@@ -19,7 +19,7 @@ export type Machines = z.infer<typeof machinesSchema>;
 
 const CACHE_MS = 30_000;
 
-function readLocalHostId(dataDir: string): string | null {
+export function readLocalHostId(dataDir: string): string | null {
   try {
     // bb's data dir, not ~/.bb: a second instance (or a dev build) has its own.
     return readFileSync(join(dataDir, "host-id"), "utf8").trim() || null;
