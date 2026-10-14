@@ -48,7 +48,7 @@ import {
   worstPr,
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
-import { formatWhen } from "./when";
+import { formatWhen, parseWhen } from "./when";
 import { LANE_NAMES, matchLanes, type LaneId, type LaneSections } from "./lanes";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -88,16 +88,59 @@ const SNOOZE_PRESETS = [
 
 // --- shared state -------------------------------------------------------------
 
+// One store for every component in this window: the list, header strip, PR
+// tab and snooze header all used to fetch the full state on each change.
+type FlowRpc = ReturnType<typeof useRpc<typeof rpcContract>>;
+let flowState: FlowState | null = null;
+const flowListeners = new Set<(next: FlowState) => void>();
+let flowScheduled = false;
+let flowInflight = false;
+let flowAgain = false;
+
+function refetchFlowState(rpc: FlowRpc) {
+  // Coalesce: every subscribed component hears the same realtime event.
+  if (flowScheduled) return;
+  flowScheduled = true;
+  setTimeout(() => {
+    flowScheduled = false;
+    fetchFlowState(rpc);
+  }, 0);
+}
+
+function fetchFlowState(rpc: FlowRpc) {
+  if (flowInflight) {
+    flowAgain = true;
+    return;
+  }
+  flowInflight = true;
+  rpc
+    .call("state_get", null)
+    .then((next) => {
+      projectNaming = next;
+      flowState = next;
+      for (const listener of flowListeners) listener(next);
+    }, () => undefined)
+    .finally(() => {
+      flowInflight = false;
+      if (flowAgain) {
+        flowAgain = false;
+        fetchFlowState(rpc);
+      }
+    });
+}
+
 function useFlowState() {
   const rpc = useRpc<typeof rpcContract>();
-  const [state, setState] = useState<FlowState | null>(null);
-  const refetch = useCallback(() => {
-    rpc.call("state_get", null).then((next) => {
-      projectNaming = next;
-      setState(next);
-    }, () => undefined);
+  const [state, setState] = useState<FlowState | null>(flowState);
+  useEffect(() => {
+    flowListeners.add(setState);
+    if (flowState === null) refetchFlowState(rpc);
+    else setState(flowState);
+    return () => {
+      flowListeners.delete(setState);
+    };
   }, [rpc]);
-  useEffect(refetch, [refetch]);
+  const refetch = useCallback(() => refetchFlowState(rpc), [rpc]);
   useRealtime("jb-flow-changed", refetch);
   return { rpc, state };
 }
@@ -243,6 +286,7 @@ function SnoozeDialog({
         threadId,
         when,
         note: note.trim() === "" ? null : note,
+        until: parseWhen(when),
       }),
     );
 
@@ -1488,8 +1532,11 @@ function TriageThreadList({
       .filter((thread) => !thread.isHidden && !thread.isArchived && thread.parentThreadId === null)
       .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter))
       .sort((a, b) => b.updatedAt - a.updatedAt);
-    const snoozed = visible.filter((thread) => thread.sectionId === snoozedSectionId);
-    const awake = visible.filter((thread) => thread.sectionId !== snoozedSectionId);
+    // No Snoozed section until the first snooze: then nothing is snoozed (a null
+    // sectionId is "unsectioned", not "in a missing section").
+    const isSnoozed = (thread: PluginSidebarThread) => snoozedSectionId !== null && thread.sectionId === snoozedSectionId;
+    const snoozed = visible.filter(isSnoozed);
+    const awake = visible.filter((thread) => !isSnoozed(thread));
 
     const needs = (thread: PluginSidebarThread) => needsMe(thread, state?.awaiting);
     const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";
@@ -1739,6 +1786,8 @@ function TriageThreadList({
           ))}
         </div>
       ) : null}
+      {/* Before the groups: a new install has no sections, so no "Your sections" divider to hang it on. */}
+      <MissingLanesHint sections={sections} pinned={state?.laneSections ?? {}} />
       {groups.map((group) => {
         const keepEmpty =
           group.id === "needs-me" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
@@ -2013,7 +2062,7 @@ function DigestSection() {
               act(() =>
                 Promise.all(
                   ids.map((threadId) =>
-                    rpc.call("snooze", { threadId, when: "1w", note: null }),
+                    rpc.call("snooze", { threadId, when: "1w", note: null, until: parseWhen("1w") }),
                   ),
                 ),
               )
@@ -2157,6 +2206,51 @@ function LeftoversBlock() {
           onClose={() => setConfirming(false)}
         />
       ) : null}
+    </div>
+  );
+}
+
+const LANES_HINT_KEY = "jb-flow:lanes-hint-hidden";
+
+/** New installs have no lane sections; say so once, with a one-click fix. */
+function MissingLanesHint({ sections, pinned }: { sections: readonly PluginSidebarSection[]; pinned: LaneSections }) {
+  const sdk = useSdk();
+  const [hidden, setHidden] = useState(() => localStorage.getItem(LANES_HINT_KEY) === "1");
+  const [pending, setPending] = useState(false);
+  const matched = matchLanes(sections, pinned);
+  const missing = (Object.keys(LANE_NAMES) as LaneId[]).filter((lane) => !matched[lane]);
+  if (hidden || missing.length === 0) return null;
+  return (
+    <div className="mx-2 mt-2 rounded-md border border-dashed px-2 py-1.5 text-xs text-muted-foreground">
+      {missing.length === 4 ? "No lane sections yet" : `Missing lanes: ${missing.map((lane) => LANE_NAMES[lane]).join(", ")}`}. Number keys
+      move a thread into a lane.
+      <div className="mt-1 flex gap-2">
+        <button
+          type="button"
+          disabled={pending}
+          className="rounded px-1 text-foreground hover:bg-accent"
+          onClick={async () => {
+            setPending(true);
+            try {
+              for (const lane of missing) await sdk.threadSections.create({ name: LANE_NAMES[lane] });
+            } finally {
+              setPending(false);
+            }
+          }}
+        >
+          Create {missing.length === 1 ? "it" : "them"}
+        </button>
+        <button
+          type="button"
+          className="rounded px-1 hover:bg-accent"
+          onClick={() => {
+            localStorage.setItem(LANES_HINT_KEY, "1");
+            setHidden(true);
+          }}
+        >
+          Hide
+        </button>
+      </div>
     </div>
   );
 }

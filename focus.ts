@@ -41,7 +41,7 @@ export function needsAttention(thread: Thread, awaiting: Record<string, number>)
 export function createFocus(
   bb: BbPluginApi,
   getAwaiting: () => Promise<Record<string, number>>,
-  getSnoozedSectionId: () => Promise<string>,
+  getSnoozedSectionId: () => Promise<string | null>,
 ) {
   const reports = new Map<string, FocusReport>();
 
@@ -107,7 +107,7 @@ export function createFocus(
           thread.deletedAt === null &&
           thread.visibility === "visible" &&
           thread.parentThreadId === null &&
-          thread.sectionId !== snoozedSectionId &&
+          (snoozedSectionId === null || thread.sectionId !== snoozedSectionId) &&
           needsAttention(thread, awaiting),
       )
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));

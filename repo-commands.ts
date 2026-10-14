@@ -2,6 +2,7 @@
 // command in a BB terminal for the thread and, once its port answers, open
 // the app in a BB browser tab. A command can declare several "slots" (e.g.
 // pnpm dev / dev:2 / dev:3) so parallel worktrees each get free ports.
+import { readLocalHostId } from "./machines";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
@@ -62,6 +63,7 @@ export const devRunSchema = z.object({
 export type DevRun = z.infer<typeof devRunSchema>;
 
 const READY_TIMEOUT_MS = 5 * 60_000;
+const REMOTE_UNSUPPORTED = "Scripts and dev servers only work for threads on the machine bb runs on, not on another machine yet.";
 
 // Both stacks: Vite and other servers that bind "localhost" on macOS listen on ::1 only.
 async function portOpen(port: number): Promise<boolean> {
@@ -106,6 +108,8 @@ export function createRepoCommands(
   changed: () => void,
   defaults: Record<string, RepoCommand[]>,
 ) {
+  const localHostId = readLocalHostId(bb.server.experimental_dataDir);
+  const isRemote = (hostId: string | null | undefined) => localHostId !== null && hostId != null && hostId !== localHostId;
   const disposed = new AbortController();
   bb.onDispose(() => disposed.abort());
 
@@ -132,6 +136,7 @@ export function createRepoCommands(
     if (thread.environmentId === null) return { scripts: [] as RepoScript[], scriptsError: "Thread has no environment yet." };
     const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
     if (environment.path === null) return { scripts: [], scriptsError: "Environment has no path." };
+    if (isRemote(environment.hostId)) return { scripts: [], scriptsError: REMOTE_UNSUPPORTED };
     let manifest: { scripts?: Record<string, string> };
     try {
       manifest = JSON.parse(readFileSync(join(environment.path, "package.json"), "utf8")) as typeof manifest;
@@ -235,6 +240,12 @@ export function createRepoCommands(
   }
 
   async function run(threadId: string, commandId: string): Promise<DevRun> {
+    // Port checks and package.json reads happen on the machine bb runs on.
+    const thread = await bb.sdk.threads.get({ threadId });
+    const environment = thread.environmentId
+      ? await bb.sdk.environments.get({ environmentId: thread.environmentId }).catch(() => null)
+      : null;
+    if (environment && isRemote(environment.hostId)) throw new Error(REMOTE_UNSUPPORTED);
     const command = await resolveCommand(threadId, commandId);
 
     // Already running for this thread: just re-open its tabs.

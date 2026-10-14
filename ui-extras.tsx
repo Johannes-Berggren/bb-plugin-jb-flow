@@ -1,14 +1,15 @@
 // UI built on the plugin's thread state: PR stacks (any repo), running/stuck
 // detection, the hover preview, the thread-header status strip, the Pull
 // requests panel, and command-palette commands.
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useCallback, useEffect, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import * as HoverCard from "@radix-ui/react-hover-card";
-import { useBbNavigate, useComposers, useRpc } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useComposers, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { JsonValue, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState, rpcContract } from "./server";
 import type { Unreleased as UnreleasedState } from "./unreleased";
+import { parseWhen } from "./when";
 import { formatWhen } from "./when";
 import { Button } from "@/components/ui/button";
 import { Glyph } from "@/components/ui/glyph";
@@ -199,6 +200,9 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
   // Portaled to <body>: these attributes put the card inside the plugin's CSS scope.
   const portalScope = usePortalScopeProps();
   const [open, setOpen] = useState(false);
+  // A right-click opens the row's context menu; the card would cover it. Stay
+  // closed until the pointer leaves the row.
+  const [suppressed, setSuppressed] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   useEffect(() => {
     if (!open || preview !== null) return;
@@ -220,8 +224,21 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
   ].filter(Boolean);
 
   return (
-    <HoverCard.Root open={open} onOpenChange={setOpen} openDelay={1000} closeDelay={60}>
-      <HoverCard.Trigger asChild {...triggerProps} ref={ref}>
+    <HoverCard.Root open={open} onOpenChange={(next) => setOpen(next && !suppressed)} openDelay={1000} closeDelay={60}>
+      <HoverCard.Trigger
+        asChild
+        {...triggerProps}
+        onContextMenu={(event) => {
+          setSuppressed(true);
+          setOpen(false);
+          triggerProps.onContextMenu?.(event);
+        }}
+        onPointerLeave={(event) => {
+          setSuppressed(false);
+          triggerProps.onPointerLeave?.(event);
+        }}
+        ref={ref}
+      >
         {children}
       </HoverCard.Trigger>
       <HoverCard.Portal>
@@ -506,10 +523,12 @@ export function YourMoveSection() {
   const navigate = useBbNavigate();
   const [items, setItems] = useState<Array<{ threadId: string; title: string; since: number; ask: string }> | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const load = () => {
+  const load = useCallback(() => {
     rpc.call("your_move", null).then((result) => setItems(result.items), () => setItems([]));
-  };
-  useEffect(load, [rpc]);
+  }, [rpc]);
+  useEffect(load, [load]);
+  // Answered threads drop off without leaving the page.
+  useRealtime("jb-flow-changed", load);
   if (items === null) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (items.length === 0) return <p className="text-sm text-muted-foreground">Nothing is waiting on you. ✨</p>;
   const now = Date.now();
@@ -542,7 +561,7 @@ export function YourMoveSection() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => void rpc.call("snooze", { threadId: item.threadId, when: "3d", note: null }).then(load)}
+                  onClick={() => void rpc.call("snooze", { threadId: item.threadId, when: "3d", note: null, until: parseWhen("3d") }).then(load)}
                 >
                   Snooze 3d
                 </Button>

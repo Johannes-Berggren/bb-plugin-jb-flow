@@ -43,6 +43,45 @@ type ThreadPrs = { refs: PrRef[]; cursor: number };
 const PR_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
 const key = (ref: PrRef) => `${ref.repo}#${ref.number}`;
 
+type CompletedItem = {
+  type?: string;
+  command?: unknown;
+  aggregatedOutput?: unknown;
+  tool?: unknown;
+  status?: unknown;
+  result?: unknown;
+  text?: unknown;
+};
+
+const refsIn = (text: string): PrRef[] =>
+  [...text.matchAll(PR_URL)].map((match) => ({ repo: match[1]!, number: Number(match[2]) }));
+
+// A tool that opens a PR: GitHub MCP's create_pull_request and the like.
+const CREATE_PR_TOOL = /create[_-]?pull[_-]?request|pull[_-]?request[_-]?create|\bcreate[_-]?pr\b/i;
+// The agent saying it opened one ("Opened https://…/pull/12", "PR is up: …").
+// Only these: a PR the agent merely mentions or reviews isn't the thread's.
+const OPENED_PR = new RegExp(
+  String.raw`\b(opened|created|raised|filed|submitted|put up|pushed up)\b[^\n]{0,80}?https://github\.com/[\w.-]+/[\w.-]+/pull/\d+|\b(PR|pull request)\b[^\n]{0,40}?\b(is up|opened|created)\b[^\n]{0,60}?https://github\.com/[\w.-]+/[\w.-]+/pull/\d+`,
+  "gi",
+);
+
+/** PRs a completed thread item shows the thread created. */
+export function createdPrs(item: CompletedItem | undefined): PrRef[] {
+  if (!item) return [];
+  if (item.type === "commandExecution") {
+    const command = Array.isArray(item.command) ? item.command.join(" ") : String(item.command ?? "");
+    return /\bgh\s+pr\s+create\b/.test(command) ? refsIn(String(item.aggregatedOutput ?? "")) : [];
+  }
+  if (item.type === "toolCall") {
+    if (item.status !== "completed" || !CREATE_PR_TOOL.test(String(item.tool ?? ""))) return [];
+    return refsIn(typeof item.result === "string" ? item.result : JSON.stringify(item.result ?? ""));
+  }
+  if (item.type === "agentMessage") {
+    return [...String(item.text ?? "").matchAll(OPENED_PR)].flatMap((match) => refsIn(match[0]));
+  }
+  return [];
+}
+
 export const GH_MISSING = "The GitHub CLI (gh) isn't installed or isn't on PATH. Install it and run `gh auth login`.";
 
 /** A readable gh failure; a missing binary gets setup instructions instead of "spawn gh ENOENT". */
@@ -57,6 +96,27 @@ export function gh(args: string[], timeout = 60_000): Promise<string> {
     execFile(bin, args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) reject(ghError("gh", error, stderr, 400));
       else resolve(stdout);
+    });
+  });
+}
+
+/**
+ * A GraphQL query through gh. GitHub answers a query with one unresolvable
+ * part (an issue number, a deleted repo) with an error *and* data for every
+ * other part; gh then exits non-zero. Keep that partial data.
+ */
+export function ghGraphql<T>(query: string, timeout = 60_000): Promise<T> {
+  const bin = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
+  return new Promise((resolve, reject) => {
+    execFile(bin, ["api", "graphql", "-f", `query=${query}`], { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+      let parsed: { data?: T | null } | null = null;
+      try {
+        parsed = JSON.parse(stdout) as { data?: T | null };
+      } catch {
+        parsed = null;
+      }
+      if (parsed?.data) resolve(parsed.data);
+      else reject(error ? ghError("gh graphql", error, stderr, 400) : new Error("gh graphql: no data"));
     });
   });
 }
@@ -117,7 +177,42 @@ export function orderStack(prs: PrStatus[]): PrStatus[] {
 
 export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
-  const getThreads = async () => (await kv.get<Record<string, ThreadPrs>>("threadPrs")) ?? {};
+  // PR data lives in the plugin's own SQLite database: kv values are capped at
+  // 256KB, and a busy user links hundreds of PRs a month.
+  const db = () => bb.storage.database();
+  bb.storage.migrate(db(), [
+    "CREATE TABLE pr_status (key TEXT PRIMARY KEY, json TEXT NOT NULL)",
+    "CREATE TABLE thread_prs (thread_id TEXT PRIMARY KEY, json TEXT NOT NULL)",
+  ]);
+  function readTable<T>(table: "pr_status" | "thread_prs", column: "key" | "thread_id"): Record<string, T> {
+    const rows = db().prepare(`SELECT ${column} AS id, json FROM ${table}`).all() as Array<{ id: string; json: string }>;
+    return Object.fromEntries(rows.map((row) => [row.id, JSON.parse(row.json) as T]));
+  }
+  function writeTable(table: "pr_status" | "thread_prs", column: "key" | "thread_id", value: Record<string, unknown>) {
+    const handle = db();
+    const insert = handle.prepare(`INSERT INTO ${table} (${column}, json) VALUES (?, ?)`);
+    handle.transaction(() => {
+      handle.prepare(`DELETE FROM ${table}`).run();
+      for (const [id, entry] of Object.entries(value)) insert.run(id, JSON.stringify(entry));
+    })();
+  }
+  // One-time move out of kv (v0.1.1 and earlier).
+  const moved = (async () => {
+    for (const [kvKey, table, column] of [
+      ["prStatus", "pr_status", "key"],
+      ["threadPrs", "thread_prs", "thread_id"],
+    ] as const) {
+      const old = await kv.get<Record<string, unknown>>(kvKey);
+      if (old === null || old === undefined) continue;
+      writeTable(table, column, old);
+      await kv.delete(kvKey);
+    }
+  })().catch((error) => bb.log.warn(`pr storage move: ${String(error)}`));
+  const getThreads = async () => {
+    await moved;
+    return readTable<ThreadPrs>("thread_prs", "thread_id");
+  };
+  const setThreads = async (value: Record<string, ThreadPrs>) => writeTable("thread_prs", "thread_id", value);
   // Scans (backfill, idle events, CLI) interleave; serialize read-modify-write
   // of the threadPrs map so one never overwrites another's results.
   let lock: Promise<unknown> = Promise.resolve();
@@ -132,10 +227,13 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
       const entry = all[threadId] ?? { refs: [], cursor: 0 };
       apply(entry);
       all[threadId] = entry;
-      await kv.set("threadPrs", all);
+      await setThreads(all);
       return entry;
     });
-  const getStatus = async () => (await kv.get<Record<string, PrStatus>>("prStatus")) ?? {};
+  const getStatus = async () => {
+    await moved;
+    return readTable<PrStatus>("pr_status", "key");
+  };
 
   /** Reads new completed commands since the thread's cursor and links PRs it created. */
   async function scan(threadId: string, signal?: AbortSignal): Promise<PrRef[]> {
@@ -153,13 +251,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
       });
       for (const row of rows) {
         cursor = Math.max(cursor, row.seq);
-        const item = (row.data as { item?: { type?: string; command?: unknown; aggregatedOutput?: unknown } }).item;
-        if (item?.type !== "commandExecution") continue;
-        const command = Array.isArray(item.command) ? item.command.join(" ") : String(item.command ?? "");
-        if (!/\bgh\s+pr\s+create\b/.test(command)) continue;
-        for (const match of String(item.aggregatedOutput ?? "").matchAll(PR_URL)) {
-          found.push({ repo: match[1]!, number: Number(match[2]) });
-        }
+        found.push(...createdPrs((row.data as { item?: CompletedItem }).item));
       }
       if (rows.length < 100) break;
     }
@@ -202,7 +294,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
           removed += 1;
         }
       }
-      if (removed > 0) await kv.set("threadPrs", all);
+      if (removed > 0) await setThreads(all);
       return all;
     });
     const referenced = new Set(Object.values(kept).flatMap((entry) => entry.refs.map(key)));
@@ -212,23 +304,23 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
 
   /** Fetches status for the given PRs (default: all linked to active threads). */
   let refreshLock: Promise<unknown> = Promise.resolve();
-  function refresh(only?: PrRef[]): Promise<void> {
+  function refresh(only?: PrRef[], signal?: AbortSignal): Promise<void> {
     // One at a time: each run writes the whole prStatus map.
-    const run = refreshLock.then(() => refreshNow(only), () => refreshNow(only));
+    const run = refreshLock.then(() => refreshNow(only, signal), () => refreshNow(only, signal));
     refreshLock = run.catch(() => undefined);
     return run;
   }
 
   async function fetchBatch(query: string): Promise<Record<string, Record<string, GqlPr | null> | null> | null> {
     try {
-      return (JSON.parse(await gh(["api", "graphql", "-f", `query=${query}`])) as { data: Record<string, Record<string, GqlPr | null> | null> }).data;
+      return await ghGraphql<Record<string, Record<string, GqlPr | null> | null>>(query);
     } catch (error) {
       bb.log.warn(`pr refresh: ${String(error)}`);
       return null;
     }
   }
 
-  async function refreshNow(only?: PrRef[]) {
+  async function refreshNow(only?: PrRef[], signal?: AbortSignal) {
     const status = await getStatus();
     let refs = only;
     if (refs === undefined) {
@@ -248,6 +340,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
       });
     }
     for (let index = 0; index < refs.length; index += 40) {
+      // A reload waits for this; stop between batches (what's fetched so far is kept).
+      if (signal?.aborted) break;
       const batch = refs.slice(index, index + 40);
       const byRepo = new Map<string, number[]>();
       for (const ref of batch) byRepo.set(ref.repo, [...(byRepo.get(ref.repo) ?? []), ref.number]);
@@ -293,7 +387,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         }
       });
     }
-    await kv.set("prStatus", status);
+    writeTable("pr_status", "key", status);
     changed();
   }
 
@@ -326,7 +420,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   bb.background.service("pr-backfill", {
     async start(signal) {
       if ((await kv.get<number>("threadPrsVersion")) !== 2) {
-        await exclusive(() => kv.set("threadPrs", {}));
+        await exclusive(() => setThreads({}));
         await kv.set("threadPrsVersion", 2);
       }
       const threads = await bb.sdk.threads.list({ limit: 500 });
@@ -337,7 +431,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
           if (!signal.aborted) bb.log.warn(`pr scan ${thread.id}: ${String(error)}`);
         });
       }
-      if (!signal.aborted) await refresh();
+      if (!signal.aborted) await refresh(undefined, signal);
       await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
     },
   });

@@ -19,7 +19,7 @@ export type Machines = z.infer<typeof machinesSchema>;
 
 const CACHE_MS = 30_000;
 
-function readLocalHostId(dataDir: string): string | null {
+export function readLocalHostId(dataDir: string): string | null {
   try {
     // bb's data dir, not ~/.bb: a second instance (or a dev build) has its own.
     return readFileSync(join(dataDir, "host-id"), "utf8").trim() || null;
@@ -31,8 +31,12 @@ function readLocalHostId(dataDir: string): string | null {
 export function createMachines(bb: BbPluginApi) {
   let cached: { at: number; value: Machines } | null = null;
   const localHostId = readLocalHostId(bb.server.experimental_dataDir);
-  async function read(): Promise<Machines> {
-    if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
+  let inflight: Promise<Machines> | null = null;
+  function read(): Promise<Machines> {
+    if (cached && Date.now() - cached.at < CACHE_MS) return Promise.resolve(cached.value);
+    return (inflight ??= load().finally(() => (inflight = null)));
+  }
+  async function load(): Promise<Machines> {
     const [threads, environments, hosts] = await Promise.all([
       bb.sdk.threads.list({ limit: 500 }),
       bb.sdk.environments.list(),
@@ -59,9 +63,9 @@ export function createMachines(bb: BbPluginApi) {
   }
   return {
     read: () => read().catch(() => cached?.value ?? { hosts: [], threadHosts: {}, environmentHosts: {}, localHostId }),
-    /** A thread started or moved: recompute on the next read. */
-    invalidate: () => {
-      cached = null;
+    /** Recompute on the next read when a thread shows up that the cache doesn't place yet. */
+    invalidateFor: (threadId: string) => {
+      if (cached && !(threadId in cached.value.threadHosts)) cached = null;
     },
   };
 }
