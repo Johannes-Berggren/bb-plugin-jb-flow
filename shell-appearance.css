@@ -1,0 +1,202 @@
+/* App-wide shell treatment. All rules switch off with the content-script class.
+   Host data attributes are version-sensitive; keep selectors narrow and leave
+   native positioning, panel sizes, touch targets and virtual scrolling alone. */
+.jb-flow-shell {
+  --jb-shell-line: color-mix(in oklch, var(--ink) 10%, transparent);
+  --jb-shell-raised: color-mix(in oklch, var(--ink) 3%, var(--canvas));
+  --jb-shell-shadow: 0 12px 36px #00000014, 0 2px 8px #0000000a;
+}
+.dark.jb-flow-shell,
+.dark .jb-flow-shell {
+  --jb-shell-shadow: 0 14px 40px #00000038, 0 2px 8px #00000024;
+}
+.jb-flow-shell body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Quiet navigation chrome and a clear, inset selection. */
+.jb-flow-shell [data-sidebar="panel"] {
+  border-color: var(--jb-shell-line);
+}
+.jb-flow-shell [data-sidebar="sidebar"] {
+  background: linear-gradient(
+    165deg,
+    color-mix(in oklch, var(--sidebar) 97%, var(--primary)),
+    var(--sidebar) 60%
+  );
+}
+.jb-flow-shell [data-nav-rail-item] :is(button, a) {
+  border-radius: 10px;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+.jb-flow-shell [data-nav-rail-item] :is(button, a):hover {
+  box-shadow: inset 0 0 0 1px var(--jb-shell-line);
+}
+.jb-flow-shell [data-jb-flow-row] {
+  position: relative;
+  border-radius: 8px;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.jb-flow-shell [data-jb-flow-row]:hover {
+  background: var(--sidebar-accent);
+}
+.jb-flow-shell [data-jb-flow-row][aria-current="page"] {
+  background: color-mix(in oklch, var(--primary) 12%, var(--sidebar));
+  box-shadow: inset 0 0 0 1px
+    color-mix(in oklch, var(--primary) 22%, transparent);
+}
+.jb-flow-shell [data-jb-flow-row][aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 30%;
+  bottom: 30%;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.jb-flow-shell [data-jb-flow-section-header] {
+  padding-top: 22px;
+  padding-bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 0.035em;
+}
+.jb-flow-shell [data-jb-flow-section-header] > span:last-child {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--ink) 5%, transparent);
+  font-size: 9px;
+}
+
+/* Depth across normal thread, settings and plugin pages. */
+.jb-flow-shell [data-app-content-shell] {
+  background:
+    radial-gradient(
+      ellipse at 90% 0%,
+      color-mix(in oklch, var(--primary) 3%, transparent),
+      transparent 48%
+    ),
+    var(--canvas);
+}
+.jb-flow-shell [data-app-content-shell] .bg-surface-scrim {
+  border-color: var(--jb-shell-line);
+  box-shadow: 0 1px 0 var(--jb-shell-line);
+}
+.jb-flow-shell [data-pane-header-focus-tab] {
+  border-radius: 8px;
+}
+.jb-flow-shell [data-thread-header-pane-actions] button {
+  border-radius: 7px;
+}
+.jb-flow-shell [data-secondary-panel-tab-content] {
+  gap: 5px;
+}
+.jb-flow-shell [data-secondary-panel-tab-content] > * {
+  border-radius: 8px;
+}
+.jb-flow-shell [data-secondary-panel-tab-content] [data-focused="true"] {
+  box-shadow: inset 0 0 0 1px
+    color-mix(in oklch, var(--primary) 25%, transparent);
+}
+.jb-flow-shell [data-tab-pill-close] {
+  border-radius: 5px;
+}
+
+/* Conversation text stays in BB's measured layout and native scroll owner. */
+.jb-flow-shell [data-thread-window] [class~="group/message"] {
+  letter-spacing: -0.008em;
+}
+.jb-flow-shell [data-message-metadata] {
+  font-size: 10px;
+  letter-spacing: 0.015em;
+  color: var(--muted-foreground);
+}
+.jb-flow-shell [data-thread-window] pre {
+  border-radius: 10px;
+  border-color: var(--jb-shell-line);
+}
+.jb-flow-shell [data-testid="thread-unread-divider"] {
+  color: var(--primary);
+}
+
+/* The same writing surface on New thread, normal threads, and embedded chat. */
+.jb-flow-shell form[data-promptbox] {
+  border-color: color-mix(in oklch, var(--ink) 16%, var(--canvas));
+  border-radius: 15px;
+  background: var(--jb-shell-raised);
+  box-shadow: var(--jb-shell-shadow);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+.jb-flow-shell form[data-promptbox]:focus-within {
+  border-color: color-mix(in oklch, var(--primary) 65%, var(--canvas));
+  box-shadow:
+    var(--jb-shell-shadow),
+    0 0 0 3px color-mix(in oklch, var(--primary) 9%, transparent);
+}
+.jb-flow-shell [data-promptbox-editor-content] {
+  caret-color: var(--primary);
+}
+.jb-flow-shell [data-promptbox-submit-action] {
+  border-radius: 9px;
+}
+.jb-flow-shell [data-palette-input-frame] {
+  border-radius: 10px;
+  background: var(--jb-shell-raised);
+}
+
+/* Portaled UI inherits the same treatment through the root class. */
+.jb-flow-shell :is([role="menu"], [data-slot="popover-content"]) {
+  border-color: var(--jb-shell-line);
+  border-radius: 11px;
+  box-shadow: var(--jb-shell-shadow);
+}
+.jb-flow-shell [role="menuitem"],
+.jb-flow-shell [role="menuitemcheckbox"],
+.jb-flow-shell [role="menuitemradio"] {
+  border-radius: 6px;
+}
+.jb-flow-shell [data-testid="command-palette"] {
+  border-radius: 16px;
+  border-color: var(--jb-shell-line);
+  box-shadow: var(--jb-shell-shadow);
+}
+.jb-flow-shell [data-testid="command-palette"] [role="option"] {
+  border-radius: 7px;
+}
+@media (min-width: 768px) {
+  .jb-flow-shell [data-jb-flow-row] {
+    min-height: 35px;
+  }
+  .jb-flow-shell [data-thread-window] [class~="group/message"] {
+    line-height: 1.75;
+  }
+  .jb-flow-shell [role="dialog"]:not([data-testid="command-palette"]) {
+    border-radius: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jb-flow-shell [data-jb-flow-row],
+  .jb-flow-shell [data-nav-rail-item] :is(button, a),
+  .jb-flow-shell form[data-promptbox] {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .jb-flow-shell [data-jb-flow-row][aria-current="page"] {
+    outline: 1px solid Highlight;
+  }
+  .jb-flow-shell form[data-promptbox]:focus-within {
+    outline: 2px solid Highlight;
+  }
+}

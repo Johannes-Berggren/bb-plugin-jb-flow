@@ -10,6 +10,22 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 ## Features
 
+### App-wide appearance
+
+**Polish the entire BB interface** (Settings → JB Flow, on by default) applies
+across the standard BB interface: inset sidebar selections, refined section
+headings and rail controls, layered page surfaces, elevated composers, panel tabs,
+menus, dialogs, and the command palette. It works with any palette; Graphite adds
+coordinated sidebar, card, popover, and recessed colors in light and dark mode.
+
+Turn the setting off to restore standard shell styling while keeping Studio and
+the palette. The content script removes its root class and event listeners on
+reload or disable. Reduced motion and forced colors are respected. BB continues
+to own navigation, panel resizing, conversations, touch targets, and scrolling.
+This is a visual shell treatment; changing BB's navigation structure requires
+changes in BB itself. Shell selectors use the current host's DOM attributes and
+need visual rechecking after BB upgrades.
+
 ### Studio
 
 Open **Studio** in the navigation rail for an attention-first overview and a

@@ -266,6 +266,12 @@ type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]
 export default async function plugin(bb: BbPluginApi) {
   const { boardClear, boardSnooze, boardSnoozes } = createFocusBoard(bb);
   const settings = bb.settings.define({
+    polishShell: {
+      type: "boolean",
+      label: "Polish the entire BB interface",
+      description: "Refine the sidebar, composer, conversation, panel tabs and menus across BB. Works with any palette; turn off to restore BB's standard styling.",
+      default: true,
+    },
     staleDays: {
       type: "number",
       label: "Stale after (days)",

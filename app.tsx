@@ -78,6 +78,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
+import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 
 const DAY_MS = 86_400_000;
 const SNOOZE_PRESETS = [
@@ -1004,7 +1005,7 @@ function GroupHeader({
   auto?: boolean;
 }) {
   const header = (
-    <div onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
+    <div data-jb-flow-section-header="" onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
       <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground">
         {dynamic ? (
           <Glyph name={dynamic.glyph} className={cn("size-3.5", dynamic.tone)} />
@@ -2490,6 +2491,8 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 }
 
 export default definePluginApp((app) => {
+  app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
+  app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
   app.slots.navPanel({
     id: "studio",
     title: "Studio",
