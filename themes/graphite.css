@@ -1,0 +1,42 @@
+/* JB Flow Graphite: quiet surfaces, warm text, and a muted violet accent.
+   Host surfaces derive from the canvas/ink anchors in both modes. */
+:root,
+.light {
+  --canvas: #f7f6f3;
+  --ink: #29272f;
+  --primary: #6d5bc2;
+  --primary-foreground: #ffffff;
+  --muted-foreground: color-mix(in oklch, var(--ink) 72%, var(--canvas));
+  --subtle-foreground: color-mix(in oklch, var(--ink) 62%, var(--canvas));
+  --readback-foreground: color-mix(in oklch, var(--ink) 67%, var(--canvas));
+  --destructive: #b33d4b;
+  --destructive-foreground: #ffffff;
+  --destructive-text: #a63140;
+  --warning: #aa6c16;
+  --warning-text: #895711;
+  --attention: #aa6c16;
+  --success: #28724e;
+  --diff-added: #28724e;
+  --diff-removed: #a63140;
+  --pr-merged: #7454b4;
+  --file-accent: #6d5bc2;
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --radius: 0.6rem;
+}
+.dark {
+  --canvas: #19191d;
+  --ink: #eeede9;
+  --primary: #b5a5f5;
+  --primary-foreground: #24202f;
+  --destructive: #aa3948;
+  --destructive-foreground: #ffffff;
+  --destructive-text: #f294a1;
+  --warning: #c59851;
+  --warning-text: #e5b973;
+  --attention: #e5b973;
+  --success: #8bc5a6;
+  --diff-added: #8bc5a6;
+  --diff-removed: #f294a1;
+  --pr-merged: #bb9ce8;
+  --file-accent: #b5a5f5;
+}

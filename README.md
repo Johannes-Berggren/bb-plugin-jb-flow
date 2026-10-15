@@ -10,6 +10,35 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 ## Features
 
+### Studio
+
+Open **Studio** in the navigation rail for an attention-first overview and a
+thread workspace. Filter by project, working/needs-you/ready status, or title;
+press `/` inside Studio to focus search. Switch between comfortable and compact
+rows, and load more threads as needed.
+
+Opening a row keeps the conversation inside Studio using BB's native chat,
+including streaming, drafts, permissions, and pending interactions. **Review**
+opens the host's resizable side panel with linked PRs and checks; **Open thread**
+opens the regular thread page for the full thread-specific tools. Deep links and
+browser back/forward work between the overview and thread workspaces.
+
+Status counts apply to the selected project, independently of title search.
+Needs-you includes pending input, failed threads, unread requests for a decision,
+and linked PRs with failed checks, conflicts, or requested changes. Ready-to-merge
+and PR-settled states use the PRs tracked by JB Flow; idle threads are not assumed
+complete. Hidden and archived threads are excluded. The review panel additionally
+includes BB's branch PR lookup. Workflow state resyncs after reconnecting.
+
+**Graphite**, under **Settings → Appearance**, is an optional app-wide palette:
+charcoal in dark mode, warm ivory in light mode, and a soft violet accent. Studio
+also follows other BB palettes. Its responsive layout, keyboard focus, and reduced
+motion styles are scoped to the Studio page.
+
+The Studio branch is an initial working prototype. Its SDK integration is covered
+by `npm run test:ui`; classification and filtering run with the existing unit
+tests in `npm test`.
+
 ### Triage sidebar
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 

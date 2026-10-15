@@ -1,0 +1,107 @@
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import type { FlowState } from "./server";
+
+export type StudioStatus =
+  "attention" | "running" | "review" | "waiting" | "done" | "idle";
+export type StudioFilter = "all" | "attention" | "running" | "review";
+type ThreadFacts = Pick<
+  PluginSidebarThread,
+  | "id"
+  | "projectId"
+  | "displayTitle"
+  | "status"
+  | "indicator"
+  | "hasPendingInteraction"
+  | "isUnread"
+  | "isPinned"
+  | "isHidden"
+  | "isArchived"
+  | "updatedAt"
+>;
+type WorkflowFacts = Pick<
+  FlowState,
+  "awaiting" | "watching" | "threadPrs" | "snoozes" | "waitingOthers"
+>;
+
+export function studioStatus(
+  thread: ThreadFacts,
+  state: WorkflowFacts | null,
+): StudioStatus {
+  if (
+    thread.hasPendingInteraction ||
+    thread.indicator === "waiting-for-input" ||
+    thread.indicator === "unread-error" ||
+    thread.status === "error" ||
+    (thread.isUnread &&
+      thread.status === "idle" &&
+      state?.awaiting[thread.id] !== undefined)
+  )
+    return "attention";
+  if (["active", "starting", "stopping"].includes(thread.status))
+    return "running";
+  const prs = state?.threadPrs[thread.id] ?? [];
+  if (
+    prs.some((pr) =>
+      ["checks_failed", "changes_requested", "conflicts"].includes(
+        pr.attention,
+      ),
+    )
+  )
+    return "attention";
+  if (prs.some((pr) => pr.attention === "ready_to_merge")) return "review";
+  if (
+    state?.watching[thread.id] ||
+    state?.waitingOthers[thread.id] !== undefined ||
+    state?.snoozes[thread.id]
+  )
+    return "waiting";
+  if (
+    prs.length > 0 &&
+    prs.every((pr) => pr.state === "merged" || pr.state === "closed")
+  )
+    return "done";
+  return "idle";
+}
+
+export const STATUS_LABEL: Record<StudioStatus, string> = {
+  attention: "Needs you",
+  running: "Working",
+  review: "Ready to merge",
+  waiting: "Waiting",
+  done: "PRs settled",
+  idle: "Idle",
+};
+
+const RANK: Record<StudioStatus, number> = {
+  attention: 0,
+  review: 1,
+  running: 2,
+  waiting: 3,
+  idle: 4,
+  done: 5,
+};
+
+export function studioThreads<T extends ThreadFacts>(
+  threads: readonly T[],
+  state: WorkflowFacts | null,
+  options: { project: string; query: string; filter: StudioFilter },
+): T[] {
+  const query = options.query.trim().toLocaleLowerCase();
+  return threads
+    .filter(
+      (thread) =>
+        !thread.isArchived &&
+        !thread.isHidden &&
+        (options.project === "all" || thread.projectId === options.project) &&
+        (!query || thread.displayTitle.toLocaleLowerCase().includes(query)) &&
+        (options.filter === "all" ||
+          studioStatus(thread, state) === options.filter),
+    )
+    .sort(
+      (a, b) =>
+        RANK[studioStatus(a, state)] - RANK[studioStatus(b, state)] ||
+        Number(b.isPinned) - Number(a.isPinned) ||
+        b.updatedAt - a.updatedAt ||
+        a.id.localeCompare(b.id),
+    );
+}

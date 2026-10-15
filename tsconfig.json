@@ -36,8 +36,13 @@
     "when.ts",
     "server.ts",
     "app.tsx",
+    "studio.tsx",
+    "studio-model.ts",
     "components",
     "lib",
-    "hooks"
+    "hooks",
+    "studio.ui.test.tsx",
+    "studio-model.test.ts",
+    "vitest.config.ts"
   ]
 }

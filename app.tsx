@@ -19,6 +19,7 @@ import {
   useSidebarSplitLayout,
   useSidebarThreadShortcut,
   useSettings,
+  useRealtimeConnectionState,
 } from "@get-bb/plugin-sdk/app";
 import type {
   JsonValue,
@@ -76,6 +77,7 @@ import type { GlyphName } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 
 const DAY_MS = 86_400_000;
 const SNOOZE_PRESETS = [
@@ -131,6 +133,7 @@ function fetchFlowState(rpc: FlowRpc) {
 
 function useFlowState() {
   const rpc = useRpc<typeof rpcContract>();
+  const connection = useRealtimeConnectionState();
   const [state, setState] = useState<FlowState | null>(flowState);
   useEffect(() => {
     flowListeners.add(setState);
@@ -142,6 +145,9 @@ function useFlowState() {
   }, [rpc]);
   const refetch = useCallback(() => refetchFlowState(rpc), [rpc]);
   useRealtime("jb-flow-changed", refetch);
+  useEffect(() => {
+    if (connection === "connected") refetchFlowState(rpc);
+  }, [connection, rpc]);
   return { rpc, state };
 }
 
@@ -2484,6 +2490,23 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 }
 
 export default definePluginApp((app) => {
+  app.slots.navPanel({
+    id: "studio",
+    title: "Studio",
+    icon: "Columns",
+    path: "studio",
+    component: ({ subPath }) => {
+      const { state } = useFlowState();
+      return <Studio subPath={subPath} state={state} />;
+    },
+    fixedTabs: [{
+      ...STUDIO_REVIEW_TAB,
+      component: ({ subPath }) => {
+        const { state } = useFlowState();
+        return <StudioReview subPath={subPath} state={state} />;
+      },
+    }],
+  });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
   app.slots.experimental_threadList({
