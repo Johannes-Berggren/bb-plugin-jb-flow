@@ -1,3 +1,4 @@
+import { createThreadStatus, threadStatusSchema } from "./thread-status";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
@@ -159,6 +160,7 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadIds: z.array(z.string()).min(1).max(500) }),
     output: z.object({ archived: z.number(), failed: z.array(z.string()) }),
   },
+  thread_status: { input: z.object({ threadId: z.string().min(1).max(200), refresh: z.boolean().default(true) }), output: threadStatusSchema.nullable() },
   thread_preview: {
     input: z.object({ threadId: z.string() }),
     output: z.object({
@@ -685,6 +687,7 @@ export default async function plugin(bb: BbPluginApi) {
     ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
   );
   const activity = createActivity(bb, changed);
+  const threadStatus = createThreadStatus(bb, changed);
   const awaiting = createAwaiting(bb, changed);
 
   /** Watch every open PR the thread created; fall back to its branch PR. */
@@ -820,6 +823,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return { kept: threadIds.length };
     },
     archive: ({ threadIds }) => archive(threadIds),
+    thread_status: ({ threadId, refresh }) => threadStatus.get(threadId, refresh),
     thread_preview: async ({ threadId }) => {
       const [output, outline] = await Promise.all([
         bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),

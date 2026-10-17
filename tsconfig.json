@@ -48,6 +48,8 @@
     "studio.ui.test.tsx",
     "shell-appearance.ui.test.tsx",
     "studio-model.test.ts",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "thread-status.test.ts",
+    "timeline-activity.ui.test.tsx"
   ]
 }
