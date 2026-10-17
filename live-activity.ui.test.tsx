@@ -120,7 +120,7 @@ it("shows real descriptions and elapsed time, with model, tool use and workflow 
   slot.lifecycle.unmount();
 });
 
-it("stops claiming live updates when disconnected, and renders no idle card", () => {
+it("stops claiming live updates when disconnected, and keeps the idle monitor", () => {
   const slot = renderSlot(
     { component: ActivityCard },
     {
@@ -146,7 +146,8 @@ it("stops claiming live updates when disconnected, and renders no idle card", ()
       connected: true,
     },
   );
-  expect(idle.queryByRole("region", { name: "Agent activity" })).toBeNull();
+  expect(idle.getByRole("region", { name: "Agent activity" })).toBeTruthy();
+  expect(idle.getByText("Idle")).toBeTruthy();
   idle.lifecycle.unmount();
 });
 
@@ -178,7 +179,7 @@ it("uses event-driven snapshots and unsubscribes/aborts on unmount", async () =>
   const call = timeline.mock.calls[0] as unknown as [{ signal: AbortSignal }];
   slot.lifecycle.unmount();
   expect(call[0].signal.aborted).toBe(true);
-  expect(unsubscribe).toHaveBeenCalledTimes(2);
+  expect(unsubscribe).toHaveBeenCalledTimes(4);
 });
 
 it("falls back to native callouts on snapshot failure and never fetches when disabled", async () => {
@@ -194,7 +195,11 @@ it("falls back to native callouts on snapshot failure and never fetches when dis
     },
   );
   await waitFor(() => expect(timeline).toHaveBeenCalledTimes(1));
-  expect(slot.queryByRole("region", { name: "Agent activity" })).toBeNull();
+  expect(
+    slot
+      .getByRole("region", { name: "Agent activity" })
+      .hasAttribute("data-jb-flow-live-activity"),
+  ).toBe(false);
   slot.lifecycle.unmount();
   timeline.mockClear();
   const disabled = renderSlot(
@@ -423,5 +428,139 @@ it("preserves goal controls and reports failed actions without submitting the co
   fireEvent.click(slot.getByRole("button", { name: "Clear goal" }));
   expect(await slot.findByRole("alert")).toBeTruthy();
   expect(clear).toHaveBeenCalledTimes(1);
+  slot.lifecycle.unmount();
+});
+
+const savedMonitor = {
+  threadId: "t1",
+  latest: "A newer ordinary reply",
+  latestAt: 3000,
+  replyHash: "hash",
+  report: {
+    goal: "Ship the monitor",
+    done: "Built the view",
+    next: "Review the design",
+    blocked: "Waiting for feedback",
+    capturedAt: 1000,
+    milestones: [
+      { label: "Implementation", percent: 100 },
+      { label: "Review", percent: 60 },
+    ],
+  },
+};
+it("keeps a dated idle report and milestone bars with newer replies in Details", () => {
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+      running: false,
+      startedAt: 1000,
+      now: 61000,
+      updatedAt: 61000,
+      connected: true,
+      monitor: savedMonitor,
+    },
+  );
+  expect(slot.getByText("Ship the monitor")).toBeTruthy();
+  expect(slot.getByText("Review the design")).toBeTruthy();
+  expect(slot.getByText("Waiting for feedback")).toBeTruthy();
+  expect(
+    slot.getByRole("progressbar", { name: "Review" }).getAttribute("value"),
+  ).toBe("60");
+  expect(slot.queryByLabelText("Elapsed time")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Details" }));
+  expect(slot.getByText("A newer ordinary reply")).toBeTruthy();
+  slot.lifecycle.unmount();
+});
+it("requests the actual Status prompt only on click and leaves the composer draft untouched", async () => {
+  const request = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: LiveActivityBanner },
+    { runningSince: {} },
+    {
+      composer: {
+        scope: { kind: "thread", threadId: "t1" },
+        isRunning: false,
+        text: "My unsent draft",
+      },
+      sdk: {
+        subscribe: () => () => {},
+        threads: {
+          timeline: async () => ({
+            ...snapshot,
+            activeBackgroundCommands: [],
+            pendingTodos: null,
+          }),
+        },
+      },
+      rpc: { thread_status: () => savedMonitor, thread_reply: request },
+    },
+  );
+  await slot.findByText("Review the design");
+  expect(request).not.toHaveBeenCalled();
+  fireEvent.click(slot.getByRole("button", { name: "Update status" }));
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+  expect(request.mock.calls[0]).toEqual([
+    expect.objectContaining({
+      threadId: "t1",
+      text: expect.stringContaining("**Goal:**"),
+    }),
+  ]);
+  expect(slot.inspection.composer.text).toBe("My unsent draft");
+  slot.lifecycle.unmount();
+});
+it("does not leak a saved report into another thread while its snapshot is loading", async () => {
+  const slot = renderSlot(
+    { component: LiveActivityBanner },
+    { runningSince: {} },
+    {
+      composer: { scope: { kind: "thread", threadId: "t1" }, isRunning: false },
+      sdk: {
+        subscribe: () => () => {},
+        threads: {
+          timeline: async () => ({
+            ...snapshot,
+            activeBackgroundCommands: [],
+            pendingTodos: null,
+          }),
+        },
+      },
+      rpc: { thread_status: () => savedMonitor },
+    },
+  );
+  await slot.findByText("Review the design");
+  await slot.behavior.setComposerScope({ kind: "thread", threadId: "t2" });
+  expect(slot.queryByText("Review the design")).toBeNull();
+  slot.lifecycle.unmount();
+});
+
+it("keeps the saved report and reports a failed status request inline", async () => {
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+      running: false,
+      startedAt: null,
+      now: 61000,
+      updatedAt: 61000,
+      connected: false,
+      monitor: savedMonitor,
+      monitorStale: true,
+      onRequestStatus: async () => {
+        throw new Error("offline");
+      },
+    },
+  );
+  fireEvent.click(slot.getByRole("button", { name: "Update status" }));
+  await slot.findByRole("alert");
+  expect(slot.getByText("Review the design")).toBeTruthy();
+  expect(
+    slot.getByText("Status refresh unavailable · showing saved information"),
+  ).toBeTruthy();
+  expect(
+    slot
+      .getByRole("button", { name: "Update status" })
+      .hasAttribute("disabled"),
+  ).toBe(false);
   slot.lifecycle.unmount();
 });

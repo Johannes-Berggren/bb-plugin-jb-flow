@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import {
   useComposer,
+  useRpc,
   useSdk,
   useSettings,
   useRealtimeConnectionState,
@@ -10,6 +11,9 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { Icon } from "@/components/ui/icon";
 import "./live-activity.css";
+import type { rpcContract } from "./server";
+import type { ThreadStatus } from "./thread-status";
+import { STATUS_PROMPT } from "./status-prompt";
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -185,6 +189,85 @@ function useActivity(threadId: string, enabled: boolean) {
   };
 }
 
+function useThreadStatus(threadId: string, enabled: boolean, running: boolean) {
+  const sdk = useSdk();
+  const rpc = useRpc<typeof rpcContract>();
+  const [result, setResult] = useState<{
+    threadId: string;
+    snapshot: ThreadStatus | null;
+    stale: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inflight = false;
+    let again = false;
+    const refresh = async () => {
+      if (disposed) return;
+      if (inflight) {
+        again = true;
+        return;
+      }
+      inflight = true;
+      try {
+        const snapshot = await rpc.call("thread_status", {
+          threadId,
+          refresh: !running,
+        });
+        if (!disposed)
+          setResult({
+            threadId,
+            snapshot: snapshot?.threadId === threadId ? snapshot : null,
+            stale: false,
+          });
+      } catch {
+        if (!disposed)
+          setResult((previous) => ({
+            threadId,
+            snapshot:
+              previous?.threadId === threadId ? previous.snapshot : null,
+            stale: true,
+          }));
+      } finally {
+        inflight = false;
+        if (again && !disposed) {
+          again = false;
+          schedule();
+        }
+      }
+    };
+    const schedule = () => {
+      if (disposed || timer) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void refresh();
+      }, 750);
+    };
+    const unsubscribe = sdk.subscribe({
+      event: "thread:changed",
+      threadId,
+      callback: () => {
+        if (!running) schedule();
+      },
+    });
+    const reconnect = sdk.subscribe({
+      event: "realtime:connection",
+      callback: (event) => {
+        if (event.state === "connected") schedule();
+      },
+    });
+    void refresh();
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+      reconnect();
+    };
+  }, [sdk, rpc, threadId, enabled, running]);
+  return result?.threadId === threadId ? result : null;
+}
+
 function taskKind(task: ActivityTask): string {
   if (
     task.taskType === "local_agent" ||
@@ -319,7 +402,17 @@ export function ActivityCard({
   prs = [],
   branchPrUrl,
   onClearGoal,
+  idleLabel,
+  monitor,
+  monitorStale = false,
+  hasLiveData = true,
+  onRequestStatus,
 }: {
+  idleLabel?: string;
+  monitor?: ThreadStatus | null;
+  monitorStale?: boolean;
+  hasLiveData?: boolean;
+  onRequestStatus?: () => Promise<void>;
   data: ActivityData;
   running: boolean;
   startedAt: number | null;
@@ -334,6 +427,8 @@ export function ActivityCard({
   const [expanded, setExpanded] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const detailsId = useId();
   const tasks = activityTasks(data);
   const count = tasks.length;
@@ -363,7 +458,8 @@ export function ActivityCard({
       : phase === "waiting"
         ? "Waiting for your input"
         : action.title
-    : (primary?.description ??
+    : (idleLabel ??
+      primary?.description ??
       (goal?.status === "complete"
         ? "Goal complete"
         : goal?.status === "paused"
@@ -372,23 +468,16 @@ export function ActivityCard({
             ? "Goal budget reached"
             : goal
               ? "Ready to continue"
-              : "Work summary"));
-  if (
-    !running &&
-    count === 0 &&
-    !goal &&
-    prs.length === 0 &&
-    todos.length === 0
-  )
-    return null;
+              : "Agent idle"));
   return (
     <section
       className="jf-live-card"
       aria-label="Agent activity"
-      data-jb-flow-live-activity=""
-      data-jb-flow-goal={!!goal && !!onClearGoal}
+      data-jb-flow-live-activity={hasLiveData ? "" : undefined}
+      data-jb-flow-goal={hasLiveData && !!goal && !!onClearGoal}
       data-jb-flow-branch-pr={!!branchPrUrl}
-      data-jb-flow-plan={todos.length > 0}
+      data-jb-flow-plan={hasLiveData && todos.length > 0}
+      data-expanded={expanded}
       data-connected={connected}
       data-active={phase === "working" && active}
     >
@@ -397,7 +486,7 @@ export function ActivityCard({
           <Icon name="Zap" className="size-4" />
         </span>
         <div className="jf-live-heading-copy">
-          <span className="jf-live-eyebrow">ACTIVITY</span>
+          <span className="jf-live-eyebrow">THREAD MONITOR</span>
           <strong className="jf-live-now" title={title}>
             {title}
           </strong>
@@ -406,7 +495,7 @@ export function ActivityCard({
           <span aria-hidden="true" />
           {connected ? (active ? "Live" : "Idle") : "Reconnecting"}
         </span>
-        {startedAt !== null && (
+        {active && startedAt !== null && (
           <time className="jf-live-elapsed" aria-label="Elapsed time">
             {elapsed(now - startedAt)}
           </time>
@@ -430,6 +519,83 @@ export function ActivityCard({
           <Icon name="Target" className="size-3.5" />
           <p title={goal.objective}>{goal.objective}</p>
         </div>
+      )}
+      {(!active || expanded) && (
+        <div className="jf-monitor-report">
+          {monitor?.report ? (
+            <>
+              <div className="jf-monitor-caption">
+                Last status report{" "}
+                <time
+                  title={new Date(monitor.report.capturedAt).toLocaleString()}
+                >
+                  {elapsed(now - monitor.report.capturedAt)} ago
+                </time>
+              </div>
+              <dl>
+                {(!goal ? [["Goal", monitor.report.goal]] : [])
+                  .concat([
+                    ["Done", monitor.report.done],
+                    ["Next", monitor.report.next],
+                    ["Blocked", monitor.report.blocked],
+                  ])
+                  .filter(([, text]) => text)
+                  .map(([label, text]) => (
+                    <div key={label} data-field={label}>
+                      <dt>{label}</dt>
+                      <dd>{text}</dd>
+                    </div>
+                  ))}
+              </dl>
+              {monitor.report.milestones.length > 0 && (
+                <div className="jf-monitor-milestones">
+                  {monitor.report.milestones
+                    .slice(0, expanded ? 12 : 3)
+                    .map((milestone, index) => (
+                      <Meter
+                        key={`${index}:${milestone.label}`}
+                        label={milestone.label}
+                        value={milestone.percent}
+                        max={100}
+                        text={`${Math.round(milestone.percent)}%`}
+                      />
+                    ))}
+                  {!expanded && monitor.report.milestones.length > 3 && (
+                    <span className="jf-monitor-caption">
+                      +{monitor.report.milestones.length - 3} milestones in
+                      Details
+                    </span>
+                  )}
+                </div>
+              )}
+            </>
+          ) : monitor?.latest ? (
+            <>
+              <div className="jf-monitor-caption">
+                Latest reply{" "}
+                <time title={new Date(monitor.latestAt).toLocaleString()}>
+                  {elapsed(now - monitor.latestAt)} ago
+                </time>
+              </div>
+              <p className="jf-monitor-latest">{monitor.latest}</p>
+            </>
+          ) : (
+            <p className="jf-monitor-empty">
+              Ready when you are. Request a status report for Goal, Done, Next,
+              Blocked and milestone progress.
+            </p>
+          )}
+          {monitorStale && (
+            <p className="jf-monitor-caption" role="status">
+              {monitor
+                ? "Status refresh unavailable · showing saved information"
+                : "Status unavailable · try again when connected"}
+            </p>
+          )}
+        </div>
+      )}
+      {!hasLiveData && (
+        <p className="jf-monitor-caption">Live activity unavailable</p>
       )}
       {running && action.detail && (
         <div className="jf-live-action" title={action.detail}>
@@ -498,6 +664,29 @@ export function ActivityCard({
           />
         )}
       </div>
+      {!active && onRequestStatus && (
+        <div className="jf-monitor-controls">
+          <button
+            type="button"
+            disabled={requesting}
+            onClick={async () => {
+              setRequesting(true);
+              setStatusError(null);
+              try {
+                await onRequestStatus();
+              } catch {
+                setStatusError("Could not request status. Try again.");
+              } finally {
+                setRequesting(false);
+              }
+            }}
+          >
+            {requesting ? "Requesting…" : "Update status"}
+          </button>
+          <span>Uses the Stream Deck Status prompt</span>
+          {statusError && <p role="alert">{statusError}</p>}
+        </div>
+      )}
       <div className="jf-live-footer">
         <div className="jf-live-badges">
           {agents > 0 && (
@@ -535,7 +724,7 @@ export function ActivityCard({
             </button>
           )}
         </div>
-        {(!connected || now - updatedAt > 10000) && (
+        {hasLiveData && (!connected || now - updatedAt > 10000) && (
           <span className="jf-live-freshness">
             {connected
               ? `Updated ${elapsed(now - updatedAt)} ago`
@@ -544,6 +733,13 @@ export function ActivityCard({
         )}
       </div>
       <div id={detailsId} hidden={!expanded} className="jf-live-details">
+        {monitor?.report && monitor.latestAt > monitor.report.capturedAt && (
+          <div className="jf-live-summary">
+            <span className="jf-live-eyebrow">LATEST REPLY</span>
+            <p>{monitor.latest}</p>
+          </div>
+        )}
+
         {running && action.detail && (
           <div className="jf-live-current-details">
             <span className="jf-live-eyebrow">CURRENT ACTION</span>
@@ -632,11 +828,14 @@ export function ActivityCard({
 export function LiveActivityBanner({
   runningSince,
   trackedPrs = {},
+  watches = {},
 }: {
   runningSince: Record<string, { since: number }>;
   trackedPrs?: Record<string, readonly ActivityPr[]>;
+  watches?: Record<string, { label: string }>;
 }) {
   const sdk = useSdk();
+  const rpc = useRpc<typeof rpcContract>();
   const composer = useComposer();
   const { values } = useSettings();
   const { threads } = useSidebarThreads();
@@ -652,6 +851,7 @@ export function LiveActivityBanner({
   const enabled =
     !!threadId && values?.polishShell !== false && !thread?.isArchived;
   const { data, updatedAt } = useActivity(threadId ?? "", enabled);
+  const monitor = useThreadStatus(threadId ?? "", enabled, running);
   const connection = useRealtimeConnectionState();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -659,8 +859,15 @@ export function LiveActivityBanner({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [enabled]);
-  if (!enabled || !threadId || !data) return null;
-  const tasks = activityTasks(data);
+  if (!enabled || !threadId) return null;
+  const activity = data ?? {
+    activeBackgroundCommands: [],
+    activeWorkflows: [],
+    rows: [],
+    pendingTodos: null,
+    goal: null,
+  };
+  const tasks = activityTasks(activity);
   const taskStart =
     tasks.length > 0 ? Math.min(...tasks.map((task) => task.startedAt)) : null;
   const prs = [...(trackedPrs[threadId] ?? [])];
@@ -672,7 +879,22 @@ export function LiveActivityBanner({
   return (
     <ActivityCard
       key={threadId}
-      data={data}
+      data={activity}
+      hasLiveData={!!data}
+      idleLabel={
+        thread?.status === "error"
+          ? "Agent needs attention"
+          : thread?.hasPendingInteraction
+            ? "Waiting for your input"
+            : watches[threadId]
+              ? `Waiting · ${watches[threadId].label}`
+              : undefined
+      }
+      monitor={monitor?.snapshot}
+      monitorStale={monitor?.stale}
+      onRequestStatus={async () => {
+        await rpc.call("thread_reply", { threadId, text: STATUS_PROMPT });
+      }}
       running={running}
       startedAt={runningSince[threadId]?.since ?? taskStart}
       now={now}

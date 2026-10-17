@@ -50,6 +50,26 @@ composer after a successful card render; they return if the request fails or
 shell styling is switched off. Git summary controls stay native, with larger
 styling. Reduced-motion preferences disable decorative animation.
 
+### Persistent thread monitor
+
+The activity card stays visible when the agent is idle. It saves each thread's
+latest **Goal / Done / Next / Blocked** report and milestone bars using the
+Stream Deck controller's Status template (`snippets/status.md`). Reports are
+captured on idle events even when the thread isn't open, and survive plugin
+reloads, navigation and ordinary replies. Dates distinguish the last report
+from a newer reply; deleted threads' records are removed. Existing threads
+without a saved report show their latest reply as a labeled fallback.
+
+**Update status** sends the same Status prompt to this thread, preserving your
+composer draft. It runs only when clicked; the template can continue previously
+agreed next steps just like the Stream Deck key. The monitor refreshes on thread
+events and reconnects. Running agents retain the live command/workflow view;
+idle headers reflect pending input, errors and JB Flow watches. Milestone bars
+show the values reported by the agent, separately from measured plan, workflow,
+context and token-budget meters. No overall completion percentage is inferred.
+Saved information remains visible during refresh failures; native activity
+controls return if the live timeline is unavailable.
+
 ### Compact live tool trace
 
 Active native command bundles keep running work prominent in a bordered activity

@@ -749,3 +749,115 @@
     transition: none;
   }
 }
+
+.jf-monitor-report {
+  margin-top: 14px;
+}
+.jf-monitor-caption {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-monitor-caption time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.jf-monitor-report dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.jf-monitor-report dl > div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+.jf-monitor-report dt {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+.jf-monitor-report dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.jf-monitor-report [data-field="Blocked"] {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning-text) 7%, transparent);
+}
+.jf-monitor-report [data-field="Blocked"] dt {
+  color: var(--warning-text);
+}
+.jf-monitor-milestones {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.jf-monitor-latest,
+.jf-monitor-empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+.jf-monitor-latest {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.jf-live-details .jf-live-summary p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.jf-monitor-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 13px;
+}
+.jf-monitor-controls button {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.jf-monitor-controls button:hover {
+  background: var(--accent);
+}
+.jf-monitor-controls button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.jf-monitor-controls button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.jf-monitor-controls > span {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-monitor-controls [role="alert"] {
+  width: 100%;
+  margin: 0;
+  color: var(--destructive-text);
+  font-size: 11px;
+}
+.jf-live-card[data-expanded="false"] .jf-monitor-report dd {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
