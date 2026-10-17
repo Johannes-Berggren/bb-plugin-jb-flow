@@ -14,6 +14,22 @@ private final class SecretStore: CredentialStoreProtocol {
     func hasSnapshot(for accountID: UUID, accessMode: CredentialAccessMode) throws -> Bool { false }
 }
 final class FlowLifeboatTests: XCTestCase {
+    func testUnknownIdentitySwitchStopsBeforeCredentialAccess() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let secrets = SecretStore()
+        let adapter = try Store(request: request(root), credentialStore: secrets)
+        let profile = AccountProfile(provider: .codex, label: "Unverified")
+        try adapter.repository.saveProfiles([profile])
+        do {
+            _ = try await adapter.perform(request(root, command: "switch", id: profile.id))
+            XCTFail("An unknown identity cannot be switched")
+        } catch let error as OperationError {
+            XCTAssertTrue(error.message.contains("identity can be verified"))
+        }
+        XCTAssertEqual(secrets.reads, 0)
+        XCTAssertEqual(secrets.writes, 0)
+    }
     func request(_ root: URL, command: String = "status", id: UUID? = nil) -> Request {
         Request(command: command, dataDir: root.path, accountID: id, provider: nil, label: nil)
     }

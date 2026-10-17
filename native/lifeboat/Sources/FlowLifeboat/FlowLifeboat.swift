@@ -259,6 +259,9 @@ final class Store {
     }
 
     func switchAccount(_ profile: AccountProfile) async throws {
+        guard profile.identity?.isLikelyValid == true else {
+            throw OperationError(message: "Capture this account's CLI login first, so its identity can be verified before switching.")
+        }
         let baseline = try switcher.liveObservation(provider: profile.provider, accessMode: .userInitiated)
         // Capture the outgoing login before doing anything to the target.
         if baseline.isLoggedIn, baseline.identity?.isLikelyValid == true { _ = try capture(profile.provider, access: .userInitiated) }

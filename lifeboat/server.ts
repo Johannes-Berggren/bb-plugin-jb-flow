@@ -67,13 +67,16 @@ export function createLifeboat(bb: BbPluginApi) {
         }
         return result;
       })
-      .catch(
-        (): Result => ({
+      .catch((cause): Result => {
+        bb.log.warn(
+          `Lifeboat host call failed: ${cause instanceof Error ? cause.message : "unknown host error"}`,
+        );
+        return {
           ok: false,
           error:
             "Lifeboat could not reach this Mac's helper. Check that the Mac is connected and the helper is installed, then retry.",
-        }),
-      )
+        };
+      })
       .finally(() => inflight.delete(hostId));
     inflight.set(hostId, task);
     return task;

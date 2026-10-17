@@ -120,9 +120,11 @@ export function LifeboatPanel() {
     setSnapshot(null);
     setError(null);
     setSetupRequired(false);
-    setLoading(!!hostId);
     setBusy(false);
-    if (hostId) void run({ command: "status" });
+    if (hostId) {
+      setLoading(true);
+      void run({ command: "status" });
+    }
   }, [hostId, run]);
   useRealtime("lifeboat-changed", (payload) => {
     if (

@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { LifeboatView, type LifeboatViewProps } from "./view";
-import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
+import {
+  installTestPluginRuntime,
+  loadPluginApp,
+  renderSlot,
+} from "@get-bb/plugin-sdk/testing/app";
 import { fixtureSnapshot, FIXTURE_NOW, SPARE_ID } from "./fixtures";
 
 afterEach(cleanup);
@@ -23,6 +27,28 @@ function mount(overrides: Partial<LifeboatViewProps> = {}) {
   return { ...render(<LifeboatView {...props} />), onOperation };
 }
 describe("Lifeboat interaction", () => {
+  it("opens the registered BB panel and loads accounts through the selected Mac", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const panel = app.navPanels.find((item) => item.id === "lifeboat")!;
+    const slot = renderSlot(
+      panel,
+      { subPath: "" },
+      {
+        rpc: {
+          lifeboat_hosts: () => ({
+            localHostId: "mac",
+            hosts: [{ id: "mac", name: "Mac Studio", connected: true }],
+          }),
+          lifeboat_run: () => ({ ok: true, state: fixtureSnapshot() }),
+        },
+      },
+    );
+    expect(await slot.findByRole("button", { name: "Work" })).toBeTruthy();
+    expect(
+      slot.inspection.rpcCalls.some((call) => call.method === "lifeboat_run"),
+    ).toBe(true);
+    slot.lifecycle.unmount();
+  });
   it("filters provider accounts and explains depleted windows", () => {
     const ui = mount();
     expect(ui.getAllByRole("article")).toHaveLength(4);
