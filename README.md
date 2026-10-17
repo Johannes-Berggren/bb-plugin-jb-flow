@@ -50,6 +50,16 @@ composer after a successful card render; they return if the request fails or
 shell styling is switched off. Git summary controls stay native, with larger
 styling. Reduced-motion preferences disable decorative animation.
 
+### Compact live tool trace
+
+Active native command bundles keep running work prominent in a bordered activity
+card with an indeterminate sweep. Earlier completed commands and thinking steps
+fold behind **Show trace**, with a live step count. Errors and explicitly opened
+output stay visible. Native approvals and questions remain outside these bundles.
+The enhancement preserves native nodes, controls and output; it restores the
+original view when work finishes, the shell setting is disabled, or the plugin
+unloads. Unrecognized markup stays native. Reduced motion disables the sweep.
+
 ### Studio
 
 Open **Studio** in the navigation rail for an attention-first overview and a

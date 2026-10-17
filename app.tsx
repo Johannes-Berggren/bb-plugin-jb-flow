@@ -1,3 +1,4 @@
+import { mountTimelineActivity } from "./timeline-activity";
 // jb-flow frontend: the Triage thread list, a snooze control in the thread
 // header, the stale-thread digest on the homepage, and the area-tag migration
 // in settings. All plugin state comes from server.ts over RPC and refreshes on
@@ -2493,6 +2494,7 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 
 export default definePluginApp((app) => {
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
+  app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
   app.slots.navPanel({
     id: "studio",
