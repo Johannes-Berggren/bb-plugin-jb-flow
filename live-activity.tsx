@@ -514,7 +514,7 @@ export function ActivityCard({
           />
         </button>
       </div>
-      {goal && (
+      {goal && !((!active || expanded) && monitor?.report) && (
         <div className="jf-live-goal">
           <Icon name="Target" className="size-3.5" />
           <p title={goal.objective}>{goal.objective}</p>
@@ -532,17 +532,31 @@ export function ActivityCard({
                   {elapsed(now - monitor.report.capturedAt)} ago
                 </time>
               </div>
-              <dl>
-                {(!goal ? [["Goal", monitor.report.goal]] : [])
-                  .concat([
-                    ["Done", monitor.report.done],
-                    ["Next", monitor.report.next],
-                    ["Blocked", monitor.report.blocked],
-                  ])
+              <dl className="jf-monitor-steps">
+                {(
+                  [
+                    ["Just did", monitor.report.done, "Check"],
+                    ["Next step", monitor.report.next, "ArrowRight"],
+                    ["Goal", goal?.objective || monitor.report.goal, "Target"],
+                    ["Blocked", monitor.report.blocked, "AlertCircle"],
+                  ] as const
+                )
                   .filter(([, text]) => text)
-                  .map(([label, text]) => (
-                    <div key={label} data-field={label}>
-                      <dt>{label}</dt>
+                  .map(([label, text, icon]) => (
+                    <div
+                      key={label}
+                      className="jf-monitor-step"
+                      data-field={label}
+                    >
+                      <dt>
+                        <span
+                          className="jf-monitor-step-icon"
+                          aria-hidden="true"
+                        >
+                          <Icon name={icon} className="size-3" />
+                        </span>
+                        <span>{label}</span>
+                      </dt>
                       <dd>{text}</dd>
                     </div>
                   ))}

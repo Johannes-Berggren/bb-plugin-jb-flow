@@ -53,7 +53,8 @@ styling. Reduced-motion preferences disable decorative animation.
 ### Persistent thread monitor
 
 The activity card stays visible when the agent is idle. It saves each thread's
-latest **Goal / Done / Next / Blocked** report and milestone bars using the
+latest status report as **Just did → Next step → Goal**, followed by blockers
+and milestone bars using the
 Stream Deck controller's Status template (`snippets/status.md`). Reports are
 captured on idle events even when the thread isn't open, and survive plugin
 reloads, navigation and ordinary replies. Dates distinguish the last report

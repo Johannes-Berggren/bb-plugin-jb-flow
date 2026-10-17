@@ -765,36 +765,84 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
-.jf-monitor-report dl {
+.jf-monitor-steps {
   display: grid;
   gap: 8px;
   margin: 0;
 }
-.jf-monitor-report dl > div {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  gap: 10px;
-  align-items: baseline;
+.jf-monitor-step {
+  position: relative;
+  padding: 7px 10px;
+  border-radius: 10px;
 }
-.jf-monitor-report dt {
+.jf-monitor-step::after {
+  content: "";
+  position: absolute;
+  width: 1px;
+  left: 21px;
+  top: 32px;
+  bottom: -15px;
+  background: var(--border);
+  pointer-events: none;
+}
+.jf-monitor-step:last-child::after {
+  display: none;
+}
+.jf-monitor-step dt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   color: var(--muted-foreground);
 }
-.jf-monitor-report dd {
-  margin: 0;
+.jf-monitor-step-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 23px;
+  height: 23px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card);
+}
+.jf-monitor-step dd {
+  margin: 3px 0 0 32px;
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-.jf-monitor-report [data-field="Blocked"] {
-  padding: 7px 9px;
-  border-radius: 8px;
+.jf-monitor-step[data-field="Just did"] .jf-monitor-step-icon {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 25%, var(--border));
+}
+.jf-monitor-step[data-field="Just did"] dd {
+  color: var(--muted-foreground);
+}
+.jf-monitor-step[data-field="Next step"] {
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  background: color-mix(in srgb, var(--primary) 5%, var(--card));
+}
+.jf-monitor-step[data-field="Next step"] dt {
+  color: var(--primary);
+}
+.jf-monitor-step[data-field="Next step"] .jf-monitor-step-icon {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+.jf-monitor-step[data-field="Next step"] dd {
+  font-size: 13px;
+  font-weight: 550;
+}
+.jf-monitor-step[data-field="Goal"] dd {
+  color: var(--muted-foreground);
+}
+.jf-monitor-step[data-field="Blocked"] {
   background: color-mix(in srgb, var(--warning-text) 7%, transparent);
 }
-.jf-monitor-report [data-field="Blocked"] dt {
+.jf-monitor-step[data-field="Blocked"] dt {
   color: var(--warning-text);
 }
 .jf-monitor-milestones {

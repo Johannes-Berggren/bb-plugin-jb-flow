@@ -462,6 +462,13 @@ it("keeps a dated idle report and milestone bars with newer replies in Details",
     },
   );
   expect(slot.getByText("Ship the monitor")).toBeTruthy();
+  expect(
+    Array.from(
+      slot
+        .getByRole("region", { name: "Agent activity" })
+        .querySelectorAll(".jf-monitor-steps dt"),
+    ).map((node) => node.textContent),
+  ).toEqual(["Just did", "Next step", "Goal", "Blocked"]);
   expect(slot.getByText("Review the design")).toBeTruthy();
   expect(slot.getByText("Waiting for feedback")).toBeTruthy();
   expect(
