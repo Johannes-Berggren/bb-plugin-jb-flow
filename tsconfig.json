@@ -49,6 +49,7 @@
     "studio-model.test.ts",
     "vitest.config.ts",
     "thread-status.test.ts",
-    "timeline-activity.ui.test.tsx"
+    "timeline-activity.ui.test.tsx",
+    "decision-choices.ui.test.tsx"
   ]
 }

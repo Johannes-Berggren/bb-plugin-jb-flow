@@ -81,6 +81,14 @@ The enhancement preserves native nodes, controls and output; it restores the
 original view when work finishes, the shell setting is disabled, or the plugin
 unloads. Unrecognized markup stays native. Reduced motion disables the sweep.
 
+### Reply choices
+
+Numbered decisions appear as full-width action cards with number badges,
+multiline text, a Recommended label, and distinct hover/focus states. Choosing
+one sends only its number, with visible sending/sent feedback. Duplicate clicks
+are blocked; failed sends show an error and allow retry. Choices reset when the
+thread or source reply changes. Motion respects reduced-motion preferences.
+
 ### Studio
 
 Open **Studio** in the navigation rail for an attention-first overview and a
