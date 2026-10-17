@@ -212,6 +212,7 @@ final class Store {
         var profiles = try repository.readProfiles()
         var changed = false
         for provider in Provider.allCases {
+            guard profiles.contains(where: { $0.provider == provider }) else { continue }
             guard let observation = try? switcher.liveObservation(provider: provider, accessMode: .nonInteractive),
                   !observation.isLoggedIn || observation.identity?.isLikelyValid == true else { continue }
             for index in profiles.indices where profiles[index].provider == provider {
@@ -223,6 +224,9 @@ final class Store {
     }
 
     func refresh(_ profile: AccountProfile, access: CredentialAccessMode, rotationIntent: ClaudeRotationIntent = .scheduledReadOnly) async throws {
+        if let until = backoff()[profile.provider.rawValue], until > Date().timeIntervalSince1970 {
+            throw OperationError(message: "The provider asked us to wait. Retry after \(Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened)).")
+        }
         let snapshot: UsageSnapshot
         if profile.provider == .claude {
             let result = try await claude.fetchSnapshot(for: profile, isActiveCLI: profile.isActiveCLI,
