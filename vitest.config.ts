@@ -11,6 +11,8 @@ export default defineConfig({
       "live-activity.ui.test.tsx",
       "timeline-activity.ui.test.tsx",
       "thread-status.test.ts",
+      "lifeboat/*.test.ts",
+      "lifeboat/*.test.tsx",
     ],
   },
 });

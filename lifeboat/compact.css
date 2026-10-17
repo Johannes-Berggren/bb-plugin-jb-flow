@@ -1,0 +1,259 @@
+.jf-life-compact {
+  --life-compact-line: color-mix(in oklch, var(--foreground) 10%, transparent);
+  width: 300px;
+  max-width: 100%;
+  padding: 17px;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  box-sizing: border-box;
+}
+.jf-life-compact *,
+.jf-life-capacity-pill * {
+  box-sizing: border-box;
+}
+.jf-life-compact button,
+.jf-life-compact select {
+  font: inherit;
+}
+.jf-life-compact header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 17px;
+}
+.jf-life-compact-mark {
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--life-compact-line);
+  border-radius: 8px;
+}
+.jf-life-compact header > div {
+  flex: 1;
+}
+.jf-life-compact header strong {
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+}
+.jf-life-compact header > div > span {
+  display: block;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  margin-top: 3px;
+}
+.jf-life-compact-close {
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 18px !important;
+  width: 25px;
+  height: 25px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.jf-life-compact-close:hover {
+  background: var(--accent);
+}
+.jf-life-compact-machine {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  margin: 0 0 16px;
+  overflow-wrap: anywhere;
+}
+.jf-life-compact-host {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.jf-life-compact-host select {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--life-compact-line);
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+}
+.jf-life-compact-accounts {
+  display: grid;
+  gap: 17px;
+}
+.jf-life-compact-provider + .jf-life-compact-provider {
+  border-top: 1px solid var(--life-compact-line);
+  padding-top: 17px;
+}
+.jf-life-compact-provider-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.jf-life-compact-provider-title strong {
+  font-weight: 500;
+}
+.jf-life-compact-provider-title > span {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.jf-life-compact-provider.is-near-limit .jf-life-compact-provider-title > span,
+.jf-life-compact-provider.is-limited .jf-life-compact-provider-title > span {
+  color: var(--warning-text);
+}
+.jf-life-compact-account {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.jf-life-compact-windows {
+  display: grid;
+  gap: 12px;
+  margin-top: 15px;
+}
+.jf-life-compact-windows > div > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+.jf-life-compact-windows strong {
+  color: var(--foreground);
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
+}
+.jf-life-compact-meter {
+  height: 3px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+.jf-life-compact-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--primary);
+  transition: width 0.4s ease;
+}
+.is-near-limit .jf-life-compact-meter > span,
+.is-limited .jf-life-compact-meter > span {
+  background: var(--warning-text);
+}
+.jf-life-compact-reset,
+.jf-life-compact-age {
+  display: block;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  margin-top: 5px;
+}
+.jf-life-compact-age {
+  margin-top: 10px;
+}
+.jf-life-compact-memory {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--life-compact-line);
+  margin: 16px 0 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.jf-life-compact-muted {
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  margin: 10px 0;
+}
+.jf-life-compact-error {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+}
+.jf-life-compact-error button {
+  border: 1px solid var(--life-compact-line);
+  background: transparent;
+  color: var(--foreground);
+  border-radius: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.jf-life-compact footer {
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid var(--life-compact-line);
+}
+.jf-life-compact footer > p {
+  font-size: 9px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  margin: 10px 0 0;
+}
+.jf-life-compact-open {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+  border: 1px solid var(--life-compact-line);
+  border-radius: 6px;
+  color: var(--foreground);
+  font-size: 10px !important;
+  cursor: pointer;
+}
+.jf-life-compact-open:hover {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+.jf-life-capacity-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 150px;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-foreground);
+  font: 400 10px var(--font-sans);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.jf-life-capacity-pill svg {
+  height: 13px;
+  width: 13px;
+  opacity: 0.8;
+}
+.jf-life-capacity-pill:hover {
+  border-color: var(--border);
+  background: var(--accent);
+  color: var(--foreground);
+}
+.jf-life-capacity-pill.is-near-limit,
+.jf-life-capacity-pill.is-limited {
+  color: var(--warning-text);
+}
+.jf-life-compact :is(button, select):focus-visible,
+.jf-life-capacity-pill:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-life-compact * {
+    transition: none !important;
+  }
+}

@@ -21,6 +21,8 @@ import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema }
 import { formatWhen, parseWhen } from "./when";
 import { createFocusBoard } from "./focus-board";
 import { createWatchers, releaseWatchSchema } from "./watchers";
+import { lifeboatRpc } from "./lifeboat/contract";
+import { createLifeboat } from "./lifeboat/server";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
 const CHANGED = "jb-flow-changed";
@@ -120,6 +122,7 @@ const stateSchema = z.object({
 export type FlowState = z.infer<typeof stateSchema>;
 
 export const rpcContract = defineRpcContract({
+  ...lifeboatRpc,
   state_get: { input: z.null(), output: stateSchema },
   snooze: {
     input: z.object({
@@ -266,8 +269,15 @@ export const rpcContract = defineRpcContract({
 type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
 
 export default async function plugin(bb: BbPluginApi) {
+  const lifeboat = createLifeboat(bb);
   const { boardClear, boardSnooze, boardSnoozes } = createFocusBoard(bb);
   const settings = bb.settings.define({
+    lifeboatMonitor: {
+      type: "boolean",
+      label: "Keep Lifeboat usage current",
+      description: "Refresh imported or captured accounts on connected Macs every five minutes. Background checks never ask for Keychain access or switch accounts.",
+      default: true,
+    },
     polishShell: {
       type: "boolean",
       label: "Polish the entire BB interface",
@@ -788,6 +798,8 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   }
 
   bb.rpc.register(rpcContract, {
+    lifeboat_hosts: () => lifeboat.hosts(),
+    lifeboat_run: ({ hostId, operation }) => lifeboat.run(hostId, operation),
     // Concurrent callers (every open window refetches on the same publish) share one build.
     state_get: () => (stateBuild ??= buildState().finally(() => (stateBuild = null))),
     snooze: ({ threadId, when, note, until }) => snooze(threadId, when, note, until),
@@ -935,6 +947,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.background.schedule("wake-snoozed", "* * * * *", async () => {
     const woken = await wakeDue();
     if (woken > 0) bb.log.info(`woke ${woken} snoozed thread(s)`);
+  });
+  bb.background.schedule("lifeboat-refresh", "*/5 * * * *", async () => {
+    if (!(await settings.get()).lifeboatMonitor) return;
+    const registered = await bb.storage.kv.get<string[]>("lifeboat:hosts") ?? [];
+    const connected = (await lifeboat.hosts()).hosts.filter((host) => host.connected && registered.includes(host.id));
+    await Promise.allSettled(connected.map((host) => lifeboat.run(host.id, { command: "background" })));
   });
   bb.background.schedule("sync-focus-board", "*/2 * * * *", syncBoard);
   bb.background.schedule("stale-digest", "0 8 * * 1-5", async () => {
@@ -1160,6 +1178,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     name: "jb-flow",
     summary: "Snooze threads and review the stale-thread digest",
     commands: [
+      { name: "lifeboat", summary: "Read saved account usage and agent memory on a Mac", usage: "bb jb-flow lifeboat [--host <id-or-name>] [--json]" },
       {
         name: "snooze",
         summary: "Snooze a thread until a time",
@@ -1212,6 +1231,21 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         value === "--self" ? ctx.threadId : value === "--focused" ? focus.focusedThreadId() ?? undefined : value;
       try {
         switch (command) {
+          case "lifeboat": {
+            const inventory = await lifeboat.hosts();
+            const flag = args.indexOf("--host");
+            const wanted = flag === -1 ? inventory.localHostId : args[flag + 1];
+            const selected = inventory.hosts.find((host) => host.id === wanted || host.name === wanted)
+              ?? (flag === -1 ? inventory.hosts.find((host) => host.connected) : undefined);
+            if (!selected) return { exitCode: 1, stderr: "Choose a connected Mac with --host <id-or-name>." };
+            const result = await lifeboat.run(selected.id, { command: "status" });
+            if (!result.ok) return { exitCode: 1, stderr: result.error };
+            const { history: _history, ...state } = result.state;
+            if (json) return { exitCode: 0, stdout: JSON.stringify({ host: selected.name, ...state }) };
+            return { exitCode: 0, stdout: [selected.name, ...state.accounts.map((account) =>
+              `${account.provider} · ${account.label}${account.isActive ? " (last observed CLI login)" : ""} · ${account.reading ? `${account.reading.mostConstrainedPercent ?? "?"}% used · ${account.reading.ageSeconds}s old` : "no reading"}`
+            ), `${state.sessions.length} agent sessions${state.source === "legacy" ? " · read-only preview from the Mac app" : ""}`].join("\n") };
+          }
           case "snooze": {
             const threadId = resolveThread(args[0]);
             const when = args.slice(1).join(" ");
