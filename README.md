@@ -187,6 +187,75 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `bb jb-flow next` opens the next waiting thread
 - `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script.
 
+## Lifeboat
+
+**Lifeboat** in the navigation rail brings Limit Lifeboat's account workflow into
+JB Flow, matching Studio and the current BB palette:
+
+- Saved Claude Code and Codex accounts, independent session/weekly limits, reset
+  countdowns, old/failed-reading states, and conservative next-account advice.
+- Account details and seven days of usage history, with breaks at quota resets
+  and an accessible readings table.
+- Explicit import, capture, refresh, verified CLI switching, and account names.
+  Removing an account removes its list entry; encrypted recovery material stays.
+- Agent sessions and memory headroom on the selected enrolled Mac, including
+  remote Macs. Existing agent sessions keep their login when the CLI switches.
+
+The interface is React; credential handling reuses the native Swift core pinned
+in [native/lifeboat/UPSTREAM.md](native/lifeboat/UPSTREAM.md). There is no runtime
+dependency on the installed Limit Lifeboat app. Credentials stay in the selected
+Mac's Keychain and never travel through BB's RPC, database, or browser.
+
+### Set up each Mac
+
+Requires Apple Silicon, macOS 14+, Xcode, BB Plugin SDK 0.6.49+, and each
+provider's CLI for its account workflow.
+
+```sh
+npm run lifeboat:build
+bb plugin build
+bb plugin reload jb-flow
+```
+
+The build installs `~/.local/lib/jb-flow/flow-lifeboat`, preferring a stable Apple
+Development signature. Set `LIFEBOAT_SIGN_IDENTITY` to select another local
+signing identity. Ad-hoc signing works but can require Keychain authorization
+after rebuilds. Repeat helper setup on each enrolled Mac you want to use.
+
+When no Flow account store exists, the panel shows a read-only preview of the
+old app's saved readings. **Bring into Flow** explicitly copies accounts,
+encrypted snapshots, and the most recent seven days of usage history to a
+separate store under the plugin's host data directory. Quit the Mac app first
+and keep it closed while Flow refreshes the imported logins. The source store
+and source Keychain items are retained. Import does not guess the current CLI
+login: use **Add account → Capture CLI login** for each provider to confirm it.
+Login itself uses the official CLI in a terminal on the selected Mac.
+
+**Keep Lifeboat usage current** refreshes adopted Macs every five minutes. The
+panel's light polling reads the local store and process census; it never makes
+provider requests. Scheduled Claude reads cannot rotate credentials or request
+Keychain authorization. Explicit refreshes can recover an expired login with
+the native lease/recovery journal. Failed reads keep their prior timestamps.
+Switching preflights the target, captures the outgoing login, enforces the live
+fingerprint, and uses the native restore/identity-verification/rollback path.
+
+Read-only CLI: `bb jb-flow lifeboat [--host <id-or-name>] [--json]`.
+
+This port covers account management, usage/history, and a session/memory overview.
+The standalone app's automatic switching, budget modes, session parking/control,
+credit/reset redemption, notifications, status-line hooks and updater are not
+exposed in BB. No credits are spent and no agent processes are stopped by the
+Lifeboat panel.
+
+Validation:
+
+```sh
+npm run typecheck
+npm test
+npm run lifeboat:test
+bb plugin build
+```
+
 ## Install
 
 Install **JB Flow** from the bb plugin marketplace, or from source:

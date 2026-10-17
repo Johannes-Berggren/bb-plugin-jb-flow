@@ -1,5 +1,7 @@
 ## What you get
 
+- **Lifeboat.** A Studio-style account dashboard for Claude Code and Codex, with session/weekly capacity, reset times, usage history, explicit import/capture/switch controls, and a per-Mac agent/memory overview. Its host-local Swift helper keeps credentials in Keychain. Requires Apple Silicon/macOS 14+, Xcode for helper setup, and SDK 0.6.49+.
+
 - **Triage thread list.** A replacement sidebar. Threads blocked on a prompt, a permission or a question to you sit in *Needs me* at the top. Below that are numbered lanes (Priority, Active, Waiting for others, Pick up later, Low priority), with a project chip and tags on each row. On a focused row, `1`–`5` moves it to a lane, `s` snoozes, `t` tags, `e` archives and `j`/`k` move up and down.
 - **Waiting for others fills itself.** A thread whose agent says it is waiting on a person, or whose open PRs all wait on a reviewer, goes there and comes back to Active when its next turn no longer waits on anyone.
 - **Snooze.** A clock button, `bb jb-flow snooze`, or the `snooze_thread` agent tool hides a thread until `2h`, `tomorrow`, `mon` or a date. It comes back unread, and an optional note is sent to the agent as its wake-up instruction.

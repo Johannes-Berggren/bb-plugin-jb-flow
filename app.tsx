@@ -78,6 +78,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
+import { LifeboatPanel } from "./lifeboat/panel";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { LiveActivityBanner } from "./live-activity";
 
@@ -2492,6 +2493,13 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 }
 
 export default definePluginApp((app) => {
+  app.slots.navPanel({
+    id: "lifeboat",
+    title: "Lifeboat",
+    icon: "TimeSchedule",
+    path: "lifeboat",
+    component: LifeboatPanel,
+  });
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
   app.slots.navPanel({
