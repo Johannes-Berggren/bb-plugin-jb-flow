@@ -79,6 +79,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
+import { LiveActivityBanner } from "./live-activity";
 
 const DAY_MS = 86_400_000;
 const SNOOZE_PRESETS = [
@@ -2621,6 +2622,13 @@ export default definePluginApp((app) => {
     title: "Repo commands",
     description: "Per-project buttons for the thread side panel.",
     component: RepoCommandsSettings,
+  });
+  app.composer.customize({
+    id: "live-activity",
+    banners: [{ id: "live-activity", chrome: "bare", component: () => {
+      const { state } = useFlowState();
+      return <LiveActivityBanner runningSince={state?.running ?? {}} />;
+    } }],
   });
   app.composer.customize({
     id: "decision-chips",

@@ -38,6 +38,8 @@
     "app.tsx",
     "studio.tsx",
     "shell-appearance.tsx",
+    "live-activity.tsx",
+    "live-activity.ui.test.tsx",
     "studio-model.ts",
     "components",
     "lib",

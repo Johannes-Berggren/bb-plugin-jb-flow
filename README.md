@@ -26,6 +26,23 @@ This is a visual shell treatment; changing BB's navigation structure requires
 changes in BB itself. Shell selectors use the current host's DOM attributes and
 need visual rechecking after BB upgrades.
 
+### Live agent activity
+
+While a thread is working, the composer displays a larger activity card with an
+animated live indicator, the current command/tool, elapsed time, and counts of
+background agents, commands, workflows, and completed plan steps. **Details**
+shows task descriptions, available models and usage, summaries, workflow step
+progress and recent tool activity. Waiting for input, stopping, and reconnecting
+have distinct labels; disconnected cards show the last received snapshot.
+
+The card uses a bounded public timeline snapshot, refreshed by thread realtime
+events (bursts coalesce over 750ms), and resyncs after reconnecting. Its one-second
+clock updates locally. No network polling or estimated completion percentage is
+used. The native background/workflow callouts are hidden only in the same
+composer after a successful card render; they return if the request fails or
+shell styling is switched off. Git summary controls stay native, with larger
+styling. Reduced-motion preferences disable decorative animation.
+
 ### Studio
 
 Open **Studio** in the navigation rail for an attention-first overview and a
