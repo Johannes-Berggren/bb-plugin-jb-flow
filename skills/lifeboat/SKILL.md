@@ -5,6 +5,14 @@ description: Read the user's saved Claude/Codex account usage and agent memory h
 
 # Lifeboat in JB Flow
 
+The sidebar-footer lifebuoy opens a compact Mac-selectable capacity summary.
+The composer’s Lifeboat indicator follows the selected provider and resolved
+execution Mac. **Manage accounts** opens the full dashboard for that Mac. Neither
+compact surface changes credentials. They show observed CLI defaults, which can
+differ from the account held by a running session. Unresolved Macs and stale
+readings do not show a capacity percentage. All surfaces share cached local
+reads; mounting another surface does not refresh provider usage.
+
 Use the Lifeboat navigation item for the account dashboard. `bb jb-flow lifeboat
 [--host <id-or-name>] [--json]` is read-only and reports saved readings, their age,
 agent processes, and memory on an explicitly selected enrolled Mac. It never

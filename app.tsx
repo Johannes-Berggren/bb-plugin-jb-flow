@@ -79,6 +79,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 import { LifeboatPanel } from "./lifeboat/panel";
+import { LifeboatComposerAction, LifeboatComposerPopup, LifeboatFooter, LifeboatIcon } from "./lifeboat/compact";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { LiveActivityBanner } from "./live-activity";
 
@@ -2493,10 +2494,17 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 }
 
 export default definePluginApp((app) => {
+  app.experimental_icons.register({ name: "jb-flow-lifeboat", component: LifeboatIcon });
+  app.experimental_sidebarFooter.register({ kind: "disclosure", id: "lifeboat-capacity", label: "Lifeboat capacity", icon: "jb-flow-lifeboat", component: LifeboatFooter });
+  app.composer.customize({
+    id: "lifeboat-capacity",
+    actions: [{ id: "capacity", component: LifeboatComposerAction }],
+    experimental_popups: [{ id: "lifeboat-capacity", label: "Account capacity", component: LifeboatComposerPopup }],
+  });
   app.slots.navPanel({
     id: "lifeboat",
     title: "Lifeboat",
-    icon: "TimeSchedule",
+    icon: "jb-flow-lifeboat",
     path: "lifeboat",
     component: LifeboatPanel,
   });

@@ -7,8 +7,12 @@ import {
   renderSlot,
 } from "@get-bb/plugin-sdk/testing/app";
 import { fixtureSnapshot, FIXTURE_NOW, SPARE_ID } from "./fixtures";
+import { lifeboatClient } from "./client";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  lifeboatClient.reset();
+});
 function mount(overrides: Partial<LifeboatViewProps> = {}) {
   installTestPluginRuntime();
   const onOperation = vi.fn().mockResolvedValue(true);

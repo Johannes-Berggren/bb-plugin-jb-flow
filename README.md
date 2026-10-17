@@ -206,6 +206,18 @@ in [native/lifeboat/UPSTREAM.md](native/lifeboat/UPSTREAM.md). There is no runti
 dependency on the installed Limit Lifeboat app. Credentials stay in the selected
 Mac's Keychain and never travel through BB's RPC, database, or browser.
 
+The **lifebuoy in the sidebar footer** opens a compact account-capacity summary
+with a Mac selector, session and weekly limits, and memory headroom. A matching
+**composer indicator** follows its selected provider and execution Mac; click it
+for a quick view, then **Manage accounts** for that Mac’s full dashboard. These
+are observed CLI defaults; running sessions may use another login. Unresolved
+Macs and stale readings do not display a remaining-capacity percentage.
+
+All three surfaces share one local-reading cache and polling clock per window.
+To use Lifeboat as your usage UI, disable **Provider Usage** in BB’s plugin
+settings (plugin id `bb--provider-usage`); JB Flow does not change other plugins
+automatically.
+
 ### Set up each Mac
 
 Requires Apple Silicon, macOS 14+, Xcode, BB Plugin SDK 0.6.49+, and each
