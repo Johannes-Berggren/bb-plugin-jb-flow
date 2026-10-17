@@ -2627,7 +2627,7 @@ export default definePluginApp((app) => {
     id: "live-activity",
     banners: [{ id: "live-activity", chrome: "bare", component: () => {
       const { state } = useFlowState();
-      return <LiveActivityBanner runningSince={state?.running ?? {}} />;
+      return <LiveActivityBanner runningSince={state?.running ?? {}} trackedPrs={state?.threadPrs ?? {}} />;
     } }],
   });
   app.composer.customize({

@@ -451,3 +451,301 @@
     display: none;
   }
 }
+
+/* One compact control center: action, goal, measured progress and PR state. */
+.jf-live-card {
+  padding: 13px 16px 0;
+}
+.jf-live-heading {
+  gap: 10px;
+}
+.jf-live-orbit {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+}
+.jf-live-orbit::after {
+  border-radius: 12px;
+}
+.jf-live-heading-copy {
+  flex-direction: column;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: 3px;
+  min-width: 0;
+}
+.jf-live-heading-copy > .jf-live-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+}
+.jf-live-now {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 550;
+  letter-spacing: -0.015em;
+  line-height: 1.4;
+}
+.jf-live-heading > .jf-live-live {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.jf-live-heading > .jf-live-elapsed {
+  font-size: 10px;
+}
+.jf-live-goal {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 12px;
+  color: var(--muted-foreground);
+}
+.jf-live-goal > :first-child {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--primary);
+}
+.jf-live-goal p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.jf-live-action {
+  max-height: 1.6em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-top: 9px;
+  font-size: 10px;
+}
+.jf-live-meters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+  gap: 9px 16px;
+  margin-top: 13px;
+}
+.jf-live-meters:empty {
+  display: none;
+}
+.jf-live-meter {
+  --meter-color: var(--success);
+  min-width: 0;
+}
+.jf-live-meter[data-kind="workflow"] {
+  --meter-color: var(--primary);
+}
+.jf-live-meter[data-kind="context"] {
+  --meter-color: var(--primary);
+}
+.jf-live-meter[data-kind="budget"],
+.jf-live-meter[data-kind="context"][data-high="true"] {
+  --meter-color: var(--warning-text);
+}
+.jf-live-meter > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-live-meter strong {
+  flex-shrink: 0;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+.jf-live-meter progress {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  accent-color: var(--meter-color);
+  background: var(--muted);
+}
+.jf-live-meter progress::-webkit-progress-bar {
+  background: var(--muted);
+}
+.jf-live-meter progress::-webkit-progress-value {
+  background: var(--meter-color);
+  border-radius: 3px;
+  transition: width 300ms ease;
+}
+.jf-live-meter progress::-moz-progress-bar {
+  background: var(--meter-color);
+}
+.jf-live-indeterminate {
+  height: 4px;
+  overflow: hidden;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: var(--muted);
+}
+.jf-live-indeterminate > span {
+  display: block;
+  height: 100%;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  animation: jf-live-scan 3.5s ease-in-out infinite;
+}
+.jf-live-footer {
+  gap: 7px 12px;
+  padding: 11px 0 12px;
+}
+.jf-live-badges {
+  gap: 5px 9px;
+  align-items: center;
+}
+.jf-live-badges > span {
+  font-size: 10px;
+  padding: 2px 6px;
+}
+.jf-live-badges > .jf-live-goal-usage {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+.jf-live-freshness {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.jf-live-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--jb-shell-line, var(--border));
+  border-radius: 5px;
+  padding: 2px 6px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  text-decoration: none;
+}
+.jf-live-pr:hover {
+  color: var(--foreground);
+  background: var(--state-hover);
+}
+.jf-live-pr[data-state="merged"] {
+  color: var(--pr-merged);
+}
+.jf-live-pr[data-state="open"] {
+  color: var(--success);
+}
+.jf-live-pr:is(
+  [data-attention="checks_failed"],
+  [data-attention="changes_requested"],
+  [data-attention="conflicts"]
+) {
+  color: var(--destructive-text);
+}
+.jf-live-pr[data-attention="checks_pending"] {
+  color: var(--warning-text);
+}
+.jf-live-pr > span {
+  text-transform: capitalize;
+}
+.jf-live-pr-more {
+  color: var(--primary);
+  font-size: 10px;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 3px;
+}
+.jf-live-goal-details {
+  margin-bottom: 12px;
+}
+.jf-live-goal-details > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.jf-live-goal-details p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.jf-live-current-details {
+  margin-bottom: 12px;
+}
+.jf-live-current-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  margin-top: 7px;
+}
+.jf-live-signal {
+  margin-inline: -16px;
+}
+.jf-live-pr:focus-visible,
+.jf-live-pr-more:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.jb-flow-shell
+  [data-app-composer]:has([data-jb-flow-goal="true"])
+  section[aria-label="Goal"],
+.jb-flow-shell
+  [data-app-composer]:has([data-jb-flow-plan="true"])
+  section[aria-label="To-do list"] {
+  display: none;
+}
+/* Only read-only PR-only rows collapse; Git, parent links and merge actions stay native. */
+.jb-flow-shell
+  [data-app-composer]:has([data-jb-flow-branch-pr="true"])
+  section[aria-label="Thread context before sending"]
+  > div:first-child
+  > a[href*="/pull/"] {
+  display: none;
+}
+.jb-flow-shell
+  [data-app-composer]:has([data-jb-flow-branch-pr="true"])
+  section[aria-label="Thread context before sending"]:has(
+    a[href*="/pull/"]
+  ):not(:has(button)) {
+  display: none;
+}
+@container promptbox-shell (max-width: 28rem) {
+  .jf-live-card {
+    padding: 12px 12px 0;
+  }
+  .jf-live-heading {
+    gap: 8px;
+  }
+  .jf-live-toggle {
+    min-height: 32px;
+  }
+  .jf-live-meters {
+    gap: 10px 12px;
+  }
+  .jf-live-signal {
+    margin-inline: -12px;
+  }
+  .jf-live-heading > .jf-live-live {
+    max-width: 80px;
+  }
+  .jf-live-freshness {
+    width: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-live-meter progress::-webkit-progress-value {
+    transition: none;
+  }
+}

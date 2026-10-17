@@ -28,12 +28,19 @@ need visual rechecking after BB upgrades.
 
 ### Live agent activity
 
-While a thread is working, the composer displays a larger activity card with an
-animated live indicator, the current command/tool, elapsed time, and counts of
-background agents, commands, workflows, and completed plan steps. **Details**
-shows task descriptions, available models and usage, summaries, workflow step
-progress and recent tool activity. Waiting for input, stopping, and reconnecting
-have distinct labels; disconnected cards show the last received snapshot.
+The composer combines the current action, a two-line goal summary, usage, and
+linked PR status in one compact activity panel. Visible meters distinguish plan
+and workflow step completion from goal token-budget consumption and context
+usage (marked estimated when the host reports an estimate). Active work without
+known totals uses an indeterminate activity bar. Percentages are never presented
+as goal completion. An animated live indicator and local elapsed clock keep work
+visible; quiet, waiting, stopping, and disconnected states have distinct labels.
+
+**Details** contains the full goal and its Clear goal control, current command,
+task models/usage, workflow progress, recent tool activity, and the plan. Read-only
+PR and goal/to-do summaries are consolidated only when their replacement data and
+controls are available; native Git, parent-thread and PR merge controls remain.
+PR links preserve BB's navigation preference and reject unsupported URL schemes.
 
 The card uses a bounded public timeline snapshot, refreshed by thread realtime
 events (bursts coalesce over 750ms), and resyncs after reconnecting. Its one-second

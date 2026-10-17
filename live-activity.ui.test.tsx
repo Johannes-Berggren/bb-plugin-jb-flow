@@ -53,6 +53,7 @@ const task: ActivityTask = {
 };
 const data: ActivityData = {
   activeBackgroundCommands: [task],
+  goal: null,
   activeWorkflows: [],
   rows: [],
   pendingTodos: {
@@ -107,7 +108,11 @@ it("shows real descriptions and elapsed time, with model, tool use and workflow 
   expect(slot.getByText("7 tool calls")).toBeTruthy();
   expect(slot.getByText("1,250 tokens")).toBeTruthy();
   expect(slot.getByText("Checking 42 baseline rows")).toBeTruthy();
-  expect(slot.getByRole("progressbar").getAttribute("value")).toBe("0");
+  expect(
+    slot
+      .getByRole("progressbar", { name: /workflow steps complete/ })
+      .getAttribute("value"),
+  ).toBe("0");
   fireEvent.click(slot.getByRole("button", { name: "Less" }));
   expect(
     slot.getByRole("button", { name: "Details" }).getAttribute("aria-expanded"),
@@ -133,7 +138,7 @@ it("stops claiming live updates when disconnected, and renders no idle card", ()
   const idle = renderSlot(
     { component: ActivityCard },
     {
-      data: { ...data, activeBackgroundCommands: [] },
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
       running: false,
       startedAt: null,
       now: 0,
@@ -264,4 +269,159 @@ it("distinguishes stopping and waiting from active execution", () => {
     ).toBe("false");
     slot.lifecycle.unmount();
   }
+});
+
+it("consolidates a goal and merged PR with separate plan, budget and context meters", () => {
+  const goal = {
+    objective: "Ship the first Windows release",
+    sourceSeq: 2,
+    updatedAt: 2000,
+    status: "active" as const,
+    tokensUsed: 25000,
+    tokenBudget: 100000,
+    timeUsedSeconds: 1172,
+  };
+  const clear = vi.fn(async () => {});
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: {
+        ...data,
+        goal,
+        contextWindowUsage: {
+          estimated: false,
+          usedTokens: 40000,
+          modelContextWindow: 200000,
+        },
+      },
+      running: true,
+      startedAt: 1000,
+      now: 2000,
+      updatedAt: 2000,
+      connected: true,
+      onClearGoal: clear,
+      prs: [
+        {
+          number: 1439,
+          title: "Release Windows",
+          url: "https://github.com/acme/app/pull/1439",
+          state: "merged",
+          attention: "merged",
+        },
+      ],
+      branchPrUrl: "https://github.com/acme/app/pull/1439",
+    },
+  );
+  expect(slot.getByRole("link", { name: /1439.*Merged/ })).toBeTruthy();
+  expect(
+    slot
+      .getByRole("progressbar", { name: "Plan complete" })
+      .getAttribute("value"),
+  ).toBe("1");
+  expect(
+    slot
+      .getByRole("progressbar", { name: "Goal token budget used" })
+      .getAttribute("value"),
+  ).toBe("25000");
+  expect(
+    slot.getByRole("progressbar", { name: "Context used" }).getAttribute("max"),
+  ).toBe("200000");
+  expect(
+    slot
+      .getByRole("region", { name: "Agent activity" })
+      .getAttribute("data-jb-flow-goal"),
+  ).toBe("true");
+  expect(clear).not.toHaveBeenCalled();
+  fireEvent.click(slot.getByRole("button", { name: "Details" }));
+  expect(
+    slot.getByRole("button", { name: "Clear goal" }).getAttribute("type"),
+  ).toBe("button");
+  slot.lifecycle.unmount();
+});
+
+it("keeps read-only PR summaries available when idle and rejects unsafe links", () => {
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+      running: false,
+      startedAt: null,
+      now: 2000,
+      updatedAt: 2000,
+      connected: true,
+      prs: [
+        {
+          number: 1,
+          title: "Merged",
+          url: "https://github.com/acme/app/pull/1",
+          state: "merged",
+          attention: "merged",
+        },
+        {
+          number: 2,
+          title: "Unsafe",
+          url: "javascript:alert(1)",
+          state: "open",
+          attention: "none",
+        },
+      ],
+    },
+  );
+  expect(slot.getByText("Idle")).toBeTruthy();
+  expect(slot.getAllByRole("link")).toHaveLength(1);
+  slot.lifecycle.unmount();
+});
+
+it("shows indeterminate activity when completion totals are unknown", () => {
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+      running: true,
+      startedAt: 1000,
+      now: 2000,
+      updatedAt: 2000,
+      connected: true,
+    },
+  );
+  expect(
+    slot
+      .getByRole("progressbar", { name: "Live activity in progress" })
+      .hasAttribute("aria-valuenow"),
+  ).toBe(false);
+  slot.lifecycle.unmount();
+});
+
+it("preserves goal controls and reports failed actions without submitting the composer", async () => {
+  const clear = vi.fn(async () => {
+    throw new Error("Could not clear goal");
+  });
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: {
+        ...data,
+        goal: {
+          objective: "Ship release",
+          sourceSeq: 2,
+          updatedAt: 2000,
+          status: "active",
+          tokensUsed: 100,
+          tokenBudget: null,
+          timeUsedSeconds: 20,
+        },
+      },
+      running: true,
+      startedAt: 1000,
+      now: 2000,
+      updatedAt: 2000,
+      connected: true,
+      onClearGoal: clear,
+    },
+  );
+  fireEvent.click(slot.getByRole("button", { name: "Details" }));
+  fireEvent.click(slot.getByRole("button", { name: "Clear goal" }));
+  expect(await slot.findByRole("alert")).toBeTruthy();
+  expect(clear).toHaveBeenCalledTimes(1);
+  slot.lifecycle.unmount();
 });
