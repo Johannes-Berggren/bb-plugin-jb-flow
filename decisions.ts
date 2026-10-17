@@ -29,7 +29,7 @@ export function parseDecisionOptions(message: string): DecisionOption[] {
     first = index;
     options.unshift({
       n: Number(match[1]),
-      text: plain(raw.replace(/\(recommended\)/i, "")).slice(0, 90),
+      text: plain(raw.replace(/\(recommended\)/i, "")).slice(0, 500),
       recommended: /\(recommended\)|\brecommended\b/i.test(raw),
     });
   }

@@ -14,3 +14,9 @@ test("ignores lists that aren't at the end, or aren't choices", () => {
   assert.deepEqual(parseDecisionOptions("Steps:\n1. a\n2. b\n\nThen I merged it and everything is done. Lots more text here.\nMore.\nMore.\nMore.\nMore.\nMore.\nMore."), []);
   assert.deepEqual(parseDecisionOptions("Only one:\n1. this"), []);
 });
+
+test("preserves longer reply choices for the multiline cards while bounding output", () => {
+  const text = "Build the next section and validate the result with the existing measurement before proceeding to the final review";
+  assert.equal(parseDecisionOptions(`Choose an approach?\n1. ${text} (recommended)\n2. Stop here`)[0]?.text, text);
+  assert.equal(parseDecisionOptions(`Choose an approach?\n1. ${"x".repeat(600)} (recommended)\n2. Stop here`)[0]?.text.length, 500);
+});

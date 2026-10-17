@@ -1,3 +1,4 @@
+import { mountTimelineActivity } from "./timeline-activity";
 // jb-flow frontend: the Triage thread list, a snooze control in the thread
 // header, the stale-thread digest on the homepage, and the area-tag migration
 // in settings. All plugin state comes from server.ts over RPC and refreshes on
@@ -19,6 +20,7 @@ import {
   useSidebarSplitLayout,
   useSidebarThreadShortcut,
   useSettings,
+  useRealtimeConnectionState,
 } from "@get-bb/plugin-sdk/app";
 import type {
   JsonValue,
@@ -76,6 +78,9 @@ import type { GlyphName } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
+import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
+import { LiveActivityBanner } from "./live-activity";
 
 const DAY_MS = 86_400_000;
 const SNOOZE_PRESETS = [
@@ -131,6 +136,7 @@ function fetchFlowState(rpc: FlowRpc) {
 
 function useFlowState() {
   const rpc = useRpc<typeof rpcContract>();
+  const connection = useRealtimeConnectionState();
   const [state, setState] = useState<FlowState | null>(flowState);
   useEffect(() => {
     flowListeners.add(setState);
@@ -142,6 +148,9 @@ function useFlowState() {
   }, [rpc]);
   const refetch = useCallback(() => refetchFlowState(rpc), [rpc]);
   useRealtime("jb-flow-changed", refetch);
+  useEffect(() => {
+    if (connection === "connected") refetchFlowState(rpc);
+  }, [connection, rpc]);
   return { rpc, state };
 }
 
@@ -998,7 +1007,7 @@ function GroupHeader({
   auto?: boolean;
 }) {
   const header = (
-    <div onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
+    <div data-jb-flow-section-header="" onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
       <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground">
         {dynamic ? (
           <Glyph name={dynamic.glyph} className={cn("size-3.5", dynamic.tone)} />
@@ -2484,6 +2493,26 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 }
 
 export default definePluginApp((app) => {
+  app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
+  app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
+  app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
+  app.slots.navPanel({
+    id: "studio",
+    title: "Studio",
+    icon: "Columns",
+    path: "studio",
+    component: ({ subPath }) => {
+      const { state } = useFlowState();
+      return <Studio subPath={subPath} state={state} />;
+    },
+    fixedTabs: [{
+      ...STUDIO_REVIEW_TAB,
+      component: ({ subPath }) => {
+        const { state } = useFlowState();
+        return <StudioReview subPath={subPath} state={state} />;
+      },
+    }],
+  });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
   app.slots.experimental_threadList({
@@ -2595,6 +2624,13 @@ export default definePluginApp((app) => {
     title: "Repo commands",
     description: "Per-project buttons for the thread side panel.",
     component: RepoCommandsSettings,
+  });
+  app.composer.customize({
+    id: "live-activity",
+    banners: [{ id: "live-activity", chrome: "bare", component: () => {
+      const { state } = useFlowState();
+      return <LiveActivityBanner runningSince={state?.running ?? {}} trackedPrs={state?.threadPrs ?? {}} watches={state?.watching ?? {}} />;
+    } }],
   });
   app.composer.customize({
     id: "decision-chips",

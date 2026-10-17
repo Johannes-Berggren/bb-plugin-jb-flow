@@ -459,62 +459,7 @@ export function PullRequestsPanel({
 // When the agent's last message ends with numbered options, offer them as
 // one-click replies above the composer. Sends just the number.
 
-export function DecisionChips({
-  threadId,
-  updatedAt,
-  idle,
-}: {
-  threadId: string | null;
-  updatedAt: number | null;
-  idle: boolean;
-}) {
-  const rpc = useRpc<typeof rpcContract>();
-  const [options, setOptions] = useState<Array<{ n: number; text: string; recommended: boolean }>>([]);
-  const [sent, setSent] = useState<number | null>(null);
-  useEffect(() => {
-    setSent(null);
-    if (threadId === null || !idle) {
-      setOptions([]);
-      return;
-    }
-    let live = true;
-    rpc.call("decision_options", { threadId }).then(
-      (result) => live && setOptions(result.options),
-      () => live && setOptions([]),
-    );
-    return () => {
-      live = false;
-    };
-  }, [rpc, threadId, updatedAt, idle]);
-  if (threadId === null || options.length === 0) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 px-1 py-1">
-      <span className="text-[11px] text-muted-foreground">Reply:</span>
-      {options.map((option) => (
-        <button
-          key={option.n}
-          type="button"
-          disabled={sent !== null}
-          title={option.text}
-          onClick={() => {
-            setSent(option.n);
-            void rpc.call("thread_reply", { threadId, text: String(option.n) });
-          }}
-          className={cn(
-            "flex max-w-[16rem] items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors disabled:opacity-50",
-            option.recommended
-              ? "border-green-500/40 bg-green-500/10 text-foreground hover:bg-green-500/20"
-              : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-            sent === option.n && "ring-1 ring-ring",
-          )}
-        >
-          <span className="font-medium tabular-nums">{option.n}</span>
-          <span className="truncate">{option.text}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
+export { DecisionChips } from "./decision-choices";
 
 // --- Your move (homepage) ---------------------------------------------------------------
 

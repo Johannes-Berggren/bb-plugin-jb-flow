@@ -1,0 +1,706 @@
+.jf-studio {
+  --studio-line: color-mix(in oklch, var(--foreground) 10%, transparent);
+  --studio-raised: color-mix(in oklch, var(--foreground) 3%, var(--background));
+  --studio-accent: var(--primary);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  color: var(--foreground);
+  background:
+    radial-gradient(
+      ellipse at 95% 0%,
+      color-mix(in oklch, var(--primary) 5%, transparent),
+      transparent 42%
+    ),
+    var(--background);
+  font-family: var(--font-sans);
+  container-type: inline-size;
+}
+.jf-studio *,
+.jf-studio-review *,
+.jf-studio-review-empty * {
+  box-sizing: border-box;
+}
+.jf-studio button,
+.jf-studio select,
+.jf-studio input {
+  font: inherit;
+}
+.jf-studio button,
+.jf-studio select {
+  cursor: pointer;
+}
+.jf-studio button,
+.jf-studio a,
+.jf-studio select,
+.jf-studio input {
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+.jf-studio :is(button, a, input, select):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.jf-studio h1:focus {
+  outline: none;
+}
+.jf-studio-overview {
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 56px 48px 24px;
+}
+.jf-studio-eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.17em;
+  color: var(--muted-foreground);
+}
+.jf-studio-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 38px;
+}
+.jf-studio-hero h1 {
+  margin: 18px 0 16px;
+  font-size: clamp(32px, 4.5cqi, 52px);
+  line-height: 1.08;
+  letter-spacing: -0.055em;
+  font-weight: 500;
+}
+.jf-studio-hero h1 > span {
+  color: var(--muted-foreground);
+}
+.jf-studio-hero p {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0;
+}
+.jf-studio-hero-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 17px;
+  padding-bottom: 4px;
+}
+.jf-studio-connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.jf-studio-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  height: 6px;
+  width: 6px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.jf-studio-dot--live {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 10%, transparent);
+}
+.jf-studio-dot--working {
+  background: var(--primary);
+  animation: jf-studio-breathe 2.5s ease-in-out infinite;
+}
+.jf-studio-primary {
+  display: inline-flex;
+  justify-content: center;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid color-mix(in oklch, var(--primary) 80%, var(--foreground));
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  padding: 10px 15px;
+  font-size: 12px !important;
+  font-weight: 550 !important;
+  box-shadow: 0 3px 14px color-mix(in oklch, var(--primary) 10%, transparent);
+}
+.jf-studio-primary:hover {
+  background: color-mix(in oklch, var(--primary) 90%, var(--foreground));
+}
+.jf-studio-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 40px;
+}
+.jf-studio-metric {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px 12px;
+  text-align: left;
+  padding: 22px 24px;
+  border: 1px solid var(--studio-line);
+  border-radius: 12px;
+  background: var(--studio-raised);
+}
+.jf-studio-metric:hover {
+  background: color-mix(in oklch, var(--foreground) 5%, var(--background));
+  border-color: color-mix(in oklch, var(--foreground) 20%, transparent);
+}
+.jf-studio-metric.is-selected {
+  border-color: color-mix(in oklch, var(--primary) 60%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 12%, transparent);
+}
+.jf-studio-metric-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.jf-studio-metric-label > span {
+  font-size: 17px;
+  color: var(--muted-foreground);
+}
+.jf-studio-metric--attention .jf-studio-metric-label > span {
+  color: var(--warning-text);
+}
+.jf-studio-metric--running .jf-studio-metric-label > span {
+  color: var(--primary);
+}
+.jf-studio-metric--review .jf-studio-metric-label > span {
+  color: var(--success);
+}
+.jf-studio-metric strong {
+  grid-column: 1;
+  font-size: 36px;
+  line-height: 1;
+  letter-spacing: -0.06em;
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
+}
+.jf-studio-metric-detail {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+  padding-bottom: 3px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  text-align: right;
+}
+.jf-studio-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.jf-studio-section-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 550;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+.jf-studio-section-heading h2 > span {
+  color: var(--muted-foreground);
+  background: var(--studio-raised);
+  border: 1px solid var(--studio-line);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 400;
+}
+.jf-studio-section-heading p {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.jf-studio-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.jf-studio-controls select {
+  max-width: 180px;
+  border: 1px solid var(--studio-line);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 11px;
+}
+.jf-studio-button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--studio-line, var(--border));
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 11px !important;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.jf-studio-button:hover {
+  color: var(--foreground);
+  background: var(--state-hover);
+}
+.jf-studio-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--studio-line);
+}
+.jf-studio-filters {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.jf-studio-filters button {
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.jf-studio-filters button:hover {
+  background: var(--state-hover);
+  color: var(--foreground);
+}
+.jf-studio-filters button.is-selected {
+  background: var(--studio-raised);
+  color: var(--foreground);
+  border-color: var(--studio-line);
+}
+.jf-studio-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 210px;
+  min-width: 140px;
+  padding: 6px 9px;
+  border: 1px solid var(--studio-line);
+  border-radius: 6px;
+  color: var(--muted-foreground);
+}
+.jf-studio-search:focus-within {
+  border-color: var(--primary);
+}
+.jf-studio-search > span {
+  font-size: 16px;
+  line-height: 1;
+}
+.jf-studio-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--foreground);
+  outline: none;
+}
+.jf-studio-search input:focus-visible {
+  outline: none;
+}
+.jf-studio-search input::placeholder {
+  color: var(--muted-foreground);
+}
+.jf-studio-search kbd {
+  border: 1px solid var(--studio-line);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+.jf-studio-thread {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--studio-line);
+  padding: 20px 10px;
+  background: transparent;
+  color: var(--foreground);
+}
+.jf-studio-thread:hover {
+  background: var(--studio-raised);
+}
+.jf-studio-thread:focus-visible {
+  outline-offset: -2px !important;
+}
+.jf-studio-thread-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  font-size: 20px;
+  color: var(--muted-foreground);
+  background: var(--studio-raised);
+  border: 1px solid var(--studio-line);
+  border-radius: 9px;
+}
+.jf-studio-thread--running .jf-studio-thread-mark {
+  color: var(--primary);
+}
+.jf-studio-thread--attention .jf-studio-thread-mark {
+  color: var(--warning-text);
+}
+.jf-studio-thread-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.jf-studio-thread-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 450;
+  letter-spacing: -0.015em;
+}
+.jf-studio-thread-title.is-unread {
+  font-weight: 650;
+}
+.jf-studio-thread-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-studio-project {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border: 1px solid var(--studio-line);
+  border-radius: 5px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.jf-studio-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  min-width: 90px;
+}
+.jf-studio-status > span {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.jf-studio-status--attention {
+  color: var(--warning-text);
+}
+.jf-studio-status--running {
+  color: var(--primary);
+}
+.jf-studio-status--review {
+  color: var(--success);
+}
+.jf-studio-age {
+  width: 42px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.jf-studio-thread-arrow {
+  color: var(--muted-foreground);
+  opacity: 0;
+}
+.jf-studio-thread:is(:hover, :focus-visible) .jf-studio-thread-arrow {
+  opacity: 1;
+}
+.jf-studio--compact .jf-studio-thread {
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+.jf-studio--compact .jf-studio-thread-mark {
+  width: 27px;
+  height: 27px;
+  font-size: 16px;
+}
+.jf-studio-empty {
+  padding: 52px 24px;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.jf-studio-empty h2,
+.jf-studio-empty h3 {
+  color: var(--foreground);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  margin: 12px 0 8px;
+}
+.jf-studio-empty p {
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0 0 16px;
+}
+.jf-studio-empty-symbol {
+  display: block;
+  color: var(--primary);
+  font-size: 30px;
+}
+.jf-studio-more {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.jf-studio-more:hover {
+  background: var(--studio-raised);
+  color: var(--foreground);
+}
+.jf-studio-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 25px 0 0;
+  color: var(--muted-foreground);
+  font-size: 9px;
+}
+.jf-studio-footer > span:first-child {
+  letter-spacing: 0.12em;
+}
+.jf-studio-footer > span:first-child > span {
+  padding: 0 7px;
+  color: var(--primary);
+}
+.jf-studio-workspace {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.jf-studio-workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--studio-line);
+}
+.jf-studio-workspace-title {
+  flex: 1;
+  min-width: 0;
+}
+.jf-studio-workspace-title .jf-studio-eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.09em;
+}
+.jf-studio-workspace-title h1 {
+  font-size: 13px;
+  font-weight: 550;
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-studio-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jf-studio-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 22px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  border-bottom: 1px solid var(--studio-line);
+}
+.jf-studio-machine {
+  margin-left: auto;
+  font-size: 9px;
+}
+.jf-studio-chat {
+  min-height: 0;
+  flex: 1;
+}
+.jf-studio-review h2,
+.jf-studio-review-empty h2 {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.04em;
+  margin: 14px 0 18px;
+  overflow-wrap: anywhere;
+}
+.jf-studio-review-branch {
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  margin: -8px 0 22px;
+  overflow-wrap: anywhere;
+}
+.jf-studio-review-note {
+  margin: 18px 0 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-studio-review-empty {
+  padding: 24px 12px;
+}
+.jf-studio-review-empty p {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.8;
+}
+@keyframes jf-studio-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@container (max-width: 800px) {
+  .jf-studio-overview {
+    padding: 34px 24px 22px;
+  }
+  .jf-studio-metric {
+    padding: 18px;
+    gap: 13px;
+  }
+  .jf-studio-metric-detail {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+  .jf-studio-project {
+    display: none;
+  }
+  .jf-studio-workspace-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+  }
+  .jf-studio-workspace-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+@container (max-width: 540px) {
+  .jf-studio-overview {
+    padding: 26px 16px 18px;
+  }
+  .jf-studio-hero {
+    align-items: flex-start;
+    margin-bottom: 26px;
+  }
+  .jf-studio-hero h1 {
+    font-size: 34px;
+  }
+  .jf-studio-hero-actions {
+    gap: 12px;
+  }
+  .jf-studio-hero p {
+    font-size: 11px;
+  }
+  .jf-studio-desktop-break,
+  .jf-studio-connection {
+    display: none;
+  }
+  .jf-studio-primary {
+    padding: 8px 10px;
+    font-size: 10px !important;
+  }
+  .jf-studio-metrics {
+    gap: 7px;
+    margin-bottom: 28px;
+  }
+  .jf-studio-metric {
+    padding: 12px 10px;
+    gap: 12px;
+    border-radius: 8px;
+  }
+  .jf-studio-metric-label {
+    gap: 5px;
+    font-size: 10px;
+  }
+  .jf-studio-metric-label > span,
+  .jf-studio-metric-detail {
+    display: none;
+  }
+  .jf-studio-metric strong {
+    font-size: 28px;
+  }
+  .jf-studio-section-heading {
+    align-items: flex-start;
+  }
+  .jf-studio-section-heading p,
+  .jf-studio-density {
+    display: none;
+  }
+  .jf-studio-controls select {
+    max-width: 140px;
+  }
+  .jf-studio-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .jf-studio-search {
+    width: 100%;
+  }
+  .jf-studio-filters {
+    justify-content: space-between;
+  }
+  .jf-studio-thread {
+    padding: 16px 0;
+    gap: 9px;
+    flex-wrap: wrap;
+  }
+  .jf-studio-thread-copy {
+    flex-basis: calc(100% - 45px);
+  }
+  .jf-studio-thread > .jf-studio-status {
+    margin-left: 41px;
+  }
+  .jf-studio-age {
+    margin-left: auto;
+  }
+  .jf-studio-thread-arrow {
+    display: none;
+  }
+  .jf-studio-footer {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-studio *,
+  .jf-studio *::before,
+  .jf-studio *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
