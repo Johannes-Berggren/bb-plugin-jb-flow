@@ -271,8 +271,23 @@ export default async function plugin(bb: BbPluginApi) {
     polishShell: {
       type: "boolean",
       label: "Polish the entire BB interface",
-      description: "Refine the sidebar, composer, conversation, panel tabs and menus across BB. Works with any palette; turn off to restore BB's standard styling.",
-      default: true,
+      description: "Refine the sidebar, composer, conversation, panel tabs and menus across BB. Off restores BB's standard styling.",
+      default: false,
+    },
+    threadMonitor: {
+      type: "boolean",
+      label: "Thread monitor",
+      description:
+        "Keep the activity card visible when a thread is idle, with the agent's last status report (Just did, Next step, Goal), progress bars and an Update status button.",
+      default: false,
+    },
+    statusPrompt: {
+      type: "string",
+      label: "Status report prompt",
+      description:
+        "What Update status sends to the agent. Leave empty for a short built-in prompt. The monitor reads **Goal:**, **Done:**, **Next:**, **Blocked:** and a ### Progress block.",
+      experimental_multiline: true,
+      default: "",
     },
     staleDays: {
       type: "number",

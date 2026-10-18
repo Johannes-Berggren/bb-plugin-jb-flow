@@ -162,6 +162,7 @@ it("uses event-driven snapshots and unsubscribes/aborts on unmount", async () =>
     { component: LiveActivityBanner },
     { runningSince: { t1: { since: 1000 } } },
     {
+      settings: { threadMonitor: true },
       composer: { scope: { kind: "thread", threadId: "t1" }, isRunning: true },
       sdk: { subscribe, threads: { timeline } },
     },
@@ -193,6 +194,7 @@ it("falls back to native callouts on snapshot failure and never fetches when dis
     { component: LiveActivityBanner },
     { runningSince: {} },
     {
+      settings: { threadMonitor: true },
       composer: { scope: { kind: "thread", threadId: "t1" }, isRunning: true },
       sdk: { subscribe: () => () => {}, threads: { timeline } },
     },
@@ -209,7 +211,7 @@ it("falls back to native callouts on snapshot failure and never fetches when dis
     { component: LiveActivityBanner },
     { runningSince: {} },
     {
-      settings: { polishShell: false },
+      settings: { threadMonitor: false },
       composer: { scope: { kind: "thread", threadId: "t1" }, isRunning: true },
       sdk: { threads: { timeline } },
     },
@@ -488,6 +490,7 @@ it("requests the actual Status prompt only on click and leaves the composer draf
     { component: LiveActivityBanner },
     { runningSince: {} },
     {
+      settings: { threadMonitor: true },
       composer: {
         scope: { kind: "thread", threadId: "t1" },
         isRunning: false,
@@ -524,6 +527,7 @@ it("does not leak a saved report into another thread while its snapshot is loadi
     { component: LiveActivityBanner },
     { runningSince: {} },
     {
+      settings: { threadMonitor: true },
       composer: { scope: { kind: "thread", threadId: "t1" }, isRunning: false },
       sdk: {
         subscribe: () => () => {},
