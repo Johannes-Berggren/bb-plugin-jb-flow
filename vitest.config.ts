@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
   test: {
     environment: "jsdom",
-    include: ["studio.ui.test.tsx", "shell-appearance.ui.test.tsx", "live-activity.ui.test.tsx", "lifeboat/*.test.ts", "lifeboat/*.test.tsx"],
+    include: ["studio.ui.test.tsx", "shell-appearance.ui.test.tsx", "live-activity.ui.test.tsx",
+      "timeline-activity.ui.test.tsx", "thread-status.test.ts", "decision-choices.ui.test.tsx", "lifeboat/*.test.ts", "lifeboat/*.test.tsx"],
   },
 });

@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import {
   useComposer,
+  useRpc,
   useSdk,
   useSettings,
   useRealtimeConnectionState,
@@ -10,6 +11,10 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { Icon } from "@/components/ui/icon";
 import "./live-activity.css";
+import { useMonitorCollapse } from "./monitor-collapse";
+import type { rpcContract } from "./server";
+import type { ThreadStatus } from "./thread-status";
+import { statusPrompt } from "./status-prompt";
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -185,6 +190,85 @@ function useActivity(threadId: string, enabled: boolean) {
   };
 }
 
+function useThreadStatus(threadId: string, enabled: boolean, running: boolean) {
+  const sdk = useSdk();
+  const rpc = useRpc<typeof rpcContract>();
+  const [result, setResult] = useState<{
+    threadId: string;
+    snapshot: ThreadStatus | null;
+    stale: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inflight = false;
+    let again = false;
+    const refresh = async () => {
+      if (disposed) return;
+      if (inflight) {
+        again = true;
+        return;
+      }
+      inflight = true;
+      try {
+        const snapshot = await rpc.call("thread_status", {
+          threadId,
+          refresh: !running,
+        });
+        if (!disposed)
+          setResult({
+            threadId,
+            snapshot: snapshot?.threadId === threadId ? snapshot : null,
+            stale: false,
+          });
+      } catch {
+        if (!disposed)
+          setResult((previous) => ({
+            threadId,
+            snapshot:
+              previous?.threadId === threadId ? previous.snapshot : null,
+            stale: true,
+          }));
+      } finally {
+        inflight = false;
+        if (again && !disposed) {
+          again = false;
+          schedule();
+        }
+      }
+    };
+    const schedule = () => {
+      if (disposed || timer) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void refresh();
+      }, 750);
+    };
+    const unsubscribe = sdk.subscribe({
+      event: "thread:changed",
+      threadId,
+      callback: () => {
+        if (!running) schedule();
+      },
+    });
+    const reconnect = sdk.subscribe({
+      event: "realtime:connection",
+      callback: (event) => {
+        if (event.state === "connected") schedule();
+      },
+    });
+    void refresh();
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+      reconnect();
+    };
+  }, [sdk, rpc, threadId, enabled, running]);
+  return result?.threadId === threadId ? result : null;
+}
+
 function taskKind(task: ActivityTask): string {
   if (
     task.taskType === "local_agent" ||
@@ -319,7 +403,17 @@ export function ActivityCard({
   prs = [],
   branchPrUrl,
   onClearGoal,
+  idleLabel,
+  monitor,
+  monitorStale = false,
+  hasLiveData = true,
+  onRequestStatus,
 }: {
+  idleLabel?: string;
+  monitor?: ThreadStatus | null;
+  monitorStale?: boolean;
+  hasLiveData?: boolean;
+  onRequestStatus?: () => Promise<void>;
   data: ActivityData;
   running: boolean;
   startedAt: number | null;
@@ -331,9 +425,13 @@ export function ActivityCard({
   branchPrUrl?: string;
   onClearGoal?: () => Promise<void>;
 }) {
+  const { collapsed, toggle: toggleCollapsed } = useMonitorCollapse();
+  const bodyId = useId();
   const [expanded, setExpanded] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const detailsId = useId();
   const tasks = activityTasks(data);
   const count = tasks.length;
@@ -363,7 +461,8 @@ export function ActivityCard({
       : phase === "waiting"
         ? "Waiting for your input"
         : action.title
-    : (primary?.description ??
+    : (idleLabel ??
+      primary?.description ??
       (goal?.status === "complete"
         ? "Goal complete"
         : goal?.status === "paused"
@@ -372,23 +471,17 @@ export function ActivityCard({
             ? "Goal budget reached"
             : goal
               ? "Ready to continue"
-              : "Work summary"));
-  if (
-    !running &&
-    count === 0 &&
-    !goal &&
-    prs.length === 0 &&
-    todos.length === 0
-  )
-    return null;
+              : "Agent idle"));
   return (
     <section
       className="jf-live-card"
       aria-label="Agent activity"
-      data-jb-flow-live-activity=""
-      data-jb-flow-goal={!!goal && !!onClearGoal}
+      data-jb-flow-live-activity={hasLiveData ? "" : undefined}
+      data-jb-flow-goal={hasLiveData && !!goal && !!onClearGoal}
       data-jb-flow-branch-pr={!!branchPrUrl}
-      data-jb-flow-plan={todos.length > 0}
+      data-jb-flow-plan={hasLiveData && todos.length > 0}
+      data-collapsed={collapsed}
+      data-expanded={expanded}
       data-connected={connected}
       data-active={phase === "working" && active}
     >
@@ -397,7 +490,7 @@ export function ActivityCard({
           <Icon name="Zap" className="size-4" />
         </span>
         <div className="jf-live-heading-copy">
-          <span className="jf-live-eyebrow">ACTIVITY</span>
+          <span className="jf-live-eyebrow">THREAD MONITOR</span>
           <strong className="jf-live-now" title={title}>
             {title}
           </strong>
@@ -406,224 +499,369 @@ export function ActivityCard({
           <span aria-hidden="true" />
           {connected ? (active ? "Live" : "Idle") : "Reconnecting"}
         </span>
-        {startedAt !== null && (
+        {active && startedAt !== null && (
           <time className="jf-live-elapsed" aria-label="Elapsed time">
             {elapsed(now - startedAt)}
           </time>
         )}
+        {!collapsed && (
+          <button
+            type="button"
+            className="jf-live-toggle"
+            aria-expanded={expanded}
+            aria-controls={detailsId}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "Less" : "Details"}
+            <Icon
+              name={expanded ? "ChevronUp" : "ChevronDown"}
+              className="size-3.5"
+            />
+          </button>
+        )}
         <button
           type="button"
-          className="jf-live-toggle"
-          aria-expanded={expanded}
-          aria-controls={detailsId}
-          onClick={() => setExpanded(!expanded)}
+          className="jf-live-toggle jf-monitor-collapse"
+          aria-label={collapsed ? "Expand monitor" : "Collapse monitor"}
+          title={collapsed ? "Expand monitor" : "Collapse monitor"}
+          aria-expanded={!collapsed}
+          aria-controls={bodyId}
+          onClick={toggleCollapsed}
         >
-          {expanded ? "Less" : "Details"}
           <Icon
-            name={expanded ? "ChevronUp" : "ChevronDown"}
-            className="size-3.5"
+            name={collapsed ? "ChevronDown" : "ChevronUp"}
+            className="size-4"
           />
         </button>
       </div>
-      {goal && (
-        <div className="jf-live-goal">
-          <Icon name="Target" className="size-3.5" />
-          <p title={goal.objective}>{goal.objective}</p>
-        </div>
-      )}
-      {running && action.detail && (
-        <div className="jf-live-action" title={action.detail}>
-          {action.detail}
-        </div>
-      )}
-      {!running && primary?.summary && (
-        <p className="jf-live-summary">{primary.summary}</p>
-      )}
-      <div className="jf-live-meters">
-        {active &&
-          phase === "working" &&
-          todos.length === 0 &&
-          steps.length === 0 &&
-          !(goal?.tokenBudget && goal.tokenBudget > 0) &&
-          !(context && context.modelContextWindow > 0) && (
-            <div className="jf-live-meter">
-              <div>
-                <span>Live activity</span>
-                <strong>In progress</strong>
-              </div>
-              <div
-                className="jf-live-indeterminate"
-                role="progressbar"
-                aria-label="Live activity in progress"
-              >
-                <span />
-              </div>
-            </div>
-          )}
-        {todos.length > 0 && (
-          <Meter
-            label="Plan complete"
-            value={completed}
-            max={todos.length}
-            text={`${completed}/${todos.length}`}
-          />
-        )}
-        {steps.length > 0 && (
-          <Meter
-            label="Workflow steps finished"
-            kind="workflow"
-            value={finishedSteps}
-            max={steps.length}
-            text={`${finishedSteps}/${steps.length}`}
-          />
-        )}
-        {goal?.tokenBudget != null && (
-          <Meter
-            label="Goal token budget used"
-            kind="budget"
-            value={goal.tokensUsed}
-            max={goal.tokenBudget}
-            text={`${Math.round((goal.tokensUsed / goal.tokenBudget) * 100)}%`}
-          />
-        )}
-        {context && (
-          <Meter
-            kind="context"
-            label={
-              context.estimated ? "Context used · estimated" : "Context used"
-            }
-            value={context.usedTokens}
-            max={context.modelContextWindow}
-            text={`${Math.round((context.usedTokens / context.modelContextWindow) * 100)}%`}
-          />
-        )}
-      </div>
-      <div className="jf-live-footer">
-        <div className="jf-live-badges">
-          {agents > 0 && (
-            <span>
-              {agents} background agent{agents === 1 ? "" : "s"}
-            </span>
-          )}
-          {commands > 0 && (
-            <span>
-              {commands} command{commands === 1 ? "" : "s"}
-            </span>
-          )}
-          {workflows > 0 && (
-            <span>
-              {workflows} workflow{workflows === 1 ? "" : "s"}
-            </span>
-          )}
-          {!running && primary?.model && <span>{primary.model}</span>}
-          {goal && (
-            <span className="jf-live-goal-usage">
-              {goal.tokensUsed.toLocaleString()} tokens ·{" "}
-              {elapsed(goal.timeUsedSeconds * 1000)} goal runtime
-            </span>
-          )}
-          {prs.slice(0, expanded ? prs.length : 2).map((pr) => (
-            <PrLink key={pr.url} pr={pr} />
-          ))}
-          {!expanded && prs.length > 2 && (
-            <button
-              type="button"
-              className="jf-live-pr-more"
-              onClick={() => setExpanded(true)}
-            >
-              +{prs.length - 2} PRs
-            </button>
-          )}
-        </div>
-        {(!connected || now - updatedAt > 10000) && (
-          <span className="jf-live-freshness">
-            {connected
-              ? `Updated ${elapsed(now - updatedAt)} ago`
-              : "Showing last received activity"}
-          </span>
-        )}
-      </div>
-      <div id={detailsId} hidden={!expanded} className="jf-live-details">
-        {running && action.detail && (
-          <div className="jf-live-current-details">
-            <span className="jf-live-eyebrow">CURRENT ACTION</span>
-            <pre>{action.detail}</pre>
+      <div id={bodyId} hidden={collapsed} className="jf-monitor-body">
+        {goal && !((!active || expanded) && monitor?.report) && (
+          <div className="jf-live-goal">
+            <Icon name="Target" className="size-3.5" />
+            <p title={goal.objective}>{goal.objective}</p>
           </div>
         )}
-        {goal && (
-          <div className="jf-live-goal-details">
-            <div>
-              <span className="jf-live-eyebrow">
-                GOAL ·{" "}
-                {goal.status === "budgetLimited"
-                  ? "budget limited"
-                  : goal.status}
-              </span>
-              {onClearGoal && (
-                <button
-                  type="button"
-                  className="jf-live-toggle"
-                  disabled={clearing}
-                  onClick={async () => {
-                    setClearing(true);
-                    setGoalError(null);
-                    try {
-                      await onClearGoal();
-                    } catch (error) {
-                      setGoalError(
-                        error instanceof Error ? error.message : String(error),
-                      );
-                    } finally {
-                      setClearing(false);
-                    }
-                  }}
-                >
-                  {clearing ? "Clearing…" : "Clear goal"}
-                </button>
-              )}
-            </div>
-            <p>{goal.objective}</p>
-            {goalError && (
-              <p className="jf-live-task-error" role="alert">
-                {goalError}
+        {(!active || expanded) && (
+          <div className="jf-monitor-report">
+            {monitor?.report ? (
+              <>
+                <div className="jf-monitor-caption">
+                  Last status report{" "}
+                  <time
+                    title={new Date(monitor.report.capturedAt).toLocaleString()}
+                  >
+                    {elapsed(now - monitor.report.capturedAt)} ago
+                  </time>
+                </div>
+                <dl className="jf-monitor-steps">
+                  {(
+                    [
+                      ["Just did", monitor.report.done, "Check"],
+                      ["Next step", monitor.report.next, "ArrowRight"],
+                      [
+                        "Goal",
+                        goal?.objective || monitor.report.goal,
+                        "Target",
+                      ],
+                      ["Blocked", monitor.report.blocked, "AlertCircle"],
+                    ] as const
+                  )
+                    .filter(([, text]) => text)
+                    .map(([label, text, icon]) => (
+                      <div
+                        key={label}
+                        className="jf-monitor-step"
+                        data-field={label}
+                      >
+                        <dt>
+                          <span
+                            className="jf-monitor-step-icon"
+                            aria-hidden="true"
+                          >
+                            <Icon name={icon} className="size-3" />
+                          </span>
+                          <span>{label}</span>
+                        </dt>
+                        <dd>{text}</dd>
+                      </div>
+                    ))}
+                </dl>
+                {monitor.report.milestones.length > 0 && (
+                  <div className="jf-monitor-milestones">
+                    {monitor.report.milestones
+                      .slice(0, expanded ? 12 : 3)
+                      .map((milestone, index) => (
+                        <Meter
+                          key={`${index}:${milestone.label}`}
+                          label={milestone.label}
+                          value={milestone.percent}
+                          max={100}
+                          text={`${Math.round(milestone.percent)}%`}
+                        />
+                      ))}
+                    {!expanded && monitor.report.milestones.length > 3 && (
+                      <span className="jf-monitor-caption">
+                        +{monitor.report.milestones.length - 3} milestones in
+                        Details
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : monitor?.latest ? (
+              <>
+                <div className="jf-monitor-caption">
+                  Latest reply{" "}
+                  <time title={new Date(monitor.latestAt).toLocaleString()}>
+                    {elapsed(now - monitor.latestAt)} ago
+                  </time>
+                </div>
+                <p className="jf-monitor-latest">{monitor.latest}</p>
+              </>
+            ) : (
+              <p className="jf-monitor-empty">
+                Ready when you are. Request a status report for Goal, Done,
+                Next, Blocked and milestone progress.
+              </p>
+            )}
+            {monitorStale && (
+              <p className="jf-monitor-caption" role="status">
+                {monitor
+                  ? "Status refresh unavailable · showing saved information"
+                  : "Status unavailable · try again when connected"}
               </p>
             )}
           </div>
         )}
-        {count > 0 ? (
-          tasks.map((task) => <Task key={task.id} task={task} now={now} />)
-        ) : (
-          <p className="jf-live-empty">
-            {running
-              ? "The primary agent is active. Background tasks will appear here when started."
-              : "No background tasks running."}
-          </p>
+        {!hasLiveData && (
+          <p className="jf-monitor-caption">Live activity unavailable</p>
         )}
-        {todos.length > 0 && (
-          <div className="jf-live-plan">
-            <span className="jf-live-eyebrow">CURRENT PLAN</span>
-            <ol>
-              {todos.map((todo) => (
-                <li key={todo.id} data-state={todo.status}>
-                  <Icon
-                    name={
-                      todo.status === "completed"
-                        ? "Check"
-                        : todo.status === "in_progress"
-                          ? "Loader"
-                          : "Circle"
-                    }
-                    className="size-3.5"
-                  />
-                  {todo.text}
-                </li>
-              ))}
-            </ol>
+        {running && action.detail && (
+          <div className="jf-live-action" title={action.detail}>
+            {action.detail}
           </div>
         )}
-      </div>
-      <div className="jf-live-signal" aria-hidden="true">
-        <span />
+        {!running && primary?.summary && (
+          <p className="jf-live-summary">{primary.summary}</p>
+        )}
+        <div className="jf-live-meters">
+          {active &&
+            phase === "working" &&
+            todos.length === 0 &&
+            steps.length === 0 &&
+            !(goal?.tokenBudget && goal.tokenBudget > 0) &&
+            !(context && context.modelContextWindow > 0) && (
+              <div className="jf-live-meter">
+                <div>
+                  <span>Live activity</span>
+                  <strong>In progress</strong>
+                </div>
+                <div
+                  className="jf-live-indeterminate"
+                  role="progressbar"
+                  aria-label="Live activity in progress"
+                >
+                  <span />
+                </div>
+              </div>
+            )}
+          {todos.length > 0 && (
+            <Meter
+              label="Plan complete"
+              value={completed}
+              max={todos.length}
+              text={`${completed}/${todos.length}`}
+            />
+          )}
+          {steps.length > 0 && (
+            <Meter
+              label="Workflow steps finished"
+              kind="workflow"
+              value={finishedSteps}
+              max={steps.length}
+              text={`${finishedSteps}/${steps.length}`}
+            />
+          )}
+          {goal?.tokenBudget != null && (
+            <Meter
+              label="Goal token budget used"
+              kind="budget"
+              value={goal.tokensUsed}
+              max={goal.tokenBudget}
+              text={`${Math.round((goal.tokensUsed / goal.tokenBudget) * 100)}%`}
+            />
+          )}
+          {context && (
+            <Meter
+              kind="context"
+              label={
+                context.estimated ? "Context used · estimated" : "Context used"
+              }
+              value={context.usedTokens}
+              max={context.modelContextWindow}
+              text={`${Math.round((context.usedTokens / context.modelContextWindow) * 100)}%`}
+            />
+          )}
+        </div>
+        {!active && onRequestStatus && (
+          <div className="jf-monitor-controls">
+            <button
+              type="button"
+              disabled={requesting}
+              onClick={async () => {
+                setRequesting(true);
+                setStatusError(null);
+                try {
+                  await onRequestStatus();
+                } catch {
+                  setStatusError("Could not request status. Try again.");
+                } finally {
+                  setRequesting(false);
+                }
+              }}
+            >
+              {requesting ? "Requesting…" : "Update status"}
+            </button>
+            <span>Sends the status report prompt (Settings → JB Flow)</span>
+            {statusError && <p role="alert">{statusError}</p>}
+          </div>
+        )}
+        <div className="jf-live-footer">
+          <div className="jf-live-badges">
+            {agents > 0 && (
+              <span>
+                {agents} background agent{agents === 1 ? "" : "s"}
+              </span>
+            )}
+            {commands > 0 && (
+              <span>
+                {commands} command{commands === 1 ? "" : "s"}
+              </span>
+            )}
+            {workflows > 0 && (
+              <span>
+                {workflows} workflow{workflows === 1 ? "" : "s"}
+              </span>
+            )}
+            {!running && primary?.model && <span>{primary.model}</span>}
+            {goal && (
+              <span className="jf-live-goal-usage">
+                {goal.tokensUsed.toLocaleString()} tokens ·{" "}
+                {elapsed(goal.timeUsedSeconds * 1000)} goal runtime
+              </span>
+            )}
+            {prs.slice(0, expanded ? prs.length : 2).map((pr) => (
+              <PrLink key={pr.url} pr={pr} />
+            ))}
+            {!expanded && prs.length > 2 && (
+              <button
+                type="button"
+                className="jf-live-pr-more"
+                onClick={() => setExpanded(true)}
+              >
+                +{prs.length - 2} PRs
+              </button>
+            )}
+          </div>
+          {hasLiveData && (!connected || now - updatedAt > 10000) && (
+            <span className="jf-live-freshness">
+              {connected
+                ? `Updated ${elapsed(now - updatedAt)} ago`
+                : "Showing last received activity"}
+            </span>
+          )}
+        </div>
+        <div id={detailsId} hidden={!expanded} className="jf-live-details">
+          {monitor?.report && monitor.latestAt > monitor.report.capturedAt && (
+            <div className="jf-live-summary">
+              <span className="jf-live-eyebrow">LATEST REPLY</span>
+              <p>{monitor.latest}</p>
+            </div>
+          )}
+
+          {running && action.detail && (
+            <div className="jf-live-current-details">
+              <span className="jf-live-eyebrow">CURRENT ACTION</span>
+              <pre>{action.detail}</pre>
+            </div>
+          )}
+          {goal && (
+            <div className="jf-live-goal-details">
+              <div>
+                <span className="jf-live-eyebrow">
+                  GOAL ·{" "}
+                  {goal.status === "budgetLimited"
+                    ? "budget limited"
+                    : goal.status}
+                </span>
+                {onClearGoal && (
+                  <button
+                    type="button"
+                    className="jf-live-toggle"
+                    disabled={clearing}
+                    onClick={async () => {
+                      setClearing(true);
+                      setGoalError(null);
+                      try {
+                        await onClearGoal();
+                      } catch (error) {
+                        setGoalError(
+                          error instanceof Error
+                            ? error.message
+                            : String(error),
+                        );
+                      } finally {
+                        setClearing(false);
+                      }
+                    }}
+                  >
+                    {clearing ? "Clearing…" : "Clear goal"}
+                  </button>
+                )}
+              </div>
+              <p>{goal.objective}</p>
+              {goalError && (
+                <p className="jf-live-task-error" role="alert">
+                  {goalError}
+                </p>
+              )}
+            </div>
+          )}
+          {count > 0 ? (
+            tasks.map((task) => <Task key={task.id} task={task} now={now} />)
+          ) : (
+            <p className="jf-live-empty">
+              {running
+                ? "The primary agent is active. Background tasks will appear here when started."
+                : "No background tasks running."}
+            </p>
+          )}
+          {todos.length > 0 && (
+            <div className="jf-live-plan">
+              <span className="jf-live-eyebrow">CURRENT PLAN</span>
+              <ol>
+                {todos.map((todo) => (
+                  <li key={todo.id} data-state={todo.status}>
+                    <Icon
+                      name={
+                        todo.status === "completed"
+                          ? "Check"
+                          : todo.status === "in_progress"
+                            ? "Loader"
+                            : "Circle"
+                      }
+                      className="size-3.5"
+                    />
+                    {todo.text}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+        <div className="jf-live-signal" aria-hidden="true">
+          <span />
+        </div>
       </div>
     </section>
   );
@@ -632,11 +870,14 @@ export function ActivityCard({
 export function LiveActivityBanner({
   runningSince,
   trackedPrs = {},
+  watches = {},
 }: {
   runningSince: Record<string, { since: number }>;
   trackedPrs?: Record<string, readonly ActivityPr[]>;
+  watches?: Record<string, { label: string }>;
 }) {
   const sdk = useSdk();
+  const rpc = useRpc<typeof rpcContract>();
   const composer = useComposer();
   const { values } = useSettings();
   const { threads } = useSidebarThreads();
@@ -650,8 +891,9 @@ export function LiveActivityBanner({
     thread?.status === "starting" ||
     thread?.status === "stopping";
   const enabled =
-    !!threadId && values?.polishShell !== false && !thread?.isArchived;
+    !!threadId && values?.threadMonitor === true && !thread?.isArchived;
   const { data, updatedAt } = useActivity(threadId ?? "", enabled);
+  const monitor = useThreadStatus(threadId ?? "", enabled, running);
   const connection = useRealtimeConnectionState();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -659,8 +901,15 @@ export function LiveActivityBanner({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [enabled]);
-  if (!enabled || !threadId || !data) return null;
-  const tasks = activityTasks(data);
+  if (!enabled || !threadId) return null;
+  const activity = data ?? {
+    activeBackgroundCommands: [],
+    activeWorkflows: [],
+    rows: [],
+    pendingTodos: null,
+    goal: null,
+  };
+  const tasks = activityTasks(activity);
   const taskStart =
     tasks.length > 0 ? Math.min(...tasks.map((task) => task.startedAt)) : null;
   const prs = [...(trackedPrs[threadId] ?? [])];
@@ -672,7 +921,22 @@ export function LiveActivityBanner({
   return (
     <ActivityCard
       key={threadId}
-      data={data}
+      data={activity}
+      hasLiveData={!!data}
+      idleLabel={
+        thread?.status === "error"
+          ? "Agent needs attention"
+          : thread?.hasPendingInteraction
+            ? "Waiting for your input"
+            : watches[threadId]
+              ? `Waiting · ${watches[threadId].label}`
+              : undefined
+      }
+      monitor={monitor?.snapshot}
+      monitorStale={monitor?.stale}
+      onRequestStatus={async () => {
+        await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
+      }}
       running={running}
       startedAt={runningSince[threadId]?.since ?? taskStart}
       now={now}

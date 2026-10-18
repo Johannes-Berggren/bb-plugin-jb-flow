@@ -1,3 +1,4 @@
+import { mountTimelineActivity } from "./timeline-activity";
 // jb-flow frontend: the Triage thread list, a snooze control in the thread
 // header, the stale-thread digest on the homepage, and the area-tag migration
 // in settings. All plugin state comes from server.ts over RPC and refreshes on
@@ -2509,6 +2510,7 @@ export default definePluginApp((app) => {
     component: LifeboatPanel,
   });
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
+  app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
   app.slots.navPanel({
     id: "studio",
@@ -2643,7 +2645,7 @@ export default definePluginApp((app) => {
     id: "live-activity",
     banners: [{ id: "live-activity", chrome: "bare", component: () => {
       const { state } = useFlowState();
-      return <LiveActivityBanner runningSince={state?.running ?? {}} trackedPrs={state?.threadPrs ?? {}} />;
+      return <LiveActivityBanner runningSince={state?.running ?? {}} trackedPrs={state?.threadPrs ?? {}} watches={state?.watching ?? {}} />;
     } }],
   });
   app.composer.customize({

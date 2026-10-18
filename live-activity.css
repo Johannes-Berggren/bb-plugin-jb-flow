@@ -749,3 +749,203 @@
     transition: none;
   }
 }
+
+.jf-monitor-report {
+  margin-top: 14px;
+}
+.jf-monitor-caption {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-monitor-caption time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.jf-monitor-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.jf-monitor-step {
+  position: relative;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+.jf-monitor-step::after {
+  content: "";
+  position: absolute;
+  width: 1px;
+  left: 21px;
+  top: 32px;
+  bottom: -15px;
+  background: var(--border);
+  pointer-events: none;
+}
+.jf-monitor-step:last-child::after {
+  display: none;
+}
+.jf-monitor-step dt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted-foreground);
+}
+.jf-monitor-step-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 23px;
+  height: 23px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card);
+}
+.jf-monitor-step dd {
+  margin: 3px 0 0 32px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.jf-monitor-step[data-field="Just did"] .jf-monitor-step-icon {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 25%, var(--border));
+}
+.jf-monitor-step[data-field="Just did"] dd {
+  color: var(--muted-foreground);
+}
+.jf-monitor-step[data-field="Next step"] {
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  background: color-mix(in srgb, var(--primary) 5%, var(--card));
+}
+.jf-monitor-step[data-field="Next step"] dt {
+  color: var(--primary);
+}
+.jf-monitor-step[data-field="Next step"] .jf-monitor-step-icon {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+.jf-monitor-step[data-field="Next step"] dd {
+  font-size: 13px;
+  font-weight: 550;
+}
+.jf-monitor-step[data-field="Goal"] dd {
+  color: var(--muted-foreground);
+}
+.jf-monitor-step[data-field="Blocked"] {
+  background: color-mix(in srgb, var(--warning-text) 7%, transparent);
+}
+.jf-monitor-step[data-field="Blocked"] dt {
+  color: var(--warning-text);
+}
+.jf-monitor-milestones {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.jf-monitor-latest,
+.jf-monitor-empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+.jf-monitor-latest {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.jf-live-details .jf-live-summary p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.jf-monitor-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 13px;
+}
+.jf-monitor-controls button {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.jf-monitor-controls button:hover {
+  background: var(--accent);
+}
+.jf-monitor-controls button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.jf-monitor-controls button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.jf-monitor-controls > span {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-monitor-controls [role="alert"] {
+  width: 100%;
+  margin: 0;
+  color: var(--destructive-text);
+  font-size: 11px;
+}
+.jf-live-card[data-expanded="false"] .jf-monitor-report dd {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Full collapse is independent of Details and leaves only a live status strip. */
+.jf-monitor-body[hidden] {
+  display: none;
+}
+.jf-monitor-collapse {
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+}
+.jf-live-card[data-collapsed="true"] {
+  padding: 5px 10px;
+  border-radius: 12px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-heading {
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-height: 36px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-heading-copy > .jf-live-eyebrow {
+  display: none;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-now {
+  font-size: 12px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-orbit {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-orbit::after {
+  inset: -2px;
+}
+@media (max-width: 640px) {
+  .jf-monitor-collapse {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
