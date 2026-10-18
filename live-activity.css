@@ -909,3 +909,43 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
+
+/* Full collapse is independent of Details and leaves only a live status strip. */
+.jf-monitor-body[hidden] {
+  display: none;
+}
+.jf-monitor-collapse {
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+}
+.jf-live-card[data-collapsed="true"] {
+  padding: 5px 10px;
+  border-radius: 12px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-heading {
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-height: 36px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-heading-copy > .jf-live-eyebrow {
+  display: none;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-now {
+  font-size: 12px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-orbit {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+.jf-live-card[data-collapsed="true"] .jf-live-orbit::after {
+  inset: -2px;
+}
+@media (max-width: 640px) {
+  .jf-monitor-collapse {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

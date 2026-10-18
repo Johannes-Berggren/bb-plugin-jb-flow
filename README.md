@@ -52,8 +52,13 @@ styling. Reduced-motion preferences disable decorative animation.
 
 ### Persistent thread monitor
 
-The activity card stays visible when the agent is idle. It saves each thread's
-latest status report as **Just did → Next step → Goal**, followed by blockers
+The activity card stays visible when the agent is idle. **Collapse monitor**
+reduces the entire card to one status row, including on mobile where it starts
+collapsed. The choice is saved per device, shared across threads and split panes;
+expanding restores the report, meters, controls and PR links. Live updates continue
+while collapsed. **Details** remains a separate control for the full trace.
+
+It saves each thread's latest status report as **Just did → Next step → Goal**, followed by blockers
 and milestone bars using the
 Stream Deck controller's Status template (`snippets/status.md`). Reports are
 captured on idle events even when the thread isn't open, and survive plugin

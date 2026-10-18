@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { MONITOR_COLLAPSE_KEY } from "./monitor-collapse";
 import type { useSdk } from "@get-bb/plugin-sdk/app";
 import {
   ActivityCard,
@@ -87,6 +88,8 @@ const snapshot: Timeline = {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  localStorage.removeItem(MONITOR_COLLAPSE_KEY);
+  vi.unstubAllGlobals();
 });
 
 it("shows real descriptions and elapsed time, with model, tool use and workflow details", () => {
@@ -570,4 +573,85 @@ it("keeps the saved report and reports a failed status request inline", async ()
       .hasAttribute("disabled"),
   ).toBe(false);
   slot.lifecycle.unmount();
+});
+
+it("starts mobile monitors as a compact row and expands the entire body on demand", () => {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  );
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+      running: false,
+      startedAt: null,
+      now: 61000,
+      updatedAt: 61000,
+      connected: true,
+      monitor: savedMonitor,
+    },
+  );
+  const region = slot.getByRole("region", { name: "Agent activity" });
+  expect(region.getAttribute("data-collapsed")).toBe("true");
+  expect(slot.queryByRole("progressbar", { name: "Review" })).toBeNull();
+  expect(slot.queryByRole("button", { name: "Details" })).toBeNull();
+  expect(slot.getByText("Idle")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Expand monitor" }));
+  expect(region.getAttribute("data-collapsed")).toBe("false");
+  expect(slot.getByRole("progressbar", { name: "Review" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Details" })).toBeTruthy();
+  expect(localStorage.getItem(MONITOR_COLLAPSE_KEY)).toBe("false");
+  slot.lifecycle.unmount();
+});
+it("remembers collapse on this device across thread navigation and synchronizes split panes", () => {
+  const props = {
+    data,
+    running: true,
+    startedAt: 1000,
+    now: 2000,
+    updatedAt: 2000,
+    connected: true,
+  };
+  const first = renderSlot({ component: ActivityCard }, props);
+  const second = renderSlot({ component: ActivityCard }, props);
+  fireEvent.click(
+    first.getAllByRole("button", { name: "Collapse monitor" })[0]!,
+  );
+  expect(document.querySelectorAll('[data-collapsed="true"]')).toHaveLength(2);
+  expect(localStorage.getItem(MONITOR_COLLAPSE_KEY)).toBe("true");
+  first.lifecycle.unmount();
+  second.lifecycle.unmount();
+  const nextThread = renderSlot({ component: ActivityCard }, props);
+  expect(
+    nextThread
+      .getByRole("button", { name: "Expand monitor" })
+      .getAttribute("aria-expanded"),
+  ).toBe("false");
+  nextThread.lifecycle.unmount();
+});
+it("still collapses and expands when browser storage is blocked", () => {
+  const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data,
+      running: true,
+      startedAt: 1000,
+      now: 2000,
+      updatedAt: 2000,
+      connected: true,
+    },
+  );
+  fireEvent.click(slot.getByRole("button", { name: "Collapse monitor" }));
+  fireEvent.click(slot.getByRole("button", { name: "Expand monitor" }));
+  expect(slot.getByRole("button", { name: "Collapse monitor" })).toBeTruthy();
+  slot.lifecycle.unmount();
+  spy.mockRestore();
 });
