@@ -10,6 +10,119 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 ## Features
 
+### App-wide appearance
+
+**Polish the entire BB interface** (Settings → JB Flow, on by default) applies
+across the standard BB interface: inset sidebar selections, refined section
+headings and rail controls, layered page surfaces, elevated composers, panel tabs,
+menus, dialogs, and the command palette. It works with any palette; Graphite adds
+coordinated sidebar, card, popover, and recessed colors in light and dark mode.
+
+Turn the setting off to restore standard shell styling while keeping Studio and
+the palette. The content script removes its root class and event listeners on
+reload or disable. Reduced motion and forced colors are respected. BB continues
+to own navigation, panel resizing, conversations, touch targets, and scrolling.
+This is a visual shell treatment; changing BB's navigation structure requires
+changes in BB itself. Shell selectors use the current host's DOM attributes and
+need visual rechecking after BB upgrades.
+
+### Live agent activity
+
+The composer combines the current action, a two-line goal summary, usage, and
+linked PR status in one compact activity panel. Visible meters distinguish plan
+and workflow step completion from goal token-budget consumption and context
+usage (marked estimated when the host reports an estimate). Active work without
+known totals uses an indeterminate activity bar. Percentages are never presented
+as goal completion. An animated live indicator and local elapsed clock keep work
+visible; quiet, waiting, stopping, and disconnected states have distinct labels.
+
+**Details** contains the full goal and its Clear goal control, current command,
+task models/usage, workflow progress, recent tool activity, and the plan. Read-only
+PR and goal/to-do summaries are consolidated only when their replacement data and
+controls are available; native Git, parent-thread and PR merge controls remain.
+PR links preserve BB's navigation preference and reject unsupported URL schemes.
+
+The card uses a bounded public timeline snapshot, refreshed by thread realtime
+events (bursts coalesce over 750ms), and resyncs after reconnecting. Its one-second
+clock updates locally. No network polling or estimated completion percentage is
+used. The native background/workflow callouts are hidden only in the same
+composer after a successful card render; they return if the request fails or
+shell styling is switched off. Git summary controls stay native, with larger
+styling. Reduced-motion preferences disable decorative animation.
+
+### Persistent thread monitor
+
+The activity card stays visible when the agent is idle. **Collapse monitor**
+reduces the entire card to one status row, including on mobile where it starts
+collapsed. The choice is saved per device, shared across threads and split panes;
+expanding restores the report, meters, controls and PR links. Live updates continue
+while collapsed. **Details** remains a separate control for the full trace.
+
+It saves each thread's latest status report as **Just did → Next step → Goal**, followed by blockers
+and milestone bars using the
+Stream Deck controller's Status template (`snippets/status.md`). Reports are
+captured on idle events even when the thread isn't open, and survive plugin
+reloads, navigation and ordinary replies. Dates distinguish the last report
+from a newer reply; deleted threads' records are removed. Existing threads
+without a saved report show their latest reply as a labeled fallback.
+
+**Update status** sends the same Status prompt to this thread, preserving your
+composer draft. It runs only when clicked; the template can continue previously
+agreed next steps just like the Stream Deck key. The monitor refreshes on thread
+events and reconnects. Running agents retain the live command/workflow view;
+idle headers reflect pending input, errors and JB Flow watches. Milestone bars
+show the values reported by the agent, separately from measured plan, workflow,
+context and token-budget meters. No overall completion percentage is inferred.
+Saved information remains visible during refresh failures; native activity
+controls return if the live timeline is unavailable.
+
+### Compact live tool trace
+
+Active native command bundles keep running work prominent in a bordered activity
+card with an indeterminate sweep. Earlier completed commands and thinking steps
+fold behind **Show trace**, with a live step count. Errors and explicitly opened
+output stay visible. Native approvals and questions remain outside these bundles.
+The enhancement preserves native nodes, controls and output; it restores the
+original view when work finishes, the shell setting is disabled, or the plugin
+unloads. Unrecognized markup stays native. Reduced motion disables the sweep.
+
+### Reply choices
+
+Numbered decisions appear as full-width action cards with number badges,
+multiline text, a Recommended label, and distinct hover/focus states. Choosing
+one sends only its number, with visible sending/sent feedback. Duplicate clicks
+are blocked; failed sends show an error and allow retry. Choices reset when the
+thread or source reply changes. Motion respects reduced-motion preferences.
+
+### Studio
+
+Open **Studio** in the navigation rail for an attention-first overview and a
+thread workspace. Filter by project, working/needs-you/ready status, or title;
+press `/` inside Studio to focus search. Switch between comfortable and compact
+rows, and load more threads as needed.
+
+Opening a row keeps the conversation inside Studio using BB's native chat,
+including streaming, drafts, permissions, and pending interactions. **Review**
+opens the host's resizable side panel with linked PRs and checks; **Open thread**
+opens the regular thread page for the full thread-specific tools. Deep links and
+browser back/forward work between the overview and thread workspaces.
+
+Status counts apply to the selected project, independently of title search.
+Needs-you includes pending input, failed threads, unread requests for a decision,
+and linked PRs with failed checks, conflicts, or requested changes. Ready-to-merge
+and PR-settled states use the PRs tracked by JB Flow; idle threads are not assumed
+complete. Hidden and archived threads are excluded. The review panel additionally
+includes BB's branch PR lookup. Workflow state resyncs after reconnecting.
+
+**Graphite**, under **Settings → Appearance**, is an optional app-wide palette:
+charcoal in dark mode, warm ivory in light mode, and a soft violet accent. Studio
+also follows other BB palettes. Its responsive layout, keyboard focus, and reduced
+motion styles are scoped to the Studio page.
+
+The Studio branch is an initial working prototype. Its SDK integration is covered
+by `npm run test:ui`; classification and filtering run with the existing unit
+tests in `npm test`.
+
 ### Triage sidebar
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 

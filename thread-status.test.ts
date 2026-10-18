@@ -1,0 +1,124 @@
+// @vitest-environment node
+import { expect, it } from "vitest";
+import {
+  createFakePluginHost,
+  makeThreadResponse,
+} from "@get-bb/plugin-sdk/testing";
+import {
+  createThreadStatus,
+  parseStatusReport,
+  recordThreadStatus,
+} from "./thread-status";
+
+const report = `**Goal:** Ship the UI.
+**Done:** Built the monitor.
+**Next:** Review it.
+**Blocked:** Waiting for review.
+### Progress
+\`\`\`
+[██████████] Build   done
+[██████░░░░] Review   60% ← here
+[░░░░░░░░░░] Ship
+\`\`\`
+### Next steps
+- Check design.
+`;
+it("reads the Stream Deck template and reported milestone values without inventing overall progress", () => {
+  expect(parseStatusReport(report, 10)).toEqual({
+    goal: "Ship the UI.",
+    done: "Built the monitor.",
+    next: "Review it.",
+    blocked: "Waiting for review.",
+    capturedAt: 10,
+    milestones: [
+      { label: "Build", percent: 100 },
+      { label: "Review", percent: 60 },
+      { label: "Ship", percent: 0 },
+    ],
+  });
+  expect(
+    parseStatusReport("Ordinary reply with **Next:** incidental text", 10),
+  ).toBeNull();
+  expect(
+    parseStatusReport(
+      "**Done:** Ready.\n**Next:** Nothing pending.\n**Blocked:** N/A",
+      10,
+    )?.blocked,
+  ).toBe("");
+  expect(
+    parseStatusReport(report.replace("60%", "125%"), 10)?.milestones,
+  ).toHaveLength(2);
+});
+it("keeps the last report through ordinary replies, maintains its age, and clears resolved blockers on a fresh report", () => {
+  const first = recordThreadStatus("t1", report, null, 10)!;
+  expect(recordThreadStatus("t1", report, first, 20)).toBe(first);
+  const next = recordThreadStatus("t1", "New reply", first, 30)!;
+  expect(next.report).toEqual(first.report);
+  expect(next.latestAt).toBe(30);
+  expect(next.latest).toBe("New reply");
+  expect(recordThreadStatus("t1", "", next, 40)).toBe(next);
+  expect(
+    recordThreadStatus(
+      "t1",
+      report.replace("**Blocked:** Waiting for review.\n", ""),
+      next,
+      50,
+    )?.report?.blocked,
+  ).toBe("");
+});
+it("captures idle reports durably, isolates threads, survives reload and fetch failures, and forgets deleted threads", async () => {
+  const { bb, harness } = createFakePluginHost({
+    sdk: {
+      threads: {
+        output: async () => {
+          throw new Error("offline");
+        },
+      },
+    },
+  });
+  let monitor = createThreadStatus(bb, () => {});
+  await harness.behavior.emitThreadEvent("thread.idle", {
+    thread: makeThreadResponse({ id: "t1" }),
+    lastAssistantText: report,
+  });
+  const saved = await monitor.get("t1");
+  expect(saved?.report?.goal).toBe("Ship the UI.");
+  expect(await monitor.get("t2")).toBeNull();
+  const reloaded = await harness.lifecycle.reload(async (nextBb) => {
+    monitor = createThreadStatus(nextBb, () => {});
+  });
+  expect(await monitor.get("t1")).toEqual(saved);
+  await reloaded.harness.behavior.emitThreadEvent("thread.deleted", {
+    thread: makeThreadResponse({ id: "t1" }),
+  });
+  expect(await monitor.get("t1")).toBeNull();
+  await reloaded.harness.lifecycle.dispose();
+});
+it("serializes reads with idle updates so an old in-flight reply cannot overwrite the new report", async () => {
+  let resolve!: (result: { output: string }) => void;
+  const { bb, harness } = createFakePluginHost({
+    sdk: {
+      threads: {
+        output: () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      },
+    },
+  });
+  const monitor = createThreadStatus(bb, () => {});
+  const reading = monitor.get("t1");
+  await new Promise((done) => setTimeout(done, 0));
+  const idle = harness.behavior.emitThreadEvent("thread.idle", {
+    thread: makeThreadResponse({ id: "t1" }),
+    lastAssistantText: report,
+  });
+  resolve({ output: "Older ordinary reply" });
+  await reading;
+  await idle;
+  const stored = await bb.storage.kv.get<{ report: { goal: string } }>(
+    "thread-status:t1",
+  );
+  expect(stored?.report.goal).toBe("Ship the UI.");
+  await harness.lifecycle.dispose();
+});

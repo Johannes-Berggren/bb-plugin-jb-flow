@@ -36,8 +36,20 @@
     "when.ts",
     "server.ts",
     "app.tsx",
+    "studio.tsx",
+    "shell-appearance.tsx",
+    "live-activity.tsx",
+    "live-activity.ui.test.tsx",
+    "studio-model.ts",
     "components",
     "lib",
-    "hooks"
+    "hooks",
+    "studio.ui.test.tsx",
+    "shell-appearance.ui.test.tsx",
+    "studio-model.test.ts",
+    "vitest.config.ts",
+    "thread-status.test.ts",
+    "timeline-activity.ui.test.tsx",
+    "decision-choices.ui.test.tsx"
   ]
 }
