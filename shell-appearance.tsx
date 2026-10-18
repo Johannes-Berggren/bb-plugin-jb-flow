@@ -27,7 +27,8 @@ export function mountShellAppearance({ signal }: { signal: AbortSignal }) {
 /** The public settings hook bridges only the appearance preference to the script. */
 export function ShellAppearancePreference() {
   const { values, isLoading } = useSettings();
-  const enabled = values?.polishShell !== false;
+  // Off by default: only an explicit opt-in restyles BB.
+  const enabled = values?.polishShell === true;
   useEffect(() => {
     if (!isLoading)
       window.dispatchEvent(

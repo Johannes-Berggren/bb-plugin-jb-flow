@@ -14,7 +14,7 @@ import "./live-activity.css";
 import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
-import { STATUS_PROMPT } from "./status-prompt";
+import { statusPrompt } from "./status-prompt";
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -722,7 +722,7 @@ export function ActivityCard({
             >
               {requesting ? "Requesting…" : "Update status"}
             </button>
-            <span>Uses the Stream Deck Status prompt</span>
+            <span>Sends the status report prompt (Settings → JB Flow)</span>
             {statusError && <p role="alert">{statusError}</p>}
           </div>
         )}
@@ -891,7 +891,7 @@ export function LiveActivityBanner({
     thread?.status === "starting" ||
     thread?.status === "stopping";
   const enabled =
-    !!threadId && values?.polishShell !== false && !thread?.isArchived;
+    !!threadId && values?.threadMonitor === true && !thread?.isArchived;
   const { data, updatedAt } = useActivity(threadId ?? "", enabled);
   const monitor = useThreadStatus(threadId ?? "", enabled, running);
   const connection = useRealtimeConnectionState();
@@ -935,7 +935,7 @@ export function LiveActivityBanner({
       monitor={monitor?.snapshot}
       monitorStale={monitor?.stale}
       onRequestStatus={async () => {
-        await rpc.call("thread_reply", { threadId, text: STATUS_PROMPT });
+        await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
       }}
       running={running}
       startedAt={runningSince[threadId]?.since ?? taskStart}

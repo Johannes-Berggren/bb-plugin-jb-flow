@@ -33,7 +33,7 @@ const plain = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-/** Read the Stream Deck Status template. Never infer a global completion percentage. */
+/** Read a status report (Goal/Done/Next/Blocked/Progress). Never infer a global completion percentage. */
 export function parseStatusReport(
   reply: string,
   capturedAt: number,

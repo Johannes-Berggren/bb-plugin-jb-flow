@@ -1,3 +1,22 @@
-// Shared wording from streamdeck-controller/snippets/status.md.
-export const STATUS_PROMPT =
-  'Session status report. Use exactly this template and order. Omit any section with nothing real to say; never write "N/A" or filler. No preamble, no closing remarks.\n\n**Goal:** <one sentence>\n**Done:** <one sentence: what we just did>\n**Next:** <one sentence, or "Nothing pending.">\n**Blocked:** <only if blocked: what and on whom. Release blocks: "Waiting for release (last: <version>, <date>).">\n\n### Stack\nOldest → newest, one line each, indented for stacked PRs:\n`<icon> [#123 short title](url) · <≤6-word note>`\nIcons: ✅ merged · 🚀 deployed · 👀 in review · 📝 draft · ⏳ awaiting release · ❌ failing\nMention CI only when it isn\'t green.\n\n### Progress\nOne fenced block, one line per milestone, aligned columns:\n[██████████] Milestone A   done\n[██████░░░░] Milestone B   60%  ← here\n[░░░░░░░░░░] Milestone C\n\n### Architecture\nOnly if this session changed backend or architecture. Before / After as two ASCII diagrams in code blocks, ≤10 lines each; mark changed parts with *.\n\n### Next steps\nOnly steps you can execute yourself. Never suggest releasing.\n- If the next steps are the obvious continuation of the agreed work, write **Doing now:** <one line> and do them straight after this report, without waiting for "go".\n- If you need a decision from me (product/UX, scope, anything outward-facing or irreversible), stop and ask:\n> [!TIP]\n> **Decision needed:** <one line>\n> 1. <option> — <why, ≤8 words> (recommended)\n> 2. <option> — <why>\n>\n> Reply with the number.\n\n_<YYYY-MM-DD HH:MM TZ>_\n\nRules: high level and concise. Link every PR, ticket, deploy and doc. Check PR, CI and deploy state live with tools (e.g. `gh`) instead of from memory, and take the timestamp from `date`.\n';
+// What "Update status" sends when the Status report prompt setting is empty.
+// The thread monitor parses these fields (see thread-status.ts).
+export const DEFAULT_STATUS_PROMPT = [
+  "Give a short status report in exactly this format, then stop. Leave out any line or section with nothing real to say.",
+  "",
+  "**Goal:** <one sentence>",
+  "**Done:** <what was just done, one sentence>",
+  '**Next:** <the next step, or "Nothing pending.">',
+  "**Blocked:** <only if blocked: on what or whom>",
+  "",
+  "### Progress",
+  "One fenced block, one line per milestone:",
+  "```",
+  "[██████████] Milestone A   done",
+  "[██████░░░░] Milestone B   60%  ← here",
+  "[░░░░░░░░░░] Milestone C",
+  "```",
+].join("\n");
+
+export function statusPrompt(setting: unknown): string {
+  return typeof setting === "string" && setting.trim() !== "" ? setting : DEFAULT_STATUS_PROMPT;
+}

@@ -12,7 +12,7 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 ### App-wide appearance
 
-**Polish the entire BB interface** (Settings → JB Flow, on by default) applies
+**Polish the entire BB interface** (Settings → JB Flow, off by default) applies
 across the standard BB interface: inset sidebar selections, refined section
 headings and rail controls, layered page surfaces, elevated composers, panel tabs,
 menus, dialogs, and the command palette. It works with any palette; Graphite adds
@@ -52,23 +52,23 @@ styling. Reduced-motion preferences disable decorative animation.
 
 ### Persistent thread monitor
 
-The activity card stays visible when the agent is idle. **Collapse monitor**
+Off by default; turn on **Thread monitor** in the plugin settings. The activity card then stays visible when the agent is idle. **Collapse monitor**
 reduces the entire card to one status row, including on mobile where it starts
 collapsed. The choice is saved per device, shared across threads and split panes;
 expanding restores the report, meters, controls and PR links. Live updates continue
 while collapsed. **Details** remains a separate control for the full trace.
 
 It saves each thread's latest status report as **Just did → Next step → Goal**, followed by blockers
-and milestone bars using the
-Stream Deck controller's Status template (`snippets/status.md`). Reports are
+and milestone bars. A report is a reply with **Goal:**, **Done:**, **Next:** and **Blocked:** lines and
+an optional `### Progress` block. Reports are
 captured on idle events even when the thread isn't open, and survive plugin
 reloads, navigation and ordinary replies. Dates distinguish the last report
 from a newer reply; deleted threads' records are removed. Existing threads
 without a saved report show their latest reply as a labeled fallback.
 
-**Update status** sends the same Status prompt to this thread, preserving your
-composer draft. It runs only when clicked; the template can continue previously
-agreed next steps just like the Stream Deck key. The monitor refreshes on thread
+**Update status** sends the **Status report prompt** setting to this thread (empty uses a short
+built-in prompt in that format), preserving your composer draft. It runs only when clicked.
+The monitor refreshes on thread
 events and reconnects. Running agents retain the live command/workflow view;
 idle headers reflect pending input, errors and JB Flow watches. Milestone bars
 show the values reported by the agent, separately from measured plan, workflow,
@@ -78,7 +78,7 @@ controls return if the live timeline is unavailable.
 
 ### Compact live tool trace
 
-Active native command bundles keep running work prominent in a bordered activity
+With **Polish the entire BB interface** on, active native command bundles keep running work prominent in a bordered activity
 card with an indeterminate sweep. Earlier completed commands and thinking steps
 fold behind **Show trace**, with a live step count. Errors and explicitly opened
 output stay visible. Native approvals and questions remain outside these bundles.
@@ -249,6 +249,9 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 
 Under **Settings → JB Flow**:
 
+- **Polish the entire BB interface**: restyles bb and folds finished commands behind *Show trace* (off by default).
+- **Thread monitor**: the idle activity card with the last status report (off by default).
+- **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: auto-continue for Claude Code (off by default).
 - **Cmd+N opens the new thread in a split**: replaces bb's own Cmd+N (off by default). The *New thread in a split* command works either way.
