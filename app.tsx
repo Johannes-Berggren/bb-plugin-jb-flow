@@ -1,3 +1,8 @@
+import { toast } from "sonner";
+import type { WorkspaceState } from "./workspaces";
+import { WorkspaceNavigation, WorkspaceRouteBridge, WorkspaceSettings } from "./workspace-ui";
+import { useWorkspaces, useSelectedWorkspace } from "./workspace-client";
+import { inWorkspace } from "./workspaces";
 import { mountTimelineActivity } from "./timeline-activity";
 // jb-flow frontend: the Triage thread list, a snooze control in the thread
 // header, the stale-thread digest on the homepage, and the area-tag migration
@@ -648,8 +653,11 @@ function ThreadRow({
   onTag,
   onRename,
   machine,
+  workspaceState, onWorkspace,
 }: {
   thread: PluginSidebarThread;
+  workspaceState: WorkspaceState;
+  onWorkspace: (workspaceId: string | null, automatic: boolean) => void;
   project: PluginSidebarProject | undefined;
   /** The machine it runs on; `remote` when it's not the machine BB runs on (tagged on the row). */
   machine: { name: string; remote: boolean } | null;
@@ -873,6 +881,14 @@ function ThreadRow({
           <Glyph name="pencil" className="size-4" /> Rename…
         </ContextMenuItem>
         <ContextMenuSeparator />
+        <ContextMenuSub>
+          <ContextMenuSubTrigger><Icon name="Folder" className="size-4" /> Move to workspace</ContextMenuSubTrigger>
+          <ContextMenuSubContent className="w-52">
+            <ContextMenuItem onSelect={() => onWorkspace(null, true)}>Automatic</ContextMenuItem>
+            {workspaceState.workspaces.map((workspace) => <ContextMenuItem key={workspace.id} onSelect={() => onWorkspace(workspace.id, false)}>{workspace.name}</ContextMenuItem>)}
+            <ContextMenuItem onSelect={() => onWorkspace(null, false)}>Unassigned</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
         <ContextMenuSub>
           <ContextMenuSubTrigger>
             <Glyph name="folderMove" className="size-4" /> Move to
@@ -1351,7 +1367,11 @@ function TriageThreadList({
   activeThreadId,
   onNavigate,
 }: PluginThreadListProps) {
-  const { threads, projects, sections: hostSections, status } = useSidebarThreads();
+  const { threads: allThreads, projects, sections: hostSections, status } = useSidebarThreads();
+  const { state: workspaceState, ready: workspaceReady, rpc: workspaceRpc, refresh: refreshWorkspaces } = useWorkspaces();
+  const selectedWorkspace = useSelectedWorkspace();
+  const workspace = workspaceState.workspaces.find((item) => item.id === selectedWorkspace);
+  const threads = useMemo(() => allThreads.filter((thread) => inWorkspace(thread, selectedWorkspace, workspaceState, allThreads)), [allThreads, selectedWorkspace, workspaceState]);
   const { rpc, state } = useFlowState();
   // BB saves a section rename but doesn't refresh the sidebar's section list
   // until reload. Show the new name meanwhile; drop it once BB's name changes.
@@ -1382,16 +1402,18 @@ function TriageThreadList({
     const laneIds = new Set(lanes.map((lane) => lane.sectionId));
     return sections.filter(
       (section) =>
-        !laneIds.has(section.id) && section.id !== state?.snoozedSectionId,
+        !laneIds.has(section.id) && section.id !== state?.snoozedSectionId &&
+        (selectedWorkspace === null || workspaceState.workspaces.every((owner) => !owner.sectionIds.includes(section.id)) || workspace?.sectionIds.includes(section.id) || threads.some((thread) => thread.sectionId === section.id)),
     );
-  }, [sections, lanes, state?.snoozedSectionId]);
+  }, [sections, lanes, state?.snoozedSectionId, selectedWorkspace, workspaceState, workspace, threads]);
   const tags = useMemo(() => state?.tags ?? {}, [state]);
   const knownTags = useMemo(
-    () => [...new Set(Object.values(tags).flat())].sort(),
-    [tags],
+    () => [...new Set(Object.entries(tags).filter(([id]) => threads.some((thread) => thread.id === id)).flatMap(([, values]) => values))].sort(),
+    [tags, threads],
   );
 
   const [smart, setSmart] = useState<Filter | null>(null);
+  useEffect(() => { setTagFilter(null); setSmart(null); setExpanded({}); }, [selectedWorkspace]);
   const machines = state?.machines;
   const rowMachine = (thread: PluginSidebarThread) => {
     const hostId = threadHost(thread, machines);
@@ -1415,14 +1437,16 @@ function TriageThreadList({
   // Lanes and your own sections share one order, so any section can sit anywhere.
   const sectionKeys = useMemo(
     () =>
-      mergeOrder(state?.sectionOrder ?? [], [
+      mergeOrder(workspace?.sectionOrder.length ? workspace.sectionOrder : state?.sectionOrder ?? [], [
         ...lanes.map((lane) => sectionKey(lane.sectionId)),
         ...otherSections.map((section) => section.id),
       ]),
-    [lanes, otherSections, state?.sectionOrder],
+    [lanes, otherSections, state?.sectionOrder, workspace?.sectionOrder],
   );
 
-  const saveOrder = (keys: string[]) => void rpc.call("section_order_set", { order: keys });
+  const saveOrder = (keys: string[]) => void (workspace
+    ? workspaceRpc.call("workspace_save", { ...workspace, sectionOrder: keys }).then(refreshWorkspaces)
+    : rpc.call("section_order_set", { order: keys }));
   const moveSection = (key: string, delta: -1 | 1) => {
     const keys = [...sectionKeys];
     const from = keys.indexOf(key);
@@ -1460,7 +1484,7 @@ function TriageThreadList({
           onSelect={() =>
             actions.openNewThread({
               ...(section.id ? { sectionId: section.id } : {}),
-              ...(project ? { projectId: project.id } : {}),
+              ...(project ? { projectId: project.id } : workspace?.projectIds[0] ? { projectId: workspace.projectIds[0] } : {}),
               focusPrompt: true,
             })
           }
@@ -1538,7 +1562,7 @@ function TriageThreadList({
     const snoozedSectionId = state?.snoozedSectionId ?? null;
     const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
     const visible = threads
-      .filter((thread) => !thread.isHidden && !thread.isArchived && thread.parentThreadId === null)
+      .filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId)))
       .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter))
       .sort((a, b) => b.updatedAt - a.updatedAt);
     // No Snoozed section until the first snooze: then nothing is snoozed (a null
@@ -1722,7 +1746,7 @@ function TriageThreadList({
   );
   const { isCollapsed, toggle } = useCollapsed(defaults);
 
-  if (status === "loading") {
+  if (status === "loading" || (!workspaceReady && selectedWorkspace !== null)) {
     return (
       <p className="px-3 py-2 text-xs text-muted-foreground">
         Loading threads…
@@ -1858,6 +1882,8 @@ function TriageThreadList({
                   <ThreadRow
                     key={thread.id}
                     thread={thread}
+                    workspaceState={workspaceState}
+                    onWorkspace={(workspaceId, automatic) => void workspaceRpc.call("workspace_assign", { threadId: thread.id, workspaceId, automatic }).then(refreshWorkspaces).catch((cause) => toast.error(errorText(cause)))}
                     project={projectById.get(thread.projectId)}
                     active={thread.id === activeThreadId}
                     tags={tags[thread.id] ?? []}
@@ -1910,7 +1936,13 @@ function TriageThreadList({
           initial={sectionDialog.name}
           onSave={(name) =>
             sectionDialog.mode === "create"
-              ? sdk.threadSections.create({ name })
+              ? sdk.threadSections.create({ name }).then(async (section) => {
+                  if (workspace) {
+                    await workspaceRpc.call("workspace_save", { ...workspace, sectionIds: [...workspace.sectionIds, section.id] });
+                    await refreshWorkspaces();
+                  }
+                  return section;
+                })
               : sdk.threadSections.update({ id: sectionDialog.id!, name }).then((result) => {
                   const from = hostSections.find((section) => section.id === sectionDialog.id)?.name;
                   if (from !== undefined) setRenamed((current) => ({ ...current, [sectionDialog.id!]: { from, to: name } }));
@@ -1971,6 +2003,9 @@ function EmptyState({ children }: { children: ReactNode }) {
 }
 
 function DigestSection() {
+  const { state: workspaceState } = useWorkspaces();
+  const selectedWorkspace = useSelectedWorkspace();
+  const { threads: workspaceThreads } = useSidebarThreads();
   const rpc = useRpc<typeof rpcContract>();
   const actions = useSidebarThreadActions();
   const { projects } = useSidebarThreads();
@@ -2023,8 +2058,12 @@ function DigestSection() {
       setPending(false);
     }
   };
-  const ids = [...selected];
-  const items = digest?.items ?? [];
+  useEffect(() => { setSelected(new Set()); setShowAll(false); }, [selectedWorkspace]);
+  const items = (digest?.items ?? []).filter((item) => {
+    const thread = workspaceThreads.find((thread) => thread.id === item.threadId);
+    return selectedWorkspace === null || (thread !== undefined && inWorkspace(thread, selectedWorkspace, workspaceState, workspaceThreads));
+  });
+  const ids = items.filter((item) => selected.has(item.threadId)).map((item) => item.threadId);
   const shown = showAll ? items : items.slice(0, 15);
   const allSelected =
     items.length > 0 && items.every((item) => selected.has(item.threadId));
@@ -2515,6 +2554,30 @@ export default definePluginApp((app) => {
   });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
+  app.slots.experimental_sidebarNavigation({
+    id: "workspaces", title: "JB Flow workspaces", placement: "list",
+    description: "Workspace tabs with projects, threads, sections and tools.",
+    component: WorkspaceNavigation,
+  });
+  app.slots.experimental_appOverlay({ id: "workspace-route", component: WorkspaceRouteBridge });
+  app.slots.settingsSection({ id: "workspaces", title: "Workspaces", component: WorkspaceSettings });
+  app.slots.experimental_threadAction({
+    id: "workspace", title: "Workspace", icon: "Folder", group: "organize",
+    useData: () => useWorkspaces(),
+    item: ({ thread, data }) => ({
+      label: "Move to workspace", icon: "Folder",
+      choices: { items: [
+        { id: "auto", label: "Automatic (from parent, section or project)" },
+        ...data.state.workspaces.map((workspace) => ({ id: workspace.id, label: workspace.name })),
+        { id: "unassigned", label: "Unassigned" },
+      ] },
+      run: async ({ value }) => {
+        if (!value) return;
+        await data.rpc.call("workspace_assign", { threadId: thread.id, workspaceId: value === "auto" || value === "unassigned" ? null : value, automatic: value === "auto" });
+        await data.refresh();
+      },
+    }),
+  });
   app.slots.experimental_threadList({
     id: "triage",
     title: "Triage",

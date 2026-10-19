@@ -1,3 +1,5 @@
+import { createWorkspaceStorage } from "./workspace-storage";
+import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, threadStatusSchema } from "./thread-status";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
@@ -120,6 +122,10 @@ const stateSchema = z.object({
 export type FlowState = z.infer<typeof stateSchema>;
 
 export const rpcContract = defineRpcContract({
+  workspaces_get: { input: z.null(), output: workspaceStateSchema },
+  workspace_save: { input: workspaceSchema.extend({ id: z.string().nullable() }), output: workspaceSchema },
+  workspace_remove: { input: z.object({ id: z.string() }), output: z.object({ ok: z.boolean() }) },
+  workspace_assign: { input: z.object({ threadId: z.string(), workspaceId: z.string().nullable(), automatic: z.boolean() }), output: z.object({ ok: z.boolean() }) },
   state_get: { input: z.null(), output: stateSchema },
   snooze: {
     input: z.object({
@@ -802,7 +808,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     };
   }
 
+  const workspaces = createWorkspaceStorage(bb, changed);
   bb.rpc.register(rpcContract, {
+    workspaces_get: () => workspaces.read(),
+    workspace_save: (input) => workspaces.save(input),
+    workspace_remove: async ({ id }) => { await workspaces.remove(id); return { ok: true }; },
+    workspace_assign: async ({ threadId, workspaceId, automatic }) => { await workspaces.assign(threadId, workspaceId, automatic); return { ok: true }; },
     // Concurrent callers (every open window refetches on the same publish) share one build.
     state_get: () => (stateBuild ??= buildState().finally(() => (stateBuild = null))),
     snooze: ({ threadId, when, note, until }) => snooze(threadId, when, note, until),
@@ -1175,6 +1186,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     name: "jb-flow",
     summary: "Snooze threads and review the stale-thread digest",
     commands: [
+      { name: "workspaces", summary: "List workspaces or save/remove/assign using JSON", usage: 'bb jb-flow workspaces [save <json>|remove <id>|assign <thread-id> <workspace-id|unassigned|auto>]' },
       {
         name: "snooze",
         summary: "Snooze a thread until a time",
@@ -1227,6 +1239,16 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         value === "--self" ? ctx.threadId : value === "--focused" ? focus.focusedThreadId() ?? undefined : value;
       try {
         switch (command) {
+          case "workspaces": {
+            if (args[0] === "save") {
+              const input = workspaceSchema.extend({ id: z.string().nullable() }).parse(JSON.parse(args.slice(1).join(" ")));
+              return { exitCode: 0, stdout: JSON.stringify(await workspaces.save(input)) };
+            }
+            if (args[0] === "remove" && args[1]) await workspaces.remove(args[1]);
+            else if (args[0] === "assign" && args[1] && args[2]) await workspaces.assign(args[1], ["auto", "unassigned"].includes(args[2]) ? null : args[2], args[2] === "auto");
+            else if (args.length > 0) throw new Error("Use workspaces [save <json>|remove <id>|assign <thread-id> <workspace-id|unassigned|auto>]");
+            return { exitCode: 0, stdout: JSON.stringify(await workspaces.read()) };
+          }
           case "snooze": {
             const threadId = resolveThread(args[0]);
             const when = args.slice(1).join(" ");

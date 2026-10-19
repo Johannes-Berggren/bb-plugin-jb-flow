@@ -1,9 +1,31 @@
 ---
 name: jb-flow
-description: Snooze BB threads until a date (with an optional wake-up prompt) and review the stale-thread digest with the `bb jb-flow` command or the snooze_thread tool.
+description: Organise BB projects, threads, sections and tools into workspaces; snooze BB threads until a date (with an optional wake-up prompt) and review the stale-thread digest with the `bb jb-flow` command or the snooze_thread tool.
 ---
 
 # jb-flow
+
+## Workspaces
+
+Requires BB Plugin SDK 0.6.54 or later. The workspace navigation provider can be
+selected under Settings → Appearance → Sidebar navigation. Workspaces group
+projects, sections and tool navigation; they do not isolate credentials,
+permissions or background plugin execution.
+
+- `bb jb-flow workspaces`: JSON configuration and explicit thread assignments.
+- `bb jb-flow workspaces assign <thread-id> <workspace-id|unassigned|auto>`.
+- `bb jb-flow workspaces save '<json>'`: `{ id, name, projectIds, sectionIds, pluginIds, sectionOrder }`. Use `id: null` to create and an existing ID to edit. Selecting a project or section transfers its grouping to this workspace. Tools may be shared between workspaces; tools assigned nowhere appear everywhere.
+- `bb jb-flow workspaces remove <workspace-id>`: remove grouping only, keeping threads, projects and sections; explicit assignments become unassigned.
+
+Thread membership: explicit override, inherited parent, section, project, then
+Unassigned. All shows every workspace. HitLight and Findable defaults are seeded
+once from project names, then saved. The active tab and last thread are local to
+the browser session; configuration and assignments are server-persisted.
+
+RPC equivalents are `workspaces_get(null)`, `workspace_save(workspace)`,
+`workspace_remove({ id })`, and
+`workspace_assign({ threadId, workspaceId, automatic })`. `automatic: true`
+removes an override; `workspaceId: null, automatic: false` forces Unassigned.
 
 ## Snooze
 

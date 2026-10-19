@@ -1,3 +1,5 @@
+import { useWorkspaces, useSelectedWorkspace } from "./workspace-client";
+import { inWorkspace } from "./workspaces";
 import { useEffect, useRef, useState } from "react";
 import {
   ThreadChat,
@@ -83,7 +85,11 @@ export function Studio({
   subPath: string;
   state: FlowState | null;
 }) {
-  const { threads, projects, status } = useSidebarThreads();
+  const { threads: allThreads, projects: allProjects, status } = useSidebarThreads();
+  const { state: workspaceState } = useWorkspaces();
+  const selectedWorkspace = useSelectedWorkspace();
+  const threads = allThreads.filter((thread) => inWorkspace(thread, selectedWorkspace, workspaceState, allThreads));
+  const projects = allProjects.filter((project) => selectedWorkspace === null || workspaceState.workspaces.find((workspace) => workspace.id === selectedWorkspace)?.projectIds.includes(project.id));
   const navigate = useBbNavigate();
   const connection = useRealtimeConnectionState();
   const panel = useAppPanel();

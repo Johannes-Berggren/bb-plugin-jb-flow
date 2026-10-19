@@ -1,5 +1,7 @@
 ## What you get
 
+- **Workspaces.** HitLight, Findable and your own workspace tabs group projects, threads, sections and plugin navigation. All and Unassigned keep everything reachable. Manage membership in settings or move a thread from its context menu. Tools can be shared, tabs show attention counts, and each workspace remembers its last thread and section order. Workspace filtering also applies to Studio and home-page follow-ups. It changes navigation visibility, not plugin execution or permissions.
+
 - **Triage thread list.** A replacement sidebar. Threads blocked on a prompt, a permission or a question to you sit in *Needs me* at the top. Below that are numbered lanes (Priority, Active, Waiting for others, Pick up later, Low priority), with a project chip and tags on each row. On a focused row, `1`–`5` moves it to a lane, `s` snoozes, `t` tags, `e` archives and `j`/`k` move up and down.
 - **Waiting for others fills itself.** A thread whose agent says it is waiting on a person, or whose open PRs all wait on a reviewer, goes there and comes back to Active when its next turn no longer waits on anyone.
 - **Snooze.** A clock button, `bb jb-flow snooze`, or the `snooze_thread` agent tool hides a thread until `2h`, `tomorrow`, `mon` or a date. It comes back unread, and an optional note is sent to the agent as its wake-up instruction.
@@ -19,6 +21,7 @@ Off until you turn them on in the plugin settings:
 
 ## Requirements
 
+- BB with Plugin SDK 0.6.54 or later; early 0.46.1 builds need an update for workspace navigation.
 - The GitHub CLI (`gh`), logged in with `gh auth login`, for all PR, CI and release features. Repos must be on github.com. The thread list, snooze and digests work without it.
 - Installing JB Flow makes the Triage list your sidebar (while Settings → Appearance → Thread list is on Automatic); switch back there at any time. The list offers to create its lane sections on first use.
 - Several bb APIs used here are experimental and may change between bb releases.

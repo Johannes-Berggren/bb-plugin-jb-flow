@@ -1,10 +1,12 @@
+import { useWorkspaces, useSelectedWorkspace } from "./workspace-client";
+import { inWorkspace } from "./workspaces";
 // UI built on the plugin's thread state: PR stacks (any repo), running/stuck
 // detection, the hover preview, the thread-header status strip, the Pull
 // requests panel, and command-palette commands.
 import { forwardRef, useCallback, useEffect, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import * as HoverCard from "@radix-ui/react-hover-card";
-import { useBbNavigate, useComposers, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads as useSidebarThreads, useBbNavigate, useComposers, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { JsonValue, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState, rpcContract } from "./server";
@@ -464,6 +466,9 @@ export { DecisionChips } from "./decision-choices";
 // --- Your move (homepage) ---------------------------------------------------------------
 
 export function YourMoveSection() {
+  const { state: workspaceState } = useWorkspaces();
+  const selectedWorkspace = useSelectedWorkspace();
+  const { threads: workspaceThreads } = useSidebarThreads();
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const [items, setItems] = useState<Array<{ threadId: string; title: string; since: number; ask: string }> | null>(null);
@@ -475,14 +480,18 @@ export function YourMoveSection() {
   // Answered threads drop off without leaving the page.
   useRealtime("jb-flow-changed", load);
   if (items === null) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (items.length === 0) return <p className="text-sm text-muted-foreground">Nothing is waiting on you. ✨</p>;
+  const scopedItems = items.filter((item) => {
+    const thread = workspaceThreads.find((thread) => thread.id === item.threadId);
+    return selectedWorkspace === null || (thread !== undefined && inWorkspace(thread, selectedWorkspace, workspaceState, workspaceThreads));
+  });
+  if (scopedItems.length === 0) return <p className="text-sm text-muted-foreground">Nothing is waiting on you. ✨</p>;
   const now = Date.now();
-  const stale = items.filter((item) => now - item.since > 3 * 86_400_000).length;
-  const shown = showAll ? items : items.slice(0, 8);
+  const stale = scopedItems.filter((item) => now - item.since > 3 * 86_400_000).length;
+  const shown = showAll ? scopedItems : scopedItems.slice(0, 8);
   return (
     <div className="space-y-2">
       <p className="text-xs text-muted-foreground">
-        {items.length} thread{items.length === 1 ? "" : "s"} where the agent handed the next step to you, oldest first
+        {scopedItems.length} thread{scopedItems.length === 1 ? "" : "s"} where the agent handed the next step to you, oldest first
         {stale > 0 ? ` · ${stale} waiting 3+ days` : ""}.
       </p>
       <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
@@ -518,9 +527,9 @@ export function YourMoveSection() {
           );
         })}
       </ul>
-      {items.length > shown.length ? (
+      {scopedItems.length > shown.length ? (
         <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setShowAll(true)}>
-          Show all {items.length}
+          Show all {scopedItems.length}
         </button>
       ) : null}
     </div>
