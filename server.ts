@@ -358,16 +358,26 @@ export default async function plugin(bb: BbPluginApi) {
   }
   // One thread event can change several stores within milliseconds; publish
   // once after they settle so every window refetches once, not four times.
+  // Async work can finish after a reload disposed this instance; publishing on
+  // the stale handle throws inside a timer, which takes the whole BB server down.
   let publishTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
   function changed() {
+    if (disposed) return;
     bumpDeck();
     if (publishTimer !== null) return;
     publishTimer = setTimeout(() => {
       publishTimer = null;
-      bb.realtime.publish(CHANGED, {});
+      if (disposed) return;
+      try {
+        bb.realtime.publish(CHANGED, {});
+      } catch (error) {
+        bb.log.warn(`publish failed: ${String(error)}`);
+      }
     }, 250);
   }
   bb.onDispose(() => {
+    disposed = true;
     if (publishTimer !== null) clearTimeout(publishTimer);
   });
 
