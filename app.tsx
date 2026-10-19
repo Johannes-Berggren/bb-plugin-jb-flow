@@ -1,6 +1,7 @@
+import { mountWorkspaceTopBar } from "./workspace-topbar";
 import { toast } from "sonner";
 import type { WorkspaceState } from "./workspaces";
-import { WorkspaceNavigation, WorkspaceRouteBridge, WorkspaceSettings } from "./workspace-ui";
+import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSettings } from "./workspace-ui";
 import { useWorkspaces, useSelectedWorkspace } from "./workspace-client";
 import { inWorkspace } from "./workspaces";
 import { mountTimelineActivity } from "./timeline-activity";
@@ -2532,6 +2533,8 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 }
 
 export default definePluginApp((app) => {
+  app.contentScripts.register({ id: "workspace-topbar", mount: mountWorkspaceTopBar });
+  app.slots.experimental_appOverlay({ id: "workspace-topbar", component: WorkspaceTopBar });
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
   app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });

@@ -18,6 +18,7 @@ import {
   rememberWorkspaceThread,
   lastWorkspaceThread,
 } from "./workspace-client";
+import { WORKSPACE_BAR_EVENT } from "./workspace-topbar";
 import "./workspaces.css";
 
 function NavItem({
@@ -56,24 +57,25 @@ function NavItem({
   );
 }
 
-export function WorkspaceNavigation(_props: ExperimentalSidebarNavigationProps) {
+export function WorkspaceTopBar() {
   const { state, ready, error, refresh } = useWorkspaces();
   const selected = useSelectedWorkspace();
-  const { items, actions } = useSidebarNavigation();
   const { threads, projects } = useSidebarThreads();
   const context = useBbContext();
   const navigate = useBbNavigate();
-  const [manage, setManage] = useState(false);
-  const [more, setMore] = useState(false);
-  const [tip, setTip] = useState(() => {
-    try {
-      return localStorage.getItem("jb-flow-workspaces-tip") !== "dismissed";
-    } catch {
-      return true;
-    }
-  });
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(WORKSPACE_BAR_EVENT, { detail: true }));
+    return () => {
+      window.dispatchEvent(new CustomEvent(WORKSPACE_BAR_EVENT, { detail: false }));
+    };
+  }, []);
+  useEffect(() => {
+    tabsRef.current
+      ?.querySelector<HTMLElement>('[aria-selected="true"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [selected]);
   const active = state.workspaces.find((workspace) => workspace.id === selected);
-  const projectId = active?.projectIds.find((id) => projects.some((project) => project.id === id));
   useEffect(() => {
     if (ready && selected && selected !== "unassigned" && !active) selectWorkspace(null);
   }, [ready, selected, active]);
@@ -102,7 +104,6 @@ export function WorkspaceNavigation(_props: ExperimentalSidebarNavigationProps) 
         focusPrompt: true,
       });
   }
-  const scoped = items.filter((item) => pluginInWorkspace(item.pluginId, selected, state));
   const attention = (id: string | null) =>
     threads.filter(
       (thread) =>
@@ -124,11 +125,16 @@ export function WorkspaceNavigation(_props: ExperimentalSidebarNavigationProps) 
     { id: "unassigned", name: "Unassigned" },
   ];
   return (
-    <div className="jf-workspaces">
+    <header
+      className="jf-workspace-topbar"
+      aria-label="Workspace navigation"
+      title="Workspaces group projects, threads, sections and tools. All keeps everything within reach."
+    >
       <div
         role="tablist"
         aria-label="Workspaces"
         className="jf-workspace-tabs"
+        ref={tabsRef}
         onKeyDown={(event) => {
           if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
           const buttons = Array.from(
@@ -150,6 +156,7 @@ export function WorkspaceNavigation(_props: ExperimentalSidebarNavigationProps) 
             type="button"
             role="tab"
             aria-selected={selected === tab.id}
+            tabIndex={selected === tab.id ? 0 : -1}
             key={tab.id ?? "all"}
             onClick={() => choose(tab.id)}
           >
@@ -160,28 +167,27 @@ export function WorkspaceNavigation(_props: ExperimentalSidebarNavigationProps) 
           </button>
         ))}
       </div>
-      {tip && (
-        <div className="jf-workspace-tip">
-          <span>
-            Workspaces group your projects, threads, sections and tools. All keeps everything within
-            reach.
-          </span>
-          <button
-            type="button"
-            aria-label="Dismiss workspace introduction"
-            onClick={() => {
-              setTip(false);
-              try {
-                localStorage.setItem("jb-flow-workspaces-tip", "dismissed");
-              } catch {
-                /* Keep dismissal for this window. */
-              }
-            }}
-          >
-            ×
-          </button>
-        </div>
+      {error && (
+        <button type="button" className="jf-workspace-retry" onClick={() => void refresh()}>
+          Retry workspaces
+        </button>
       )}
+    </header>
+  );
+}
+
+export function WorkspaceNavigation(_props: ExperimentalSidebarNavigationProps) {
+  const { state, ready, error, refresh } = useWorkspaces();
+  const selected = useSelectedWorkspace();
+  const { items, actions } = useSidebarNavigation();
+  const { projects } = useSidebarThreads();
+  const [manage, setManage] = useState(false);
+  const [more, setMore] = useState(false);
+  const active = state.workspaces.find((workspace) => workspace.id === selected);
+  const projectId = active?.projectIds.find((id) => projects.some((project) => project.id === id));
+  const scoped = items.filter((item) => pluginInWorkspace(item.pluginId, selected, state));
+  return (
+    <div className="jf-workspaces">
       {error && (
         <p role="alert" className="jf-workspace-error">
           Couldn’t load workspaces.{" "}

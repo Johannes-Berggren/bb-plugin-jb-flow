@@ -150,3 +150,69 @@
     min-height: 44px;
   }
 }
+
+/* The macOS title bar already reserves this row. Browser windows reserve one
+   row above the app instead. Core window controls keep their own positioning. */
+.jb-flow-workspace-bar {
+  --jf-workspace-bar-height: 48px;
+  --jf-workspace-bar-leading: 56px;
+}
+.jb-flow-workspace-bar:has([data-testid="app-layout-root"][data-framed]) {
+  --jf-workspace-bar-height: var(--bb-window-title-bar-height, 40px);
+  --jf-workspace-bar-leading: 216px;
+}
+.jb-flow-workspace-bar [data-testid="app-layout-root"]:not([data-framed]) {
+  padding-top: var(--jf-workspace-bar-height);
+}
+.jb-flow-workspace-bar [data-testid="app-layout-root"]:not([data-framed]) [data-sidebar="panel"] {
+  top: var(--jf-workspace-bar-height);
+  height: calc(var(--bb-shell-height, 100dvh) - var(--jf-workspace-bar-height));
+}
+.jf-workspace-topbar {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  z-index: 43;
+  display: flex;
+  align-items: center;
+  height: calc(var(--jf-workspace-bar-height, 48px) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  min-width: 0;
+  padding-inline: var(--jf-workspace-bar-leading, 56px) max(12px, env(safe-area-inset-right));
+  color: var(--foreground);
+  background: var(--sidebar, var(--background));
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+.jf-workspace-topbar .jf-workspace-tabs {
+  align-items: center;
+  align-self: stretch;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+.jf-workspace-topbar .jf-workspace-tabs button {
+  min-height: 28px;
+  padding: 5px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.jf-workspace-retry {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  padding: 6px 10px;
+  -webkit-app-region: no-drag;
+}
+@media (pointer: coarse) {
+  .jf-workspace-topbar .jf-workspace-tabs button {
+    min-height: 44px;
+    padding-inline: 12px;
+  }
+}
+
+.jb-flow-workspace-bar:has([data-testid="app-desktop-sidebar-trigger"]) {
+  --jf-workspace-bar-leading: 216px;
+}

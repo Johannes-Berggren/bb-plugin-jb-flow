@@ -6,6 +6,7 @@ import type {
   PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 import { initialWorkspaces } from "./workspaces";
+import { mountWorkspaceTopBar, WORKSPACE_BAR_EVENT } from "./workspace-topbar";
 import { selectWorkspace } from "./workspace-client";
 
 const projects = [
@@ -80,13 +81,22 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
       },
     },
   );
-  const hitlight = await slot.findByRole("tab", { name: /HitLight/ });
+  const topbar = renderSlot(
+    app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
+    {},
+    {
+      rpc: { workspaces_get: () => state },
+      sidebarThreads: { status: "ready", projects, threads: [hThread], sections: [] },
+    },
+  );
+  expect(document.querySelector(".jf-workspaces [role=tablist]")).toBeNull();
+  const hitlight = await topbar.findByRole("tab", { name: /HitLight/ });
   fireEvent.click(hitlight);
   expect(hitlight.getAttribute("aria-selected")).toBe("true");
   expect(slot.queryByRole("button", { name: "Findable DevOps" })).toBeNull();
   expect(slot.getByRole("button", { name: "HitLight DevOps" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Lifeboat" })).toBeTruthy();
-  expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({
+  expect(topbar.inspection.navigateCalls.at(-1)).toMatchObject({
     method: "toCompose",
     options: { projectId: "h" },
   });
@@ -102,10 +112,12 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     method: "activate",
     itemId: "findable-devops/board",
   });
-  fireEvent.click(slot.getByRole("tab", { name: "Findable" }));
-  fireEvent.keyDown(slot.getByRole("tablist"), { key: "Home" });
+  fireEvent.click(topbar.getByRole("tab", { name: "Findable" }));
+  fireEvent.keyDown(topbar.getByRole("tablist"), { key: "Home" });
   expect(document.activeElement).toBe(hitlight);
   slot.lifecycle.unmount();
+  expect(topbar.getByRole("tablist", { name: "Workspaces" })).toBeTruthy();
+  topbar.lifecycle.unmount();
 });
 
 it("settings report save failures and preserve the edited values for retry", async () => {
@@ -149,4 +161,30 @@ it("reveals the owning workspace when a deep link opens a thread from another wo
   await waitFor(() => expect(sessionStorage.getItem("jb-flow-workspace")).toBe("hitlight"));
   expect(sessionStorage.getItem("jb-flow-workspace-last:hitlight")).toBe("ht");
   slot.lifecycle.unmount();
+});
+
+it("reserves top-bar space only while the app-wide bar renders and cleans up on reload or disable", async () => {
+  const controller = new AbortController();
+  const dispose = mountWorkspaceTopBar({ signal: controller.signal });
+  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  const app = await loadPluginApp(() => import("./app"));
+  const topbar = renderSlot(
+    app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
+    {},
+    {
+      rpc: { workspaces_get: () => state },
+      sidebarThreads: { status: "ready", projects, threads: [], sections: [] },
+    },
+  );
+  await topbar.findByRole("tab", { name: "HitLight" });
+  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(true);
+  topbar.lifecycle.unmount();
+  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  window.dispatchEvent(new CustomEvent(WORKSPACE_BAR_EVENT, { detail: true }));
+  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(true);
+  controller.abort();
+  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  window.dispatchEvent(new CustomEvent(WORKSPACE_BAR_EVENT, { detail: true }));
+  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  dispose?.();
 });

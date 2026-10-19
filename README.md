@@ -14,7 +14,7 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 Choose **JB Flow workspaces** under Settings → Appearance → Sidebar navigation
 if another navigation provider is pinned. The HitLight, Findable, All and
-Unassigned tabs sit above the thread list and filter its threads, sections,
+Unassigned tabs span the top of the BB window and filter its threads, sections,
 Studio and home-page follow-ups. Tabs show attention counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
 uses its first available project. Opening a thread from another workspace
@@ -39,6 +39,12 @@ workspace become unassigned. Section order is saved per workspace; workflow
 lanes remain available with that workspace's threads. Workspace configuration
 and thread assignments sync between clients. The active tab and remembered
 threads belong to this browser session.
+
+On macOS the tabs share the existing title-bar row, beside the native window
+and navigation controls. Browser and mobile clients reserve a row above the
+sidebar and conversation. The bar remains available when the sidebar is closed;
+its shell spacing is removed when the plugin unloads. Settings for workspaces
+remain in the sidebar and plugin settings.
 
 The same operations are available over RPC (`workspaces_get`, `workspace_save`,
 `workspace_remove`, `workspace_assign`) and CLI:
@@ -67,8 +73,8 @@ Turn the setting off to restore standard shell styling while keeping Studio and
 the palette. The content script removes its root class and event listeners on
 reload or disable. Reduced motion and forced colors are respected. BB continues
 to own navigation, panel resizing, conversations, touch targets, and scrolling.
-This is a visual shell treatment; changing BB's navigation structure requires
-changes in BB itself. Shell selectors use the current host's DOM attributes and
+This setting changes shell styling; Workspaces separately uses BB's navigation
+and app-overlay APIs to arrange its tabs and tools. Shell selectors use the current host's DOM attributes and
 need visual rechecking after BB upgrades.
 
 ### Live agent activity
