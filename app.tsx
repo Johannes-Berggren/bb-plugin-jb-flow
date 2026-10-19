@@ -2128,7 +2128,7 @@ function DigestSection() {
         </p>
       )}
       {digest === null ? null : items.length === 0 ? (
-        <EmptyState>No stale threads in this workspace.</EmptyState>
+        <EmptyState>No stale threads.</EmptyState>
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
           <li className="flex items-center gap-3 px-3 py-2 text-xs text-muted-foreground">
@@ -2560,8 +2560,8 @@ export default definePluginApp((app) => {
   app.slots.settingsSection({ id: "workspaces", title: "Workspaces", component: WorkspaceSettings });
   app.slots.experimental_threadAction({
     id: "workspace", title: "Workspace", icon: "Folder", group: "organize",
-    useData: () => useWorkspaces(),
-    item: ({ thread, data }) => ({
+    useData: () => ({ ...useWorkspaces(), enabled: useSettings().values?.workspaces === true }),
+    item: ({ thread, data }) => !data.enabled ? null : ({
       label: "Move to workspace", icon: "Folder",
       choices: { items: [
         { id: "auto", label: "Automatic (from parent, section or project)" },

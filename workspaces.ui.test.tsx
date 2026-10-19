@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { exampleWorkspaces } from "./workspaces.fixtures";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type {
   ExperimentalSidebarNavigationItem,
   PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
-import { initialWorkspaces } from "./workspaces";
 import { mountWorkspaceTopBar, WORKSPACE_BAR_EVENT } from "./workspace-topbar";
 import { selectWorkspace } from "./workspace-client";
 
@@ -25,7 +25,7 @@ const projects = [
     settingsHref: "/projects/f/settings",
   },
 ];
-const state = { workspaces: initialWorkspaces(projects), threadWorkspaces: {} };
+const state = { workspaces: exampleWorkspaces(projects), threadWorkspaces: {} };
 function item(
   id: string,
   label: string,
@@ -86,6 +86,7 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
       experimental_Original: () => null,
     },
     {
+      settings: { workspaces: true },
       rpc: { workspaces_get: () => state },
       sidebarThreads: {
         status: "ready",
@@ -107,6 +108,7 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
     {},
     {
+      settings: { workspaces: true },
       rpc: { workspaces_get: () => state },
       sidebarThreads: {
         status: "ready",
@@ -162,6 +164,7 @@ it("settings report save failures and preserve the edited values for retry", asy
     app.settingsSections.find((section) => section.id === "workspaces")!,
     {},
     {
+      settings: { workspaces: true },
       rpc: {
         workspaces_get: () => state,
         workspace_save: () => {
@@ -196,6 +199,7 @@ it("reveals the owning workspace when a deep link opens a thread from another wo
     {},
     {
       context: { threadId: "ht", projectId: "h" },
+      settings: { workspaces: true },
       rpc: { workspaces_get: () => state },
       sidebarThreads: {
         status: "ready",
@@ -223,6 +227,7 @@ it("reserves top-bar space only while the app-wide bar renders and cleans up on 
     app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
     {},
     {
+      settings: { workspaces: true },
       rpc: { workspaces_get: () => state },
       sidebarThreads: { status: "ready", projects, threads: [], sections: [] },
     },
@@ -257,6 +262,7 @@ it("opens management outside the sidebar, searches memberships, and preserves ch
     app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
     {},
     {
+      settings: { workspaces: true },
       rpc: { workspaces_get: () => state, workspace_save: save },
       sidebarThreads: {
         status: "ready",
@@ -304,4 +310,19 @@ it("opens management outside the sidebar, searches memberships, and preserves ch
   await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
   expect(slot.getByRole("button", { name: "Manage workspaces" })).toBeTruthy();
   slot.lifecycle.unmount();
+});
+
+it("shows no workspace bar and filters nothing while the Workspaces setting is off", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const topbar = renderSlot(
+    app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
+    {},
+    {
+      rpc: { workspaces_get: () => state },
+      sidebarThreads: { status: "ready", projects, threads: [hThread], sections: [] },
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(topbar.queryByRole("tab")).toBeNull();
+  topbar.lifecycle.unmount();
 });

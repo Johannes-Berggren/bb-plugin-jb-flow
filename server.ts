@@ -274,6 +274,13 @@ type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]
 export default async function plugin(bb: BbPluginApi) {
   const { boardClear, boardSnooze, boardSnoozes } = createFocusBoard(bb);
   const settings = bb.settings.define({
+    workspaces: {
+      type: "boolean",
+      label: "Workspaces",
+      description:
+        "Tabs across the top of BB that group projects, threads, sections and plugin tools. Off shows everything as before.",
+      default: false,
+    },
     polishShell: {
       type: "boolean",
       label: "Polish the entire BB interface",

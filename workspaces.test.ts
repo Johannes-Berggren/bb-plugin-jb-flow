@@ -2,8 +2,8 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { createWorkspaceStorage } from "./workspace-storage";
+import { exampleWorkspaces } from "./workspaces.fixtures";
 import {
-  initialWorkspaces,
   inWorkspace,
   pluginInWorkspace,
   workspaceForThread,
@@ -15,7 +15,7 @@ const projects = [
   { id: "f", name: "monorepo-apps" },
   { id: "u", name: "Other" },
 ];
-const initial: WorkspaceState = { workspaces: initialWorkspaces(projects), threadWorkspaces: {} };
+const initial: WorkspaceState = { workspaces: exampleWorkspaces(projects), threadWorkspaces: {} };
 const thread = (
   id: string,
   projectId = "h",
@@ -78,6 +78,9 @@ it("persists defaults and overrides through reload, serializes concurrent edits,
     },
   });
   let store = createWorkspaceStorage(bb, () => {});
+  // A new install has no workspaces until the user adds some.
+  expect((await store.read()).workspaces).toEqual([]);
+  await bb.storage.kv.set("workspaces", initial.workspaces);
   expect((await store.read()).workspaces).toEqual(initial.workspaces);
   const [hitlight, findable] = initial.workspaces;
   await Promise.all([
