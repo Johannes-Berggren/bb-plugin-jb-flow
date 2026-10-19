@@ -1,0 +1,474 @@
+:where(.jf-workspaces, .jf-workspace-settings, .jf-workspace-topbar) {
+  font-family: inherit;
+  color: var(--foreground);
+  font-size: 13px;
+}
+.jf-workspaces {
+  padding: 6px 8px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+}
+.jf-workspace-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+}
+.jf-workspace-tool {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  text-align: left;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.jf-workspace-tool span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-workspace-tool svg {
+  flex-shrink: 0;
+}
+.jf-workspace-tool[aria-current="page"],
+.jf-workspace-tool:hover {
+  background: var(--state-hover, var(--accent));
+  color: var(--foreground);
+}
+.jf-workspace-tool:disabled {
+  opacity: 0.5;
+}
+.jf-workspace-badge {
+  color: var(--attention, var(--brand));
+}
+.jf-workspace-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.jf-workspace-footer button {
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.jf-workspace-footer button:hover {
+  background: var(--state-hover, var(--accent));
+  color: var(--foreground);
+}
+.jf-workspace-tabs {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  min-width: 0;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+.jf-workspace-tabs button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  padding: 0 14px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.jf-workspace-tabs button:hover {
+  color: var(--foreground);
+  background: var(--state-hover, var(--accent));
+}
+.jf-workspace-tabs button[aria-selected="true"] {
+  color: var(--foreground);
+}
+.jf-workspace-tabs button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  inset-inline: 14px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--brand, var(--foreground));
+}
+.jf-workspace-tabs .jf-workspace-tab-count {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  line-height: 14px;
+}
+.jf-workspace-attention {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--warning-text, var(--primary));
+  flex-shrink: 0;
+}
+
+.jf-workspace-global-tab {
+  margin-inline-start: 12px;
+}
+.jf-workspace-global-tab::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -7px;
+  height: 14px;
+  width: 1px;
+  background: var(--border);
+}
+.jf-workspace-manage {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-inline-start: 10px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.jf-workspace-manage:hover {
+  background: var(--state-hover, var(--accent));
+  color: var(--foreground);
+}
+.jf-workspace-retry {
+  margin-inline-start: auto;
+  -webkit-app-region: no-drag;
+}
+.jf-workspace-dialog.jf-workspace-dialog {
+  padding: 0;
+  gap: 0;
+  width: min(760px, calc(100vw - 40px));
+  max-width: 760px;
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  border-radius: 12px;
+  box-shadow: 0 24px 80px #0005;
+}
+.jf-workspace-dialog-heading {
+  padding: 24px 26px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.jf-workspace-dialog-heading h2 {
+  margin-bottom: 8px;
+}
+.jf-workspace-settings {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  min-height: 480px;
+  min-width: 0;
+}
+.jf-workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 12px;
+  border-inline-end: 1px solid var(--border);
+  background: var(--sidebar, var(--background));
+}
+.jf-workspace-list-label {
+  margin: 0 10px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.jf-workspace-list button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+.jf-workspace-list button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jf-workspace-list button:hover,
+.jf-workspace-list button[aria-current="true"] {
+  background: var(--state-hover, var(--accent));
+  color: var(--foreground);
+}
+.jf-workspace-monogram {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+}
+.jf-workspace-list .jf-workspace-create {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.jf-workspace-editor {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.jf-workspace-editor-heading {
+  display: grid;
+  gap: 8px;
+  padding: 22px 24px 20px;
+}
+.jf-workspace-editor-heading label {
+  font-size: 12px;
+  font-weight: 500;
+}
+.jf-workspace-editor-heading input {
+  height: 34px;
+  font-size: 13px;
+}
+.jf-membership-tabs {
+  display: flex;
+  padding-inline: 24px;
+  gap: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.jf-membership-tabs button {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding-block: 0 11px;
+  color: var(--muted-foreground);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+.jf-membership-tabs button[aria-pressed="true"] {
+  color: var(--foreground);
+  border-color: var(--foreground);
+}
+.jf-membership-tabs button span {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-membership-body {
+  padding: 16px 24px;
+  flex: 1;
+  min-height: 0;
+}
+.jf-membership-hint {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  min-height: 36px;
+  margin-bottom: 10px;
+}
+.jf-membership-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 10px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  margin-bottom: 8px;
+}
+.jf-membership-search input {
+  padding: 0;
+  height: 28px;
+  border: none;
+  box-shadow: none;
+  font-size: 12px;
+}
+.jf-membership-search:focus-within {
+  outline: 1px solid var(--ring);
+}
+.jf-membership-search input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.jf-membership-list {
+  height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.jf-membership-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.jf-membership-row:hover {
+  background: var(--state-hover, var(--accent));
+}
+.jf-membership-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-membership-row small {
+  margin-inline-start: auto;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.jf-membership-empty,
+.jf-workspace-empty {
+  color: var(--muted-foreground);
+  padding: 24px 8px;
+  font-size: 12px;
+}
+.jf-workspace-empty {
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  justify-items: center;
+}
+.jf-workspace-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+}
+.jf-workspace-save-actions {
+  display: flex;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+.jf-workspace-editor-footer .jf-workspace-remove {
+  padding-inline: 0;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.jf-workspace-remove-confirm {
+  margin: 0 24px 16px;
+  font-size: 12px;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.jf-workspace-error {
+  padding: 8px 24px;
+  color: var(--destructive-text, var(--foreground));
+  font-size: 12px;
+}
+:where(.jf-workspaces, .jf-workspace-settings, .jf-workspace-topbar)
+  button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+@media (max-width: 767px) {
+  .jf-workspace-dialog.jf-workspace-dialog {
+    width: 100%;
+    border-radius: 0;
+  }
+  .jf-workspace-settings {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .jf-workspace-list {
+    flex-direction: row;
+    overflow-x: auto;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+  }
+  .jf-workspace-list button {
+    flex-shrink: 0;
+  }
+  .jf-workspace-list-label {
+    display: none;
+  }
+  .jf-workspace-list .jf-workspace-create {
+    margin-top: 0;
+  }
+  .jf-membership-list {
+    height: min(200px, 26dvh);
+  }
+  .jf-workspace-editor-heading {
+    padding-top: 16px;
+  }
+}
+@media (pointer: coarse) {
+  .jf-workspace-tool,
+  .jf-workspace-tabs button,
+  .jf-workspace-footer button,
+  .jf-workspace-manage,
+  .jf-membership-row,
+  .jf-membership-tabs button,
+  .jf-workspace-settings button {
+    min-height: 44px;
+  }
+  .jf-workspace-manage {
+    min-width: 44px;
+  }
+}
+
+/* Reserve a separate row for workspace navigation. Framed desktop layouts
+   pull their thread header into the native title row with a negative margin,
+   so keep their existing title-row padding as well as the workspace row. */
+.jb-flow-workspace-bar {
+  --jf-workspace-bar-height: 48px;
+  --jf-workspace-bar-leading: 56px;
+}
+.jb-flow-workspace-bar:has([data-testid="app-layout-root"][data-framed]) {
+  --jf-workspace-bar-height: var(--bb-window-title-bar-height, 40px);
+  --jf-workspace-bar-leading: 216px;
+}
+.jb-flow-workspace-bar [data-testid="app-layout-root"] {
+  padding-top: var(--jf-workspace-bar-height);
+}
+.jb-flow-workspace-bar [data-testid="app-layout-root"][data-framed] {
+  padding-top: calc(
+    var(--bb-window-title-bar-height, 40px) + var(--jf-workspace-bar-height)
+  );
+}
+.jb-flow-workspace-bar
+  [data-testid="app-layout-root"]:not([data-framed])
+  [data-sidebar="panel"] {
+  top: var(--jf-workspace-bar-height);
+  height: calc(var(--bb-shell-height, 100dvh) - var(--jf-workspace-bar-height));
+}
+.jf-workspace-topbar {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  z-index: 43;
+  display: flex;
+  align-items: center;
+  height: calc(var(--jf-workspace-bar-height, 48px) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  min-width: 0;
+  padding-inline: var(--jf-workspace-bar-leading, 56px)
+    max(12px, env(safe-area-inset-right));
+  color: var(--foreground);
+  background: var(--sidebar, var(--background));
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.jb-flow-workspace-bar:has([data-testid="app-desktop-sidebar-trigger"]) {
+  --jf-workspace-bar-leading: 216px;
+}

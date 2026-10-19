@@ -4,11 +4,11 @@
   "type": "module",
   "engines": {
     "bb": ">=0.46",
-    "bbPluginSdk": ">=0.6.37"
+    "bbPluginSdk": ">=0.6.54"
   },
   "bb": {
     "name": "JB Flow",
-    "description": "Snooze threads until a date, a daily stale-thread digest, and a Triage sidebar with lanes, tags and keyboard triage.",
+    "description": "Workspaces for your projects, threads and tools, with triage, snooze, PR tracking and live agent activity.",
     "branding": {
       "icon": "TimeSchedule"
     },
@@ -29,7 +29,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.49",
+    "@get-bb/plugin-sdk": "0.6.54",
     "@pierre/diffs": "^1.2.9",
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-context-menu": "^2.3.3",

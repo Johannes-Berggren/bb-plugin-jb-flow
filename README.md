@@ -4,11 +4,64 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 ## Requirements
 
-- bb 0.46 or later.
+- bb 0.46 or later **with Plugin SDK 0.6.54 or later**. Workspace navigation uses APIs newer than the SDK bundled with early 0.46.1 builds; update BB before installing this version.
 - The [GitHub CLI](https://cli.github.com) (`gh`), logged in with `gh auth login`, for everything PR-related: PR tracking, `wait_for_ci`, `pr_status`, the release watcher and the Unreleased section. Repos must be on github.com. Snooze, the digest and the Triage list work without it.
 - Auto-continue after usage limits recognises Claude Code's limit message only. Everything else works with any provider.
 
 ## Features
+
+### Workspaces
+
+Choose **JB Flow workspaces** under Settings → Appearance → Sidebar navigation
+if another navigation provider is pinned. The HitLight, Findable, All and
+Unassigned tabs span the top of the BB window and filter its threads, sections,
+Studio and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention.
+Hover a tab for both counts. Switching restores
+the last thread for that workspace in this browser tab; a new-thread button
+uses its first available project. Opening a thread from another workspace
+reveals its workspace automatically. Switching does not stop agents.
+
+HitLight projects are initially matched by name; Findable includes
+`monorepo-apps`, `monorepo-ai`, `infrastructure_v2` and names containing
+`findable`. These initial assignments are saved once. Use the **Manage workspaces** settings icon beside the tabs
+or Settings → JB Flow → Workspaces to create or rename workspaces, choose
+projects, assign sections and select tools. Selecting a project or section
+moves that grouping from its previous workspace. Tools may belong to several
+workspaces; unassigned tools remain shared. **More tools** always reaches the
+other tools without changing their global visibility settings. This controls
+navigation visibility, not plugin execution, credentials or permissions.
+
+A thread uses an explicit workspace assignment first, then inherits its
+parent's assignment, then its section or project. Use **Move to workspace** in
+the sidebar context menu or BB's thread menu to override this, choose
+**Unassigned**, or restore **Automatic**. Removing a workspace keeps its
+threads, projects and native sections. Explicit assignments to the removed
+workspace become unassigned. Section order is saved per workspace; workflow
+lanes remain available with that workspace's threads. Workspace configuration
+and thread assignments sync between clients. The active tab and remembered
+threads belong to this browser session.
+
+On macOS the tabs sit beside the native window and navigation controls, with
+the thread title and header in a separate row directly below. Browser and mobile
+clients reserve a row above the sidebar and conversation. The bar remains available when the sidebar is closed;
+its shell spacing is removed when the plugin unloads. The settings icon opens
+a focused dialog with searchable Projects, Sections and Tools lists. Workspace
+settings are also available in plugin settings.
+
+The same operations are available over RPC (`workspaces_get`, `workspace_save`,
+`workspace_remove`, `workspace_assign`) and CLI:
+
+```sh
+bb jb-flow workspaces
+bb jb-flow workspaces assign <thread-id> hitlight
+bb jb-flow workspaces assign <thread-id> auto
+bb jb-flow workspaces assign <thread-id> unassigned
+bb jb-flow workspaces save '{"id":null,"name":"Personal","projectIds":[],"sectionIds":[],"pluginIds":[],"sectionOrder":[]}'
+bb jb-flow workspaces remove <workspace-id>
+```
+
+`save` returns the saved workspace, including its generated ID. Pass an existing
+ID to edit it; names must be unique. These commands return JSON.
 
 ### App-wide appearance
 
@@ -22,8 +75,8 @@ Turn the setting off to restore standard shell styling while keeping Studio and
 the palette. The content script removes its root class and event listeners on
 reload or disable. Reduced motion and forced colors are respected. BB continues
 to own navigation, panel resizing, conversations, touch targets, and scrolling.
-This is a visual shell treatment; changing BB's navigation structure requires
-changes in BB itself. Shell selectors use the current host's DOM attributes and
+This setting changes shell styling; Workspaces separately uses BB's navigation
+and app-overlay APIs to arrange its tabs and tools. Shell selectors use the current host's DOM attributes and
 need visual rechecking after BB upgrades.
 
 ### Live agent activity

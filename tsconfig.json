@@ -50,6 +50,13 @@
     "vitest.config.ts",
     "thread-status.test.ts",
     "timeline-activity.ui.test.tsx",
-    "decision-choices.ui.test.tsx"
+    "decision-choices.ui.test.tsx",
+    "workspaces.ts",
+    "workspace-client.tsx",
+    "workspace-ui.tsx",
+    "workspace-storage.ts",
+    "workspaces.test.ts",
+    "workspaces.ui.test.tsx",
+    "workspace-topbar.ts"
   ]
 }

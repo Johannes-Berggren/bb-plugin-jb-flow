@@ -1,0 +1,376 @@
+/* Shared visual rhythm for JB Flow-owned surfaces. */
+.jf-triage,
+.jf-home,
+.jf-side-panel,
+.jf-settings {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+.jf-triage {
+  padding-inline: 8px;
+}
+.jf-triage-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 7px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 500;
+}
+.jf-triage-heading > button {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.jf-triage-keyboard {
+  margin-left: auto;
+  cursor: help;
+}
+.jf-triage-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 4px;
+}
+.jf-triage .jf-filter-chip {
+  justify-content: flex-start;
+  min-width: 0;
+  height: 29px;
+  gap: 7px;
+  padding-inline: 7px;
+  border: 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+.jf-filter-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.jf-filter-count {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.jf-filter-chip[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.jf-machine-filters {
+  margin: 8px 0 2px;
+  border-top: 1px solid var(--border);
+}
+.jf-machine-filters summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 7px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 11px;
+  list-style: none;
+}
+.jf-machine-filters summary::-webkit-details-marker,
+.jf-leftovers summary::-webkit-details-marker {
+  display: none;
+}
+.jf-machine-filters summary > :last-child {
+  margin-left: auto;
+}
+.jf-machine-filters[open] summary > :last-child,
+.jf-leftovers[open] summary > :last-child {
+  rotate: 180deg;
+}
+.jf-triage [data-jb-flow-section-header] {
+  padding: 16px 7px 7px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.jf-triage [data-jb-flow-section-header] > span:last-child {
+  background: transparent;
+  padding: 0 3px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.jf-triage [data-jb-flow-section-header] button {
+  min-width: 0;
+}
+.jf-triage .jf-thread-row {
+  min-height: 34px;
+  height: auto;
+  padding: 7px 7px 7px 18px;
+  font-size: 12px;
+  gap: 7px;
+}
+.jf-project-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  font-size: 9px;
+  line-height: 14px;
+  font-weight: 400;
+}
+.jf-triage .jf-sections-divider {
+  margin-top: 18px;
+  margin-inline: 7px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.jf-triage section > p {
+  padding-left: 25px;
+  font-size: 11px;
+}
+.jf-group-action:focus-visible {
+  opacity: 1;
+}
+.jf-home {
+  display: grid;
+  gap: 12px;
+}
+.jf-home > p,
+.jf-home > div > p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.jf-home > ul,
+.jf-side-panel ul {
+  border-radius: 8px;
+  background: transparent;
+}
+.jf-home > ul > li {
+  padding: 12px 14px;
+}
+.jf-home .jf-home-summary {
+  margin-top: 4px;
+  line-height: 1.6;
+  font-size: 11px;
+}
+.jf-home-row-actions {
+  transition: opacity 120ms ease;
+}
+.jf-home-row-actions:focus-within,
+.jf-home li:focus-within .jf-home-row-actions {
+  opacity: 1;
+}
+.jf-home .jf-home-row-actions button {
+  height: 28px;
+  padding-inline: 7px;
+  font-size: 10px;
+}
+.jf-unreleased li > a {
+  align-items: center;
+  padding: 11px 12px;
+  gap: 10px;
+}
+.jf-unreleased li > a > span:nth-child(2) {
+  font-size: 12px;
+}
+.jf-unreleased li > a > span:nth-child(3) {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+}
+.jf-unreleased li > a > span:first-child,
+.jf-unreleased li > a > span:last-child {
+  font-size: 10px;
+}
+.jf-leftovers {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  min-width: 0;
+}
+.jf-leftovers > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+}
+.jf-leftovers > summary > span:nth-child(3) {
+  margin-left: auto;
+  font-size: 10px;
+}
+.jf-leftovers > div {
+  flex-wrap: wrap;
+  font-size: 11px;
+  padding-top: 8px;
+}
+.jf-leftovers li {
+  flex-wrap: wrap;
+  min-width: 0;
+  padding-block: 10px;
+}
+.jf-side-panel > div:first-child {
+  gap: 12px;
+}
+.jf-side-panel p {
+  line-height: 1.6;
+  font-size: 12px;
+}
+.jf-side-panel input {
+  min-height: 34px;
+  font-size: 12px;
+}
+.jf-side-panel button {
+  font-size: 11px;
+}
+.jf-pr-panel > div:nth-child(2) {
+  padding: 14px;
+}
+.jf-pr-panel li {
+  min-height: 34px;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.jf-pr-panel li > span:last-child {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--muted);
+}
+.jf-pr-link-form {
+  padding-top: 8px;
+  align-items: center;
+}
+.jf-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.jf-panel-heading > svg {
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.jf-panel-heading h3 {
+  font-size: 13px;
+  font-weight: 500;
+}
+.jf-panel-heading p {
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.jf-scripts section > h3 {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  padding-block: 4px;
+}
+.jf-scripts .jf-command-row {
+  padding: 11px 10px;
+  gap: 9px;
+}
+.jf-command-row > div > div:first-child {
+  font-size: 12px;
+  font-weight: 500;
+}
+.jf-command-row > div > div:last-child {
+  margin-top: 4px;
+  font-size: 10px;
+}
+.jf-command-row:focus-within button {
+  opacity: 1;
+}
+.jf-settings {
+  max-width: 760px;
+}
+.jf-settings p {
+  line-height: 1.7;
+  font-size: 12px;
+}
+.jf-settings .jf-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: -4px;
+}
+.jf-settings input {
+  min-height: 34px;
+  font-size: 12px;
+}
+.jf-settings textarea {
+  background: var(--card);
+  line-height: 1.7;
+  padding: 12px;
+}
+:where(.jf-triage, .jf-home, .jf-side-panel, .jf-settings)
+  :is(button, a, input, summary, textarea):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+@media (pointer: coarse) {
+  .jf-triage .jf-filter-chip,
+  .jf-triage .jf-thread-row,
+  .jf-machine-filters summary,
+  .jf-leftovers summary,
+  .jf-side-panel button,
+  .jf-home button {
+    min-height: 44px;
+  }
+  .jf-home-row-actions,
+  .jf-triage .jf-group-action {
+    opacity: 1;
+  }
+}
+@media (max-width: 600px) {
+  .jf-home-row-actions {
+    flex-direction: column;
+    opacity: 1;
+  }
+  .jf-home > ul > li {
+    padding: 10px;
+    gap: 8px;
+  }
+  .jf-unreleased li > a > span:nth-child(3) {
+    display: none;
+  }
+  .jf-unreleased li > a {
+    gap: 8px;
+    padding-inline: 8px;
+  }
+  .jf-pr-link-form {
+    flex-wrap: wrap;
+  }
+  .jf-pr-link-form input {
+    flex: 1 1 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-home-row-actions {
+    transition: none;
+  }
+}
+.jf-home .jf-empty-state {
+  border-style: solid;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+.jf-triage [data-jb-flow-section-header]:focus-within kbd {
+  opacity: 1;
+}
+.jf-home > * {
+  margin-block: 0;
+}
+.jf-unreleased > ul > li {
+  padding: 0;
+}
+.jf-your-move li > span:first-child {
+  width: 46px;
+  white-space: nowrap;
+  font-size: 10px;
+}

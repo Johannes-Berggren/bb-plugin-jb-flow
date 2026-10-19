@@ -6,6 +6,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: [
+      "workspaces.test.ts",
+      "workspaces.ui.test.tsx",
       "studio.ui.test.tsx",
       "shell-appearance.ui.test.tsx",
       "live-activity.ui.test.tsx",

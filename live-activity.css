@@ -4,17 +4,11 @@
   overflow: hidden;
   isolation: isolate;
   padding: 17px 19px 0;
-  border: 1px solid color-mix(in oklch, var(--live-accent) 32%, var(--canvas));
-  border-radius: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   color: var(--foreground);
-  background:
-    radial-gradient(
-      ellipse at 0 0,
-      color-mix(in oklch, var(--live-accent) 10%, transparent),
-      transparent 70%
-    ),
-    var(--card);
-  box-shadow: 0 4px 18px #00000008;
+  background: var(--card);
+  box-shadow: none;
 }
 .jf-live-heading {
   display: flex;
@@ -41,7 +35,7 @@
   border-top-color: var(--live-accent);
   border-right-color: transparent;
   border-radius: 13px;
-  animation: jf-live-orbit 5s linear infinite;
+  display: none;
   pointer-events: none;
 }
 .jf-live-heading-copy {
@@ -53,7 +47,7 @@
 }
 .jf-live-eyebrow {
   font-size: 10px;
-  letter-spacing: 0.13em;
+  letter-spacing: 0.05em;
   font-weight: 650;
   color: var(--muted-foreground);
 }
@@ -476,7 +470,7 @@
 }
 .jf-live-heading-copy > .jf-live-eyebrow {
   font-size: 10px;
-  letter-spacing: 0.13em;
+  letter-spacing: 0.05em;
 }
 .jf-live-now {
   display: block;
@@ -484,8 +478,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 500;
   letter-spacing: -0.015em;
   line-height: 1.4;
 }
