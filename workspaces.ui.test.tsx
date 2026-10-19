@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type {
@@ -57,20 +57,42 @@ const hThread = {
   status: "idle",
   isUnread: false,
 } as PluginSidebarThread;
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
 afterEach(() => {
   cleanup();
   selectWorkspace(null);
   sessionStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 it("switches tabs, filters the actual navigation, keeps shared tools, and opens new threads in the workspace project", async () => {
   const app = await loadPluginApp(() => import("./app"));
   const slot = renderSlot(
-    app.experimentalSidebarNavigations.find((registration) => registration.id === "workspaces")!,
-    { isCompactViewport: false, placement: "list", experimental_Original: () => null },
+    app.experimentalSidebarNavigations.find(
+      (registration) => registration.id === "workspaces",
+    )!,
+    {
+      isCompactViewport: false,
+      placement: "list",
+      experimental_Original: () => null,
+    },
     {
       rpc: { workspaces_get: () => state },
-      sidebarThreads: { status: "ready", projects, threads: [hThread], sections: [] },
+      sidebarThreads: {
+        status: "ready",
+        projects,
+        threads: [hThread],
+        sections: [],
+      },
       sidebarNavigation: {
         items: [
           item("new", "New thread", null),
@@ -86,7 +108,12 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     {},
     {
       rpc: { workspaces_get: () => state },
-      sidebarThreads: { status: "ready", projects, threads: [hThread], sections: [] },
+      sidebarThreads: {
+        status: "ready",
+        projects,
+        threads: [hThread],
+        sections: [],
+      },
     },
   );
   expect(document.querySelector(".jf-workspaces [role=tablist]")).toBeNull();
@@ -136,13 +163,19 @@ it("settings report save failures and preserve the edited values for retry", asy
       sdk: { plugins: { list: async () => ({ plugins: [] }) } },
     },
   );
-  fireEvent.click(await slot.findByRole("button", { name: /HitLight · Edit/ }));
-  const name = slot.getByRole("textbox", { name: "Name" });
+  fireEvent.click(await slot.findByRole("button", { name: "Edit HitLight" }));
+  const name = slot.getByRole("textbox", { name: "Workspace name" });
   fireEvent.change(name, { target: { value: "HitLight work" } });
   fireEvent.click(slot.getByRole("button", { name: "Save workspace" }));
-  await waitFor(() => expect(slot.getByRole("alert").textContent).toContain("Connection lost"));
+  await waitFor(() =>
+    expect(slot.getByRole("alert").textContent).toContain("Connection lost"),
+  );
   expect((name as HTMLInputElement).value).toBe("HitLight work");
-  expect(slot.getByRole("button", { name: "Save workspace" }).hasAttribute("disabled")).toBe(false);
+  expect(
+    slot
+      .getByRole("button", { name: "Save workspace" })
+      .hasAttribute("disabled"),
+  ).toBe(false);
   slot.lifecycle.unmount();
 });
 
@@ -155,10 +188,17 @@ it("reveals the owning workspace when a deep link opens a thread from another wo
     {
       context: { threadId: "ht", projectId: "h" },
       rpc: { workspaces_get: () => state },
-      sidebarThreads: { status: "ready", projects, threads: [hThread], sections: [] },
+      sidebarThreads: {
+        status: "ready",
+        projects,
+        threads: [hThread],
+        sections: [],
+      },
     },
   );
-  await waitFor(() => expect(sessionStorage.getItem("jb-flow-workspace")).toBe("hitlight"));
+  await waitFor(() =>
+    expect(sessionStorage.getItem("jb-flow-workspace")).toBe("hitlight"),
+  );
   expect(sessionStorage.getItem("jb-flow-workspace-last:hitlight")).toBe("ht");
   slot.lifecycle.unmount();
 });
@@ -166,7 +206,9 @@ it("reveals the owning workspace when a deep link opens a thread from another wo
 it("reserves top-bar space only while the app-wide bar renders and cleans up on reload or disable", async () => {
   const controller = new AbortController();
   const dispose = mountWorkspaceTopBar({ signal: controller.signal });
-  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  expect(
+    document.documentElement.classList.contains("jb-flow-workspace-bar"),
+  ).toBe(false);
   const app = await loadPluginApp(() => import("./app"));
   const topbar = renderSlot(
     app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
@@ -177,14 +219,80 @@ it("reserves top-bar space only while the app-wide bar renders and cleans up on 
     },
   );
   await topbar.findByRole("tab", { name: "HitLight" });
-  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(true);
+  expect(
+    document.documentElement.classList.contains("jb-flow-workspace-bar"),
+  ).toBe(true);
   topbar.lifecycle.unmount();
-  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  expect(
+    document.documentElement.classList.contains("jb-flow-workspace-bar"),
+  ).toBe(false);
   window.dispatchEvent(new CustomEvent(WORKSPACE_BAR_EVENT, { detail: true }));
-  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(true);
+  expect(
+    document.documentElement.classList.contains("jb-flow-workspace-bar"),
+  ).toBe(true);
   controller.abort();
-  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  expect(
+    document.documentElement.classList.contains("jb-flow-workspace-bar"),
+  ).toBe(false);
   window.dispatchEvent(new CustomEvent(WORKSPACE_BAR_EVENT, { detail: true }));
-  expect(document.documentElement.classList.contains("jb-flow-workspace-bar")).toBe(false);
+  expect(
+    document.documentElement.classList.contains("jb-flow-workspace-bar"),
+  ).toBe(false);
   dispose?.();
+});
+
+it("opens management outside the sidebar, searches memberships, and preserves choices between categories", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const save = vi.fn((input) => input);
+  const slot = renderSlot(
+    app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
+    {},
+    {
+      rpc: { workspaces_get: () => state, workspace_save: save },
+      sidebarThreads: {
+        status: "ready",
+        projects,
+        threads: [],
+        sections: [
+          {
+            id: "sec",
+            name: "Priority",
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+      },
+      sdk: { plugins: { list: async () => ({ plugins: [] }) } },
+      sidebarNavigation: {
+        items: [item("lifeboat/board", "Lifeboat", "lifeboat")],
+      },
+    },
+  );
+  await slot.findByRole("tab", { name: "HitLight" });
+  fireEvent.click(slot.getByRole("button", { name: "Manage workspaces" }));
+  expect(slot.getByRole("dialog", { name: "Workspaces" })).toBeTruthy();
+  fireEvent.change(slot.getByRole("textbox", { name: "Search projects" }), {
+    target: { value: "monorepo" },
+  });
+  expect(slot.queryByRole("checkbox", { name: "hitlight-app" })).toBeNull();
+  fireEvent.click(slot.getByRole("checkbox", { name: /monorepo-apps/ }));
+  fireEvent.click(slot.getByRole("button", { name: /Sections/ }));
+  fireEvent.click(slot.getByRole("checkbox", { name: "Priority" }));
+  fireEvent.click(slot.getByRole("button", { name: /Tools/ }));
+  fireEvent.click(await slot.findByRole("checkbox", { name: "Lifeboat" }));
+  fireEvent.click(slot.getByRole("button", { name: "Save workspace" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "hitlight",
+        projectIds: ["h", "f"],
+        sectionIds: ["sec"],
+        pluginIds: expect.arrayContaining(["lifeboat"]),
+      }),
+    ),
+  );
+  fireEvent.click(slot.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
+  expect(slot.getByRole("button", { name: "Manage workspaces" })).toBeTruthy();
+  slot.lifecycle.unmount();
 });

@@ -22,7 +22,7 @@ reveals its workspace automatically. Switching does not stop agents.
 
 HitLight projects are initially matched by name; Findable includes
 `monorepo-apps`, `monorepo-ai`, `infrastructure_v2` and names containing
-`findable`. These initial assignments are saved once. Use **Manage workspaces**
+`findable`. These initial assignments are saved once. Use the **Manage workspaces** settings icon beside the tabs
 or Settings → JB Flow → Workspaces to create or rename workspaces, choose
 projects, assign sections and select tools. Selecting a project or section
 moves that grouping from its previous workspace. Tools may belong to several
@@ -43,8 +43,9 @@ threads belong to this browser session.
 On macOS the tabs share the existing title-bar row, beside the native window
 and navigation controls. Browser and mobile clients reserve a row above the
 sidebar and conversation. The bar remains available when the sidebar is closed;
-its shell spacing is removed when the plugin unloads. Settings for workspaces
-remain in the sidebar and plugin settings.
+its shell spacing is removed when the plugin unloads. The settings icon opens
+a focused dialog with searchable Projects, Sections and Tools lists. Workspace
+settings are also available in plugin settings.
 
 The same operations are available over RPC (`workspaces_get`, `workspace_save`,
 `workspace_remove`, `workspace_assign`) and CLI:
