@@ -23,7 +23,7 @@ const report = `**Goal:** Ship the UI.
 ### Next steps
 - Check design.
 `;
-it("reads the Stream Deck template and reported milestone values without inventing overall progress", () => {
+it("reads a status report template and reported milestone values without inventing overall progress", () => {
   expect(parseStatusReport(report, 10)).toEqual({
     goal: "Ship the UI.",
     done: "Built the monitor.",

@@ -12,14 +12,14 @@ import { selectWorkspace } from "./workspace-client";
 const projects = [
   {
     id: "h",
-    name: "hitlight-app",
+    name: "acme-app",
     isPersonal: false,
     href: "/projects/h",
     settingsHref: "/projects/h/settings",
   },
   {
     id: "f",
-    name: "monorepo-apps",
+    name: "globex-web",
     isPersonal: false,
     href: "/projects/f",
     settingsHref: "/projects/f/settings",
@@ -97,8 +97,8 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
       sidebarNavigation: {
         items: [
           item("new", "New thread", null),
-          item("hitlight-devops/board", "HitLight DevOps", "hitlight-devops"),
-          item("findable-devops/board", "Findable DevOps", "findable-devops"),
+          item("acme-devops/board", "Acme DevOps", "acme-devops"),
+          item("globex-devops/board", "Globex DevOps", "globex-devops"),
           item("lifeboat/board", "Lifeboat", "lifeboat"),
         ],
       },
@@ -124,15 +124,15 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     },
   );
   expect(document.querySelector(".jf-workspaces [role=tablist]")).toBeNull();
-  const hitlight = await topbar.findByRole("tab", { name: /HitLight/ });
-  expect(hitlight.textContent).toBe("HitLight2");
-  expect(hitlight.getAttribute("aria-description")).toBe(
+  const acme = await topbar.findByRole("tab", { name: /Acme/ });
+  expect(acme.textContent).toBe("Acme2");
+  expect(acme.getAttribute("aria-description")).toBe(
     "2 threads · 1 needs attention",
   );
-  fireEvent.click(hitlight);
-  expect(hitlight.getAttribute("aria-selected")).toBe("true");
-  expect(slot.queryByRole("button", { name: "Findable DevOps" })).toBeNull();
-  expect(slot.getByRole("button", { name: "HitLight DevOps" })).toBeTruthy();
+  fireEvent.click(acme);
+  expect(acme.getAttribute("aria-selected")).toBe("true");
+  expect(slot.queryByRole("button", { name: "Globex DevOps" })).toBeNull();
+  expect(slot.getByRole("button", { name: "Acme DevOps" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Lifeboat" })).toBeTruthy();
   expect(topbar.inspection.navigateCalls.at(-1)).toMatchObject({
     method: "toCompose",
@@ -144,15 +144,15 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     options: { projectId: "h" },
   });
   fireEvent.click(slot.getByRole("button", { name: "More tools" }));
-  expect(slot.getByRole("button", { name: "Findable DevOps" })).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Findable DevOps" }));
+  expect(slot.getByRole("button", { name: "Globex DevOps" })).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Globex DevOps" }));
   expect(slot.inspection.sidebarNavigationCalls.at(-1)).toMatchObject({
     method: "activate",
-    itemId: "findable-devops/board",
+    itemId: "globex-devops/board",
   });
-  fireEvent.click(topbar.getByRole("tab", { name: "Findable" }));
+  fireEvent.click(topbar.getByRole("tab", { name: "Globex" }));
   fireEvent.keyDown(topbar.getByRole("tablist"), { key: "Home" });
-  expect(document.activeElement).toBe(hitlight);
+  expect(document.activeElement).toBe(acme);
   slot.lifecycle.unmount();
   expect(topbar.getByRole("tablist", { name: "Workspaces" })).toBeTruthy();
   topbar.lifecycle.unmount();
@@ -175,14 +175,14 @@ it("settings report save failures and preserve the edited values for retry", asy
       sdk: { plugins: { list: async () => ({ plugins: [] }) } },
     },
   );
-  fireEvent.click(await slot.findByRole("button", { name: "Edit HitLight" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Edit Acme" }));
   const name = slot.getByRole("textbox", { name: "Workspace name" });
-  fireEvent.change(name, { target: { value: "HitLight work" } });
+  fireEvent.change(name, { target: { value: "Acme work" } });
   fireEvent.click(slot.getByRole("button", { name: "Save workspace" }));
   await waitFor(() =>
     expect(slot.getByRole("alert").textContent).toContain("Connection lost"),
   );
-  expect((name as HTMLInputElement).value).toBe("HitLight work");
+  expect((name as HTMLInputElement).value).toBe("Acme work");
   expect(
     slot
       .getByRole("button", { name: "Save workspace" })
@@ -192,7 +192,7 @@ it("settings report save failures and preserve the edited values for retry", asy
 });
 
 it("reveals the owning workspace when a deep link opens a thread from another workspace", async () => {
-  selectWorkspace("findable");
+  selectWorkspace("globex");
   const app = await loadPluginApp(() => import("./app"));
   const slot = renderSlot(
     app.appOverlays.find((overlay) => overlay.id === "workspace-route")!,
@@ -210,9 +210,9 @@ it("reveals the owning workspace when a deep link opens a thread from another wo
     },
   );
   await waitFor(() =>
-    expect(sessionStorage.getItem("jb-flow-workspace")).toBe("hitlight"),
+    expect(sessionStorage.getItem("jb-flow-workspace")).toBe("acme"),
   );
-  expect(sessionStorage.getItem("jb-flow-workspace-last:hitlight")).toBe("ht");
+  expect(sessionStorage.getItem("jb-flow-workspace-last:acme")).toBe("ht");
   slot.lifecycle.unmount();
 });
 
@@ -232,7 +232,7 @@ it("reserves top-bar space only while the app-wide bar renders and cleans up on 
       sidebarThreads: { status: "ready", projects, threads: [], sections: [] },
     },
   );
-  await topbar.findByRole("tab", { name: "HitLight" });
+  await topbar.findByRole("tab", { name: "Acme" });
   expect(
     document.documentElement.classList.contains("jb-flow-workspace-bar"),
   ).toBe(true);
@@ -283,14 +283,14 @@ it("opens management outside the sidebar, searches memberships, and preserves ch
       },
     },
   );
-  await slot.findByRole("tab", { name: "HitLight" });
+  await slot.findByRole("tab", { name: "Acme" });
   fireEvent.click(slot.getByRole("button", { name: "Manage workspaces" }));
   expect(slot.getByRole("dialog", { name: "Workspaces" })).toBeTruthy();
   fireEvent.change(slot.getByRole("textbox", { name: "Search projects" }), {
-    target: { value: "monorepo" },
+    target: { value: "globex" },
   });
-  expect(slot.queryByRole("checkbox", { name: "hitlight-app" })).toBeNull();
-  fireEvent.click(slot.getByRole("checkbox", { name: /monorepo-apps/ }));
+  expect(slot.queryByRole("checkbox", { name: "acme-app" })).toBeNull();
+  fireEvent.click(slot.getByRole("checkbox", { name: /globex-web/ }));
   fireEvent.click(slot.getByRole("button", { name: /Sections/ }));
   fireEvent.click(slot.getByRole("checkbox", { name: "Priority" }));
   fireEvent.click(slot.getByRole("button", { name: /Tools/ }));
@@ -299,7 +299,7 @@ it("opens management outside the sidebar, searches memberships, and preserves ch
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: "hitlight",
+        id: "acme",
         projectIds: ["h", "f"],
         sectionIds: ["sec"],
         pluginIds: expect.arrayContaining(["lifeboat"]),

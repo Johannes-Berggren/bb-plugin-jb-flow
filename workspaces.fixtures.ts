@@ -1,4 +1,4 @@
-// Test fixture: two example workspaces matched by project and plugin names.
+// Test fixture: two made-up workspaces matched by project and plugin names.
 import type { Workspace } from "./workspaces";
 
 export function exampleWorkspaces(projects: readonly { id: string; name: string }[]): Workspace[] {
@@ -18,18 +18,18 @@ export function exampleWorkspaces(projects: readonly { id: string; name: string 
     sectionOrder: [],
   });
   return [
-    make("hitlight", "HitLight", (name) => /hitl(?:ight|aight)/.test(name), [
-      "hitlight-devops",
+    make("acme", "Acme", (name) => /acme/.test(name), [
+      "acme-devops",
       "release-train",
       "runner-monitor",
     ]),
     make(
-      "findable",
-      "Findable",
+      "globex",
+      "Globex",
       (name) =>
-        /findable/.test(name) ||
-        ["monorepo-apps", "monorepo-ai", "infrastructure_v2"].includes(name),
-      ["findable-devops", "findable-team"],
+        /globex/.test(name) ||
+        ["globex-web", "globex-ai", "globex-infra"].includes(name),
+      ["globex-devops", "globex-team"],
     ),
   ];
 }
