@@ -1,3 +1,4 @@
+import "./flow-ui.css";
 import { mountWorkspaceTopBar } from "./workspace-topbar";
 import { toast } from "sonner";
 import type { WorkspaceState } from "./workspaces";
@@ -217,16 +218,8 @@ function needsMe(thread: PluginSidebarThread, awaiting: Record<string, number> |
 
 // --- project chips ------------------------------------------------------------
 
-function projectHue(projectId: string): number {
-  let hash = 0;
-  for (const char of projectId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return hash % 360;
-}
-
-// Filled from local.config.json via state_get; chips re-render with the list.
 let projectNaming: Pick<FlowState, "projectShortNames" | "stripProjectPrefixes"> = {
-  projectShortNames: {},
-  stripProjectPrefixes: [],
+  projectShortNames: {}, stripProjectPrefixes: [],
 };
 
 function shortProjectName(name: string): string {
@@ -242,14 +235,9 @@ function ProjectChip({
   project: PluginSidebarProject | undefined;
 }) {
   if (project === undefined || project.isPersonal) return null;
-  const hue = projectHue(project.id);
   return (
     <span
-      className="shrink-0 rounded px-1 text-[10px] font-medium leading-4"
-      style={{
-        backgroundColor: `hsl(${hue} 70% 50% / 0.16)`,
-        color: `hsl(${hue} 60% 45%)`,
-      }}
+      className="jf-project-chip"
       title={project.name}
     >
       {shortProjectName(project.name)}
@@ -688,7 +676,6 @@ function ThreadRow({
     void navigator.clipboard.writeText(text);
   };
   const shortcut = useSidebarThreadShortcut(thread.id);
-  const idleDays = (Date.now() - thread.updatedAt) / DAY_MS;
   const busy = thread.status === "active" || thread.status === "starting";
   const { pullRequest } = useSidebarThreadPullRequest(thread.id);
   const prs = threadPrs(createdPrs, pullRequest);
@@ -770,12 +757,12 @@ function ThreadRow({
           }}
           onKeyDown={onKeyDown}
           className={cn(
-            "group flex h-8 items-center gap-2 rounded-md pl-6 pr-2 text-sm outline-none",
+            "jf-thread-row group flex h-8 items-center gap-2 rounded-md pl-6 pr-2 text-sm outline-none",
             "hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
             active && "bg-accent",
           )}
           style={{
-            opacity: drag.dragging?.threadId === thread.id ? 0.4 : active ? 1 : idleDays > 14 ? 0.5 : idleDays > 7 ? 0.7 : 1,
+            opacity: drag.dragging?.threadId === thread.id ? 0.4 : 1,
           }}
         >
           <StatusIcon status={status} />
@@ -1045,7 +1032,7 @@ function GroupHeader({
         ) : null}
       </button>
       {action ? (
-        <button type="button" onClick={action.run} className="rounded px-1 text-[11px] text-foreground/70 opacity-0 hover:bg-accent hover:text-foreground group-hover/header:opacity-100">
+        <button type="button" onClick={action.run} className="jf-group-action rounded px-1 text-[11px] text-foreground/70 opacity-0 hover:bg-accent hover:text-foreground group-hover/header:opacity-100">
           {action.label}
         </button>
       ) : null}
@@ -1349,17 +1336,18 @@ function FilterChip({ hint, active, onClick, glyph, tone, label, count }: {
     <button
       type="button"
       title={hint}
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors",
+        "jf-filter-chip flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors",
         active
           ? "border-foreground/20 bg-accent text-foreground"
           : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
       <Glyph name={glyph} className={cn("size-3", tone)} />
-      {label}
-      <span className="tabular-nums opacity-70">{count}</span>
+      <span className="jf-filter-label">{label}</span>
+      <span className="jf-filter-count tabular-nums">{count}</span>
     </button>
   );
 }
@@ -1404,7 +1392,7 @@ function TriageThreadList({
     return sections.filter(
       (section) =>
         !laneIds.has(section.id) && section.id !== state?.snoozedSectionId &&
-        (selectedWorkspace === null || workspaceState.workspaces.every((owner) => !owner.sectionIds.includes(section.id)) || workspace?.sectionIds.includes(section.id) || threads.some((thread) => thread.sectionId === section.id)),
+        (selectedWorkspace === null || workspace?.sectionIds.includes(section.id) || threads.some((thread) => !thread.isArchived && !thread.isHidden && thread.sectionId === section.id)),
     );
   }, [sections, lanes, state?.snoozedSectionId, selectedWorkspace, workspaceState, workspace, threads]);
   const tags = useMemo(() => state?.tags ?? {}, [state]);
@@ -1759,9 +1747,13 @@ function TriageThreadList({
     <DragContext.Provider value={drag}>
     <nav
       aria-label="Triage"
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
+      className="jf-triage flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >
-      <div className="flex flex-wrap items-center gap-1 px-2 pt-2">
+      <div className="jf-triage-heading"><span>Threads</span>
+        {smart !== null && <button type="button" onClick={() => setSmart(null)}>Clear filter</button>}
+        <span className="jf-triage-keyboard" title="Keys on a focused row: 1–5 move to lane · s snooze · t tag · e archive · u unread · j/k move"><Icon name="Info" className="size-3" /></span>
+      </div>
+      <div className="jf-triage-filters">
         {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
           <FilterChip
             key={entry.id}
@@ -1774,7 +1766,12 @@ function TriageThreadList({
             count={smartCounts[entry.id]}
           />
         ))}
-        {/* One chip per machine, once threads run on more than one. */}
+      </div>
+      {(machines?.hosts.length ?? 0) > 1 && (
+        <details className="jf-machine-filters" key={smart?.startsWith("machine:") ? "selected-machine" : "machines"}
+          open={smart?.startsWith("machine:") ? true : undefined}>
+          <summary><Icon name="Terminal" className="size-3.5" /><span>Machines</span><Icon name="ChevronDown" className="size-3" /></summary>
+          <div className="jf-triage-filters">
         {(machines?.hosts.length ?? 0) > 1
           ? machines!.hosts
               .filter((host) => (machineCounts.get(host.id) ?? 0) > 0 || smart === `machine:${host.id}`)
@@ -1794,13 +1791,9 @@ function TriageThreadList({
                 );
               })
           : null}
-        <span
-          className="ml-auto cursor-help px-1 text-[11px] text-muted-foreground/70"
-          title={"Keys on a focused row:\n1–5 move to lane · s snooze · t tag · e archive · u unread · j/k move"}
-        >
-          ?
-        </span>
-      </div>
+          </div>
+        </details>
+      )}
       {knownTags.length > 0 ? (
         <div className="flex flex-wrap gap-1 px-2 pt-1">
           {knownTags.map((tag) => (
@@ -1848,7 +1841,7 @@ function TriageThreadList({
               />
             ) : null}
             {group.firstUserGroup ? (
-              <div className="group/divider mx-2 mt-6 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              <div className="jf-sections-divider group/divider mx-2 mt-6 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
                 Your sections
                 <span className="h-px flex-1 bg-border" />
                 <button
@@ -1875,7 +1868,7 @@ function TriageThreadList({
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="py-1 pl-6 pr-2 text-xs text-muted-foreground">
-                {group.id === "needs-me" ? "Inbox zero ✨" : "Nothing here."}
+                {group.id === "needs-me" ? "You’re all caught up." : "No threads yet."}
               </p>
             ) : (
               <>
@@ -1996,7 +1989,7 @@ function EmptyState({ children }: { children: ReactNode }) {
   return (
     <div
       role="status"
-      className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground"
+      className="jf-empty-state rounded-lg border border-border px-4 py-5 text-center text-xs text-muted-foreground"
     >
       {children}
     </div>
@@ -2077,12 +2070,12 @@ function DigestSection() {
     });
 
   return (
-    <div className="space-y-3">
+    <div className="jf-home jf-digest space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-muted-foreground">
           {digest === null
             ? "Loading…"
-            : `${items.length} idle unsectioned thread(s) · updated ${formatWhen(digest.generatedAt)}`}
+            : `${items.length} idle thread${items.length === 1 ? "" : "s"} without a section · updated ${formatWhen(digest.generatedAt)}`}
         </span>
         <div className="ml-auto flex gap-2">
           <Button
@@ -2093,10 +2086,10 @@ function DigestSection() {
           >
             <Icon name="RotateCcw" className="size-3.5" /> Refresh
           </Button>
-          <Button
+          {ids.length > 0 && <><Button
             variant="outline"
             size="sm"
-            disabled={pending || ids.length === 0}
+            disabled={pending}
             onClick={() =>
               act(() => rpc.call("digest_keep", { threadIds: ids, days: 14 }))
             }
@@ -2126,7 +2119,7 @@ function DigestSection() {
             onClick={() => act(() => rpc.call("archive", { threadIds: ids }))}
           >
             Archive{ids.length > 0 ? ` ${ids.length}` : ""}
-          </Button>
+          </Button></>}
         </div>
       </div>
       {error === null ? null : (
@@ -2135,7 +2128,7 @@ function DigestSection() {
         </p>
       )}
       {digest === null ? null : items.length === 0 ? (
-        <EmptyState>Nothing stale. Nice.</EmptyState>
+        <EmptyState>No stale threads in this workspace.</EmptyState>
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
           <li className="flex items-center gap-3 px-3 py-2 text-xs text-muted-foreground">
@@ -2219,7 +2212,8 @@ function LeftoversBlock() {
   if (!report || report.items.length === 0) return error ? <p className="text-sm text-destructive">{error}</p> : null;
   const safe = report.items.filter((item) => item.safe);
   return (
-    <div className="space-y-2 border-t border-border pt-3">
+    <details className="jf-leftovers space-y-2">
+      <summary><Icon name="FolderGit" className="size-4" /><span>Worktree cleanup</span><span>{report.items.length} checkouts</span><Icon name="ChevronDown" className="size-3" /></summary>
       <div className="flex items-center gap-2 text-sm">
         <span className="font-medium">Leftover worktrees</span>
         <span className="text-muted-foreground">
@@ -2255,7 +2249,7 @@ function LeftoversBlock() {
           onClose={() => setConfirming(false)}
         />
       ) : null}
-    </div>
+    </details>
   );
 }
 
@@ -2312,7 +2306,7 @@ function LaneSettings() {
   const missing = (Object.keys(LANE_NAMES) as LaneId[]).filter((lane) => !matched[lane]);
   const [pending, setPending] = useState(false);
   return (
-    <div className="space-y-3 text-sm">
+    <div className="jf-settings space-y-3 text-sm">
       <p className="text-muted-foreground">
         The Triage list's lanes (keys 1, 3, 4 and 5) are sections named Priority, Waiting for others, Pick up later and
         Low priority. Active (key 2) is always there. Rename a lane's section later and it keeps its role.
@@ -2354,7 +2348,7 @@ function MigrationSettings() {
   const [pending, setPending] = useState(false);
 
   return (
-    <div className="space-y-3 text-sm">
+    <div className="jf-settings space-y-3 text-sm">
       <p className="text-muted-foreground">
         Turn "area" sections into tags. Their threads get the tag and move to
         the Active lane, so one thread can be both #Commercial and Waiting. The

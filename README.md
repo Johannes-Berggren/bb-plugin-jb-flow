@@ -15,7 +15,8 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 Choose **JB Flow workspaces** under Settings → Appearance → Sidebar navigation
 if another navigation provider is pinned. The HitLight, Findable, All and
 Unassigned tabs span the top of the BB window and filter its threads, sections,
-Studio and home-page follow-ups. Tabs show attention counts. Switching restores
+Studio and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention.
+Hover a tab for both counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
 uses its first available project. Opening a thread from another workspace
 reveals its workspace automatically. Switching does not stop agents.

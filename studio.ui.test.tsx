@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { fireEvent, cleanup } from "@testing-library/react";
+import { act, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
+import type { WorkspaceState } from "./workspaces";
+import { selectWorkspace } from "./workspace-client";
 
 const state: FlowState = {
   projectShortNames: {},
@@ -76,14 +78,17 @@ function thread(
   };
 }
 
-async function mount(subPath = "") {
+async function mount(
+  subPath = "",
+  workspaceState: WorkspaceState = { workspaces: [], threadWorkspaces: {} },
+) {
   const app = await loadPluginApp(() => import("./app"));
   const panel = app.navPanels.find((item) => item.id === "studio")!;
   const slot = renderSlot(
     panel,
     { subPath },
     {
-      rpc: { state_get: () => state },
+      rpc: { state_get: () => state, workspaces_get: () => workspaceState },
       sidebarThreads: {
         status: "ready",
         threads: [
@@ -116,7 +121,10 @@ async function mount(subPath = "") {
   return { slot, panel };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  selectWorkspace(null);
+});
 
 describe("Studio host integration", () => {
   it("combines project, status and title filters and clears an empty result", async () => {
@@ -191,12 +199,14 @@ describe("Studio host integration", () => {
   it("focuses title search with slash and filters attention with the summary card", async () => {
     const { slot } = await mount();
     const input = await slot.findByLabelText("Search thread titles");
-    fireEvent.keyDown(slot.getByRole("heading", { name: /Room to think/ }), {
+    fireEvent.keyDown(slot.getByRole("heading", { name: "All workspaces" }), {
       key: "/",
     });
     expect(document.activeElement).toBe(input);
     fireEvent.click(
-      slot.getByRole("button", { name: /Needs you.*Decisions & follow-ups/ }),
+      slot.getByRole("button", {
+        name: /Needs attention.*Decisions & follow-ups/,
+      }),
     );
     expect(slot.getByText("Fix billing")).toBeTruthy();
     expect(slot.queryByText("Polish navigation")).toBeNull();
@@ -215,4 +225,42 @@ describe("Studio host integration", () => {
     expect(slot.getByText("Live workspace")).toBeTruthy();
     slot.lifecycle.unmount();
   });
+});
+
+it("retains Unassigned project names and clears stale filters when the workspace changes", async () => {
+  selectWorkspace("unassigned");
+  const { slot } = await mount("", {
+    workspaces: [
+      {
+        id: "app",
+        name: "App work",
+        projectIds: ["p1"],
+        sectionIds: [],
+        pluginIds: [],
+        sectionOrder: [],
+      },
+    ],
+    threadWorkspaces: {},
+  });
+  await waitFor(() => expect(slot.queryByText("Fix billing")).toBeNull());
+  expect(slot.getByRole("option", { name: "BB" })).toBeTruthy();
+  expect(slot.getByText("Polish navigation")).toBeTruthy();
+  fireEvent.change(slot.getByLabelText("Filter by project"), {
+    target: { value: "p2" },
+  });
+  fireEvent.change(slot.getByLabelText("Search thread titles"), {
+    target: { value: "Polish" },
+  });
+  act(() => selectWorkspace("app"));
+  expect(await slot.findByRole("heading", { name: "App work" })).toBeTruthy();
+  expect(slot.getByText("Fix billing")).toBeTruthy();
+  expect(
+    (slot.getByLabelText("Search thread titles") as HTMLInputElement).value,
+  ).toBe("");
+  fireEvent.click(slot.getByRole("button", { name: "New thread" }));
+  expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({
+    method: "toCompose",
+    options: { projectId: "p1" },
+  });
+  slot.lifecycle.unmount();
 });

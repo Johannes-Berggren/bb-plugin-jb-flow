@@ -6,6 +6,7 @@ import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { JsonValue } from "@get-bb/plugin-sdk/app";
 import type { DevRun, RepoCommand, RepoScript } from "./repo-commands";
 import type { rpcContract } from "./server";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Glyph } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
@@ -47,7 +48,7 @@ function CommandRow({
 }) {
   const live = run !== undefined && run.status !== "exited";
   return (
-    <li className="group flex items-center gap-2 px-2 py-1.5" title={row.title}>
+    <li className="jf-command-row group flex items-center gap-2 px-2 py-1.5" title={row.title}>
       <span
         className={cn(
           "size-1.5 shrink-0 rounded-full",
@@ -197,9 +198,10 @@ export function RepoCommandsPanel({
   );
 
   return (
-    <div className="space-y-3 text-sm">
+    <div className="jf-side-panel jf-scripts space-y-3 text-sm">
+      <div className="jf-panel-heading"><Icon name="Terminal" className="size-4" /><div><h3>{status.projectName}</h3><p>Scripts and pinned commands</p></div></div>
       {scriptRows.length + pinnedRows.length > 8 ? (
-        <input
+        <Input
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
           placeholder={`Filter ${status.projectName} scripts`}
@@ -284,7 +286,7 @@ export function RepoCommandsSettings() {
   };
 
   return (
-    <div className="space-y-3 text-sm">
+    <div className="jf-settings space-y-3 text-sm">
       <p className="text-muted-foreground">
         Buttons shown in a thread's side panel under "Repo commands", keyed by BB project name.
         Give a command several slots (e.g. <code>pnpm dev</code>, <code>pnpm dev:2</code>) so
@@ -303,14 +305,16 @@ export function RepoCommandsSettings() {
           </Button>
         ))}
       </div>
-      <input
+      <label className="jf-field-label" htmlFor="jf-command-project">Project name</label>
+      <Input id="jf-command-project"
         value={project}
         onChange={(event) => setProject(event.target.value)}
         placeholder="BB project name, e.g. my-app"
         aria-label="Project name"
         className="h-8 w-full rounded-md border border-border bg-transparent px-2 text-sm"
       />
-      <textarea
+      <label className="jf-field-label" htmlFor="jf-command-json">Pinned commands</label>
+      <textarea id="jf-command-json"
         value={text}
         onChange={(event) => setText(event.target.value)}
         spellCheck={false}
@@ -328,7 +332,7 @@ export function RepoCommandsSettings() {
           </Button>
         ) : null}
       </div>
-      {message === null ? null : <p className="text-muted-foreground">{message}</p>}
+      {message === null ? null : <p role="status" className="text-muted-foreground">{message}</p>}
     </div>
   );
 }

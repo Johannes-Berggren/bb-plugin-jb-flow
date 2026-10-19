@@ -101,10 +101,17 @@ export function WorkspaceTopBar() {
     };
   }, []);
   useEffect(() => {
-    tabsRef.current
-      ?.querySelector<HTMLElement>('[aria-selected="true"]')
-      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [selected]);
+    const tabs = tabsRef.current;
+    if (!tabs) return;
+    const revealSelected = () =>
+      tabs
+        .querySelector<HTMLElement>('[aria-selected="true"]')
+        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    revealSelected();
+    const observer = new ResizeObserver(revealSelected);
+    observer.observe(tabs);
+    return () => observer.disconnect();
+  }, [selected, ready]);
   const active = state.workspaces.find(
     (workspace) => workspace.id === selected,
   );
@@ -139,18 +146,26 @@ export function WorkspaceTopBar() {
         focusPrompt: true,
       });
   }
-  const attention = (id: string | null) =>
-    threads.filter(
+  const summary = (id: string | null) => {
+    const scoped = threads.filter((thread) =>
+      inWorkspace(thread, id, state, threads),
+    );
+    const visible = scoped.filter(
       (thread) =>
         !thread.isArchived &&
         !thread.isHidden &&
-        thread.parentThreadId === null &&
-        inWorkspace(thread, id, state, threads) &&
-        (thread.hasPendingInteraction ||
-          thread.indicator === "waiting-for-input" ||
-          thread.indicator === "unread-error" ||
-          (thread.isUnread && thread.status === "idle")),
+        (thread.parentThreadId === null ||
+          !scoped.some((parent) => parent.id === thread.parentThreadId)),
+    );
+    const attention = visible.filter(
+      (thread) =>
+        thread.hasPendingInteraction ||
+        thread.indicator === "waiting-for-input" ||
+        thread.indicator === "unread-error" ||
+        (thread.isUnread && thread.status === "idle"),
     ).length;
+    return { total: visible.length, attention };
+  };
   const tabs = [
     ...state.workspaces.map((workspace) => ({
       id: workspace.id as string | null,
@@ -194,24 +209,34 @@ export function WorkspaceTopBar() {
           buttons[next]?.focus();
         }}
       >
-        {tabs.map((tab) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={selected === tab.id}
-            tabIndex={selected === tab.id ? 0 : -1}
-            key={tab.id ?? "all"}
-            className={tab.id === null ? "jf-workspace-global-tab" : undefined}
-            onClick={() => choose(tab.id)}
-          >
-            {tab.name}
-            {attention(tab.id) > 0 && (
-              <span aria-label={`${attention(tab.id)} need attention`}>
-                {attention(tab.id)}
+        {tabs.map((tab) => {
+          const counts = summary(tab.id);
+          const description = `${counts.total} thread${counts.total === 1 ? "" : "s"} · ${counts.attention} ${counts.attention === 1 ? "needs" : "need"} attention`;
+          return (
+            <button
+              type="button"
+              role="tab"
+              aria-label={tab.name}
+              aria-description={description}
+              title={`${tab.name}: ${description}`}
+              aria-selected={selected === tab.id}
+              tabIndex={selected === tab.id ? 0 : -1}
+              key={tab.id ?? "all"}
+              className={
+                tab.id === null ? "jf-workspace-global-tab" : undefined
+              }
+              onClick={() => choose(tab.id)}
+            >
+              {tab.name}
+              <span className="jf-workspace-tab-count" aria-hidden="true">
+                {ready ? counts.total : "—"}
               </span>
-            )}
-          </button>
-        ))}
+              {counts.attention > 0 && (
+                <i className="jf-workspace-attention" aria-hidden="true" />
+              )}
+            </button>
+          );
+        })}
       </div>
       <WorkspaceManager />
       {error && (
@@ -330,7 +355,7 @@ function WorkspaceManager() {
         <div className="jf-workspace-dialog-heading">
           <DialogTitle>Workspaces</DialogTitle>
           <DialogDescription>
-            A place for each part of your work.
+            Organise projects, sections and tools.
           </DialogDescription>
         </div>
         <WorkspaceSettings />

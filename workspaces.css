@@ -102,11 +102,23 @@
   border-radius: 2px 2px 0 0;
   background: var(--brand, var(--foreground));
 }
-.jf-workspace-tabs button span {
+.jf-workspace-tabs .jf-workspace-tab-count {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
+  line-height: 14px;
 }
+.jf-workspace-attention {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--warning-text, var(--primary));
+  flex-shrink: 0;
+}
+
 .jf-workspace-global-tab {
   margin-inline-start: 12px;
 }

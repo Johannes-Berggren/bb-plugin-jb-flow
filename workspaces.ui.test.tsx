@@ -111,13 +111,22 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
       sidebarThreads: {
         status: "ready",
         projects,
-        threads: [hThread],
+        threads: [
+          hThread,
+          { ...hThread, id: "idle-h", hasPendingInteraction: false },
+          { ...hThread, id: "child-h", parentThreadId: "ht" },
+          { ...hThread, id: "archived-h", isArchived: true },
+        ],
         sections: [],
       },
     },
   );
   expect(document.querySelector(".jf-workspaces [role=tablist]")).toBeNull();
   const hitlight = await topbar.findByRole("tab", { name: /HitLight/ });
+  expect(hitlight.textContent).toBe("HitLight2");
+  expect(hitlight.getAttribute("aria-description")).toBe(
+    "2 threads · 1 needs attention",
+  );
   fireEvent.click(hitlight);
   expect(hitlight.getAttribute("aria-selected")).toBe("true");
   expect(slot.queryByRole("button", { name: "Findable DevOps" })).toBeNull();

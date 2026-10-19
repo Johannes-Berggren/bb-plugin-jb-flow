@@ -10,7 +10,7 @@
   color: var(--muted-foreground);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.05em;
 }
 .jf-choices-hint {
   margin-left: auto;
@@ -30,7 +30,7 @@
   min-height: 53px;
   padding: 10px 13px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--card);
   text-align: left;
   cursor: pointer;
@@ -44,10 +44,10 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 29px;
-  height: 29px;
+  width: 24px;
+  height: 24px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 5px;
   background: color-mix(in srgb, var(--foreground) 3%, var(--card));
   color: var(--muted-foreground);
   font-size: 12px;
@@ -87,11 +87,7 @@
 }
 .jf-choice[data-recommended="true"] {
   border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
-  background: linear-gradient(
-    115deg,
-    color-mix(in srgb, var(--primary) 7%, var(--card)),
-    var(--card)
-  );
+  background: color-mix(in srgb, var(--primary) 4%, var(--card));
 }
 .jf-choice[data-recommended="true"] .jf-choice-number {
   background: color-mix(in srgb, var(--primary) 11%, var(--card));
@@ -99,10 +95,10 @@
   color: var(--primary);
 }
 .jf-choice:hover:not(:disabled) {
-  transform: translateY(-1px);
+  transform: none;
   border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
   background: color-mix(in srgb, var(--primary) 6%, var(--card));
-  box-shadow: 0 4px 14px #00000008;
+  box-shadow: none;
 }
 .jf-choice:hover:not(:disabled) .jf-choice-arrow {
   opacity: 1;

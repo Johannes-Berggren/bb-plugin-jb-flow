@@ -21,6 +21,7 @@ import {
 } from "./ui-extras";
 import { STATUS_LABEL, studioStatus, studioThreads } from "./studio-model";
 import type { StudioFilter } from "./studio-model";
+import { Icon } from "./components/ui/icon";
 import "./studio.css";
 
 export const STUDIO_REVIEW_TAB = {
@@ -85,11 +86,34 @@ export function Studio({
   subPath: string;
   state: FlowState | null;
 }) {
-  const { threads: allThreads, projects: allProjects, status } = useSidebarThreads();
+  const {
+    threads: allThreads,
+    projects: allProjects,
+    status,
+  } = useSidebarThreads();
   const { state: workspaceState } = useWorkspaces();
   const selectedWorkspace = useSelectedWorkspace();
-  const threads = allThreads.filter((thread) => inWorkspace(thread, selectedWorkspace, workspaceState, allThreads));
-  const projects = allProjects.filter((project) => selectedWorkspace === null || workspaceState.workspaces.find((workspace) => workspace.id === selectedWorkspace)?.projectIds.includes(project.id));
+  const workspaceName =
+    workspaceState.workspaces.find(
+      (workspace) => workspace.id === selectedWorkspace,
+    )?.name ??
+    (selectedWorkspace === "unassigned" ? "Unassigned" : "All workspaces");
+  const threads = allThreads.filter((thread) =>
+    inWorkspace(thread, selectedWorkspace, workspaceState, allThreads),
+  );
+  const projects = allProjects.filter(
+    (project) =>
+      selectedWorkspace === null ||
+      workspaceState.workspaces
+        .find((workspace) => workspace.id === selectedWorkspace)
+        ?.projectIds.includes(project.id) ||
+      threads.some(
+        (thread) =>
+          !thread.isArchived &&
+          !thread.isHidden &&
+          thread.projectId === project.id,
+      ),
+  );
   const navigate = useBbNavigate();
   const connection = useRealtimeConnectionState();
   const panel = useAppPanel();
@@ -120,6 +144,11 @@ export function Studio({
     setLimit(40);
   }, [project, query, filter]);
   useEffect(() => {
+    setProject("all");
+    setQuery("");
+    setFilter("all");
+  }, [selectedWorkspace]);
+  useEffect(() => {
     heading.current?.focus();
   }, [id]);
 
@@ -137,7 +166,7 @@ export function Studio({
             <>
               <div className="jf-studio-workspace-title">
                 <span className="jf-studio-eyebrow">
-                  {projects.find((item) => item.id === selected.projectId)
+                  {allProjects.find((item) => item.id === selected.projectId)
                     ?.name ?? "Project"}
                 </span>
                 <h1 ref={heading} tabIndex={-1}>
@@ -224,17 +253,11 @@ export function Studio({
       <div className="jf-studio-overview">
         <header className="jf-studio-hero">
           <div>
-            <span className="jf-studio-eyebrow">YOUR WORK, IN FOCUS</span>
+            <span className="jf-studio-eyebrow">Studio</span>
             <h1 ref={heading} tabIndex={-1}>
-              Room to think.
-              <br />
-              <span>Space to build.</span>
+              {workspaceName}
             </h1>
-            <p>
-              A clear view of what’s moving, what’s ready,
-              <br className="jf-studio-desktop-break" /> and where you can make
-              a difference.
-            </p>
+            <p>Threads, decisions and pull requests in one view.</p>
           </div>
           <div className="jf-studio-hero-actions">
             <span className="jf-studio-connection" role="status">
@@ -252,12 +275,17 @@ export function Studio({
               className="jf-studio-primary"
               onClick={() =>
                 navigate.toCompose({
-                  projectId: project === "all" ? undefined : project,
+                  projectId:
+                    project === "all"
+                      ? selectedWorkspace === null
+                        ? undefined
+                        : projects[0]?.id
+                      : project,
                   focusPrompt: true,
                 })
               }
             >
-              <span aria-hidden="true">＋</span> New thread
+              <Icon name="Plus" className="size-4" /> New thread
             </button>
           </div>
         </header>
@@ -269,21 +297,21 @@ export function Studio({
             [
               {
                 key: "attention",
-                title: "Needs you",
+                title: "Needs attention",
                 detail: "Decisions & follow-ups",
-                symbol: "↗",
+                symbol: "MessageQuestion",
               },
               {
                 key: "running",
-                title: "In motion",
+                title: "Running",
                 detail: "Agents at work",
-                symbol: "◌",
+                symbol: "Spinner",
               },
               {
                 key: "review",
                 title: "Ready to merge",
                 detail: "Linked PRs ready",
-                symbol: "✓",
+                symbol: "GitPullRequest",
               },
             ] as const
           ).map((item) => (
@@ -294,7 +322,7 @@ export function Studio({
               onClick={() => setFilter(filter === item.key ? "all" : item.key)}
             >
               <span className="jf-studio-metric-label">
-                <span aria-hidden="true">{item.symbol}</span>
+                <Icon name={item.symbol} className="size-4" />
                 {item.title}
               </span>
               <strong>{status === "loading" ? "—" : count(item.key)}</strong>
@@ -311,7 +339,7 @@ export function Studio({
               <h2 id="jf-studio-threads-heading">
                 Your threads <span>{scoped.length}</span>
               </h2>
-              <p>Attention first. Everything else in its place.</p>
+              <p>Sorted by attention, then recent activity.</p>
             </div>
             <div className="jf-studio-controls">
               <select
@@ -357,7 +385,7 @@ export function Studio({
               )}
             </div>
             <label className="jf-studio-search">
-              <span aria-hidden="true">⌕</span>
+              <Icon name="Search" className="size-4" />
               <input
                 ref={search}
                 type="search"
@@ -388,7 +416,7 @@ export function Studio({
                 {query
                   ? "No matching threads"
                   : filter === "attention"
-                    ? "A little room to breathe."
+                    ? "You’re all caught up."
                     : "Nothing here yet."}
               </h3>
               <p>
@@ -423,11 +451,16 @@ export function Studio({
                   }
                 >
                   <span className="jf-studio-thread-mark" aria-hidden="true">
-                    {studioStatus(thread, state) === "running"
-                      ? "◌"
-                      : studioStatus(thread, state) === "done"
-                        ? "✓"
-                        : "◇"}
+                    <Icon
+                      name={
+                        studioStatus(thread, state) === "running"
+                          ? "Spinner"
+                          : studioStatus(thread, state) === "done"
+                            ? "Check"
+                            : "MessageSquare"
+                      }
+                      className="size-4"
+                    />
                   </span>
                   <span className="jf-studio-thread-copy">
                     <span
@@ -440,7 +473,7 @@ export function Studio({
                     </span>
                   </span>
                   <span className="jf-studio-project">
-                    {projects.find((item) => item.id === thread.projectId)
+                    {allProjects.find((item) => item.id === thread.projectId)
                       ?.name ?? "Project"}
                   </span>
                   <Status thread={thread} state={state} />
@@ -491,11 +524,8 @@ export function StudioReview({
     <StudioThreadReview key={id} threadId={id} state={state} />
   ) : (
     <div className="jf-studio-review-empty">
-      <span className="jf-studio-eyebrow">THE FINISHING ROOM</span>
-      <h2>
-        Good work deserves
-        <br />a closer look.
-      </h2>
+      <Icon name="GitPullRequest" className="size-6" />
+      <h2>Review a thread</h2>
       <p>Open a thread to review its linked pull requests and checks here.</p>
       <p>Previews, files, and terminals are available in BB’s panel tabs.</p>
     </div>
@@ -516,7 +546,7 @@ function StudioThreadReview({
   );
   return (
     <div className="jf-studio-review">
-      <span className="jf-studio-eyebrow">REVIEW & SHIP</span>
+      <span className="jf-studio-eyebrow">Pull requests</span>
       <h2>{thread?.displayTitle ?? "Thread review"}</h2>
       {thread?.environment?.branchName && (
         <p className="jf-studio-review-branch">
