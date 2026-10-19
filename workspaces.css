@@ -414,8 +414,9 @@
   }
 }
 
-/* The macOS title bar already reserves this row. Browser windows reserve one
-   row above the app instead. Core window controls keep their own positioning. */
+/* Reserve a separate row for workspace navigation. Framed desktop layouts
+   pull their thread header into the native title row with a negative margin,
+   so keep their existing title-row padding as well as the workspace row. */
 .jb-flow-workspace-bar {
   --jf-workspace-bar-height: 48px;
   --jf-workspace-bar-leading: 56px;
@@ -424,8 +425,13 @@
   --jf-workspace-bar-height: var(--bb-window-title-bar-height, 40px);
   --jf-workspace-bar-leading: 216px;
 }
-.jb-flow-workspace-bar [data-testid="app-layout-root"]:not([data-framed]) {
+.jb-flow-workspace-bar [data-testid="app-layout-root"] {
   padding-top: var(--jf-workspace-bar-height);
+}
+.jb-flow-workspace-bar [data-testid="app-layout-root"][data-framed] {
+  padding-top: calc(
+    var(--bb-window-title-bar-height, 40px) + var(--jf-workspace-bar-height)
+  );
 }
 .jb-flow-workspace-bar
   [data-testid="app-layout-root"]:not([data-framed])

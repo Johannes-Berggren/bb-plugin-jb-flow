@@ -40,9 +40,9 @@ lanes remain available with that workspace's threads. Workspace configuration
 and thread assignments sync between clients. The active tab and remembered
 threads belong to this browser session.
 
-On macOS the tabs share the existing title-bar row, beside the native window
-and navigation controls. Browser and mobile clients reserve a row above the
-sidebar and conversation. The bar remains available when the sidebar is closed;
+On macOS the tabs sit beside the native window and navigation controls, with
+the thread title and header in a separate row directly below. Browser and mobile
+clients reserve a row above the sidebar and conversation. The bar remains available when the sidebar is closed;
 its shell spacing is removed when the plugin unloads. The settings icon opens
 a focused dialog with searchable Projects, Sections and Tools lists. Workspace
 settings are also available in plugin settings.
