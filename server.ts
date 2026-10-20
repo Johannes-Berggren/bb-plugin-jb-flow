@@ -1,6 +1,6 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
-import { createThreadStatus, threadStatusSchema } from "./thread-status";
+import { createThreadStatus, parseStatusReport, threadStatusSchema } from "./thread-status";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
@@ -935,7 +935,10 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     },
     decision_options: async ({ threadId }) => {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      return { options: parseDecisionOptions(output.output ?? "") };
+      const text = output.output ?? "";
+      // A status report's next steps are offered in the thread monitor; don't repeat them here.
+      if ((await settings.get()).threadMonitor && parseStatusReport(text, 0)?.steps) return { options: [] };
+      return { options: parseDecisionOptions(text) };
     },
     thread_reply: async ({ threadId, text }) => {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });

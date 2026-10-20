@@ -15,6 +15,15 @@ export const DEFAULT_STATUS_PROMPT = [
   "[██████░░░░] Milestone B   60%  ← here",
   "[░░░░░░░░░░] Milestone C",
   "```",
+  "",
+  "### Next steps",
+  "Only steps you can do yourself, one line each. Don't start them until I reply.",
+  "1. <step> · <why, a few words>",
+  "2. <step> · <why>",
+  "",
+  'Reply **go** for all, or **go 1,3**.',
+  "",
+  "If you need a decision from me instead, write **Decision needed:** <question> followed by numbered options, mark one (recommended), and end with \"Reply with the number.\"",
 ].join("\n");
 
 export function statusPrompt(setting: unknown): string {

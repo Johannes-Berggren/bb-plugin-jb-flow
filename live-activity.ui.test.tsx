@@ -473,14 +473,17 @@ it("keeps a dated idle report and milestone bars with newer replies in Details",
         .getByRole("region", { name: "Agent activity" })
         .querySelectorAll(".jf-monitor-steps dt"),
     ).map((node) => node.textContent),
-  ).toEqual(["Just did", "Next step", "Goal", "Blocked"]);
+  ).toEqual(["Done", "Next", "Goal", "Blocked"]);
   expect(slot.getByText("Review the design")).toBeTruthy();
   expect(slot.getByText("Waiting for feedback")).toBeTruthy();
+  // Milestone bars live in Details; the main view has a one-line summary.
+  expect(slot.queryByRole("progressbar", { name: "Review" })).toBeNull();
+  expect(slot.getByText(/1\/2 milestones done/)).toBeTruthy();
+  expect(slot.queryByLabelText("Elapsed time")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Details" }));
   expect(
     slot.getByRole("progressbar", { name: "Review" }).getAttribute("value"),
   ).toBe("60");
-  expect(slot.queryByLabelText("Elapsed time")).toBeNull();
-  fireEvent.click(slot.getByRole("button", { name: "Details" }));
   expect(slot.getByText("A newer ordinary reply")).toBeTruthy();
   slot.lifecycle.unmount();
 });
@@ -565,7 +568,7 @@ it("keeps the saved report and reports a failed status request inline", async ()
       },
     },
   );
-  fireEvent.click(slot.getByRole("button", { name: "Update status" }));
+  fireEvent.click(slot.getByRole("button", { name: /Update status|Refresh/ }));
   await slot.findByRole("alert");
   expect(slot.getByText("Review the design")).toBeTruthy();
   expect(
@@ -573,7 +576,7 @@ it("keeps the saved report and reports a failed status request inline", async ()
   ).toBeTruthy();
   expect(
     slot
-      .getByRole("button", { name: "Update status" })
+      .getByRole("button", { name: /Update status|Refresh/ })
       .hasAttribute("disabled"),
   ).toBe(false);
   slot.lifecycle.unmount();
@@ -607,7 +610,7 @@ it("starts mobile monitors as a compact row and expands the entire body on deman
   expect(slot.getByText("Idle")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Expand monitor" }));
   expect(region.getAttribute("data-collapsed")).toBe("false");
-  expect(slot.getByRole("progressbar", { name: "Review" })).toBeTruthy();
+  expect(slot.getByText("Review the design")).toBeTruthy();
   expect(slot.getByRole("button", { name: "Details" })).toBeTruthy();
   expect(localStorage.getItem(MONITOR_COLLAPSE_KEY)).toBe("false");
   slot.lifecycle.unmount();
@@ -674,8 +677,7 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { component: ActivityCard },
     { ...base, now: 200_000, monitor: { ...savedMonitor, latestAt: 150_000 } },
   );
-  expect(outdated.getByText("Status is out of date")).toBeTruthy();
-  expect(outdated.getByText("The agent replied after this report")).toBeTruthy();
+  expect(outdated.getByText("Out of date").getAttribute("title")).toBe("The agent replied after this report");
   expect(outdated.getAllByRole("button", { name: "Update status" })).toHaveLength(1);
   outdated.lifecycle.unmount();
 
@@ -683,8 +685,9 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { component: ActivityCard },
     { ...base, now: 61_000, monitor: { ...savedMonitor, latestAt: 1000 } },
   );
-  expect(current.queryByText("Status is out of date")).toBeNull();
-  expect(current.getByRole("button", { name: "Update status" })).toBeTruthy();
+  expect(current.queryByText("Out of date")).toBeNull();
+  // Current: a quiet Refresh instead of the prominent Update status.
+  expect(current.getByRole("button", { name: "Refresh" })).toBeTruthy();
   current.lifecycle.unmount();
 });
 
@@ -708,4 +711,37 @@ it("shows the thread's auto-continue switch and reports changes", async () => {
   fireEvent.click(box);
   await waitFor(() => expect(toggle).toHaveBeenCalledWith(true));
   slot.lifecycle.unmount();
+});
+
+it("offers the report's next steps: Go for all, Go with picked steps, or a numbered decision", async () => {
+  const reply = vi.fn(async () => {});
+  const steps = { mode: "go" as const, question: "", items: ["Check the nightly run", "Try the staging app", "Tidy the docs"], recommended: [1] };
+  const base = {
+    data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+    running: false,
+    startedAt: null,
+    now: 61000,
+    updatedAt: 61000,
+    connected: true,
+    onReply: reply,
+  };
+  const goSlot = renderSlot(
+    { component: ActivityCard },
+    { ...base, monitor: { ...savedMonitor, latestAt: 1000, report: { ...savedMonitor.report, steps } } },
+  );
+  fireEvent.click(goSlot.getByRole("checkbox", { name: /Try the staging app/ }));
+  fireEvent.click(goSlot.getByRole("checkbox", { name: /Check the nightly run/ }));
+  fireEvent.click(goSlot.getByRole("button", { name: "Go with 1, 2" }));
+  await waitFor(() => expect(reply).toHaveBeenCalledWith("go 1,2"));
+  await goSlot.findByText("Sent “go 1,2”");
+  goSlot.lifecycle.unmount();
+
+  const choiceSlot = renderSlot(
+    { component: ActivityCard },
+    { ...base, monitor: { ...savedMonitor, latestAt: 1000, report: { ...savedMonitor.report, steps: { ...steps, mode: "choice" as const, question: "Which rollout?" } } } },
+  );
+  expect(choiceSlot.getByText("Which rollout?")).toBeTruthy();
+  fireEvent.click(choiceSlot.getByRole("button", { name: /Tidy the docs/ }));
+  await waitFor(() => expect(reply).toHaveBeenCalledWith("3"));
+  choiceSlot.lifecycle.unmount();
 });
