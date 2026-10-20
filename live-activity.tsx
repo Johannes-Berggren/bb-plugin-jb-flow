@@ -485,8 +485,13 @@ export function ActivityCard({
   onRequestStatus,
   autoContinue,
   onToggleAutoContinue,
+  watches = [],
+  onCancelWatch,
   onReply,
 }: {
+  /** CI/review watches and release waits that will message this thread. */
+  watches?: readonly { kind: "ci" | "release"; key: string; label: string }[];
+  onCancelWatch?: (watch: { kind: "ci" | "release"; key: string }) => Promise<void>;
   /** Sends a reply to the thread ("go", "go 1,3", or an option number). */
   onReply?: (text: string) => Promise<void>;
   /** Per-thread "continue after a usage-limit reset" (null while loading). */
@@ -824,28 +829,50 @@ export function ActivityCard({
               return parts.length ? <span className="jf-monitor-summary">{parts.join(" · ")}</span> : null;
             })()}
             {onToggleAutoContinue && autoContinue && (
-              <label className="jf-monitor-continue" title="When this thread stops on a usage limit, send “continue” 90 seconds after the limit resets.">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  checked={autoContinue.enabled}
-                  disabled={togglingContinue}
-                  onChange={async (event) => {
-                    setTogglingContinue(true);
-                    try {
-                      await onToggleAutoContinue(event.target.checked);
-                    } finally {
-                      setTogglingContinue(false);
-                    }
-                  }}
-                />
-                <span>
-                  Continue after usage-limit reset
-                  {autoContinue.enabled && autoContinue.scheduledAt !== null
-                    ? ` · at ${new Date(autoContinue.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                    : ""}
-                </span>
-              </label>
+              <div className="jf-monitor-wake" role="group" aria-label="Wake this thread">
+                <span className="jf-monitor-wake-label">Wake this thread:</span>
+                <label
+                  className="jf-monitor-continue"
+                  title="When this thread stops on a Claude Code usage limit, send “continue” 90 seconds after the limit resets."
+                >
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label="After a usage limit resets"
+                    checked={autoContinue.enabled}
+                    disabled={togglingContinue}
+                    onChange={async (event) => {
+                      setTogglingContinue(true);
+                      try {
+                        await onToggleAutoContinue(event.target.checked);
+                      } finally {
+                        setTogglingContinue(false);
+                      }
+                    }}
+                  />
+                  <span>
+                    after a usage limit
+                    {autoContinue.enabled && autoContinue.scheduledAt !== null
+                      ? ` · at ${new Date(autoContinue.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : ""}
+                  </span>
+                </label>
+                {watches.map((watch) => (
+                  <span key={watch.key} className="jf-monitor-watch" title={`A message arrives here when there's news on ${watch.label}`}>
+                    {watch.label}
+                    {onCancelWatch && (
+                      <button
+                        type="button"
+                        aria-label={`Stop waiting for ${watch.label}`}
+                        title="Stop waiting for this"
+                        onClick={() => void onCancelWatch(watch)}
+                      >
+                        <Icon name="X" className="size-3" />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
             )}
             {statusError && <p role="alert">{statusError}</p>}
           </div>
@@ -991,15 +1018,18 @@ export function ActivityCard({
   );
 }
 
-type AutoContinueState = { enabled: boolean; scheduledAt: number | null };
+type Wakeups = {
+  autoContinue: { enabled: boolean; scheduledAt: number | null };
+  watches: { kind: "ci" | "release"; key: string; label: string }[];
+};
 
-/** The thread's "continue after a usage-limit reset" switch, kept in step with the server. */
-function useAutoContinue(threadId: string, enabled: boolean) {
+/** What will wake this thread (auto-continue, CI/review watches, release waits), kept in step with the server. */
+function useWakeups(threadId: string, enabled: boolean) {
   const rpc = useRpc<typeof rpcContract>();
-  const [state, setState] = useState<AutoContinueState | null>(null);
+  const [state, setState] = useState<Wakeups | null>(null);
   const load = useCallback(() => {
     if (!enabled || !threadId) return;
-    rpc.call("auto_continue_get", { threadId }).then(setState, () => setState(null));
+    rpc.call("wakeups_get", { threadId }).then(setState, () => setState(null));
   }, [rpc, threadId, enabled]);
   useEffect(() => {
     setState(null);
@@ -1008,11 +1038,19 @@ function useAutoContinue(threadId: string, enabled: boolean) {
   useRealtime("jb-flow-changed", load);
   const toggle = useCallback(
     async (next: boolean) => {
-      setState(await rpc.call("auto_continue_set", { threadId, enabled: next }));
+      const autoContinue = await rpc.call("auto_continue_set", { threadId, enabled: next });
+      setState((current) => (current ? { ...current, autoContinue } : current));
     },
     [rpc, threadId],
   );
-  return { state, toggle };
+  const cancel = useCallback(
+    async (watch: { kind: "ci" | "release"; key: string }) => {
+      await rpc.call("wakeup_cancel", { threadId, ...watch });
+      setState((current) => (current ? { ...current, watches: current.watches.filter((w) => w.key !== watch.key) } : current));
+    },
+    [rpc, threadId],
+  );
+  return { state, toggle, cancel };
 }
 
 export function LiveActivityBanner({
@@ -1040,7 +1078,7 @@ export function LiveActivityBanner({
     thread?.status === "stopping";
   const enabled =
     !!threadId && values?.threadMonitor === true && !thread?.isArchived;
-  const autoContinue = useAutoContinue(threadId ?? "", enabled);
+  const wakeups = useWakeups(threadId ?? "", enabled);
   const { data, updatedAt } = useActivity(threadId ?? "", enabled);
   const monitor = useThreadStatus(threadId ?? "", enabled, running);
   const connection = useRealtimeConnectionState();
@@ -1086,8 +1124,10 @@ export function LiveActivityBanner({
       onReply={async (text) => {
         await rpc.call("thread_reply", { threadId, text });
       }}
-      autoContinue={autoContinue.state}
-      onToggleAutoContinue={autoContinue.toggle}
+      autoContinue={wakeups.state?.autoContinue ?? null}
+      onToggleAutoContinue={wakeups.toggle}
+      watches={wakeups.state?.watches ?? []}
+      onCancelWatch={wakeups.cancel}
       onRequestStatus={async () => {
         await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
       }}

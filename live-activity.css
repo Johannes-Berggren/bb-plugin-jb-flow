@@ -1060,3 +1060,39 @@
 .jf-next-actions [role="alert"] {
   color: var(--destructive-text);
 }
+
+/* "Wake this thread:" auto-continue switch and the watches that will message it. */
+.jf-monitor-wake {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.jf-monitor-wake .jf-monitor-continue {
+  margin-left: 0;
+}
+.jf-monitor-watch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 2px 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.jf-monitor-watch button {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.jf-monitor-watch button:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}

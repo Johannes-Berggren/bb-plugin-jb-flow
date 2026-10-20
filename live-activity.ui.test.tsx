@@ -707,7 +707,7 @@ it("shows the thread's auto-continue switch and reports changes", async () => {
       onToggleAutoContinue: toggle,
     },
   );
-  const box = slot.getByRole("switch", { name: /Continue after usage-limit reset/ });
+  const box = slot.getByRole("switch", { name: "After a usage limit resets" });
   fireEvent.click(box);
   await waitFor(() => expect(toggle).toHaveBeenCalledWith(true));
   slot.lifecycle.unmount();
@@ -744,4 +744,32 @@ it("offers the report's next steps: Go for all, Go with picked steps, or a numbe
   fireEvent.click(choiceSlot.getByRole("button", { name: /Tidy the docs/ }));
   await waitFor(() => expect(reply).toHaveBeenCalledWith("3"));
   choiceSlot.lifecycle.unmount();
+});
+
+it("lists what will wake the thread and stops a watch on ×", async () => {
+  const cancel = vi.fn(async () => {});
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+      running: false,
+      startedAt: null,
+      now: 61000,
+      updatedAt: 61000,
+      connected: true,
+      monitor: { ...savedMonitor, latestAt: 1000 },
+      autoContinue: { enabled: true, scheduledAt: null },
+      onToggleAutoContinue: async () => {},
+      watches: [
+        { kind: "ci", key: "t1:acme/web-app#12", label: "web-app#12 checks" },
+        { kind: "release", key: "t1@web-app", label: "next web-app release" },
+      ],
+      onCancelWatch: cancel,
+    },
+  );
+  expect(slot.getByText("Wake this thread:")).toBeTruthy();
+  expect(slot.getByText("web-app#12 checks")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Stop waiting for next web-app release" }));
+  await waitFor(() => expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ kind: "release", key: "t1@web-app" })));
+  slot.lifecycle.unmount();
 });

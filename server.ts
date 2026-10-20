@@ -131,6 +131,17 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string() }),
     output: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
   },
+  wakeups_get: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({
+      autoContinue: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
+      watches: z.array(z.object({ kind: z.enum(["ci", "release"]), key: z.string(), label: z.string() })),
+    }),
+  },
+  wakeup_cancel: {
+    input: z.object({ threadId: z.string(), kind: z.enum(["ci", "release"]), key: z.string() }),
+    output: z.object({ ok: z.boolean() }),
+  },
   auto_continue_set: {
     input: z.object({ threadId: z.string(), enabled: z.boolean() }),
     output: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
@@ -843,6 +854,17 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       enabled: (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
       scheduledAt: await watchers.autoContinueAt(threadId),
     }),
+    wakeups_get: async ({ threadId }) => ({
+      autoContinue: {
+        enabled: (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
+        scheduledAt: await watchers.autoContinueAt(threadId),
+      },
+      watches: await watchers.wakeupsFor(threadId),
+    }),
+    wakeup_cancel: async ({ threadId, kind, key }) => {
+      await watchers.cancelWakeup(threadId, kind, key);
+      return { ok: true };
+    },
     auto_continue_set: async ({ threadId, enabled }) => {
       const overrides = await autoContinueOverrides();
       overrides[threadId] = enabled;
