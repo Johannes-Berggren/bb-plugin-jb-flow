@@ -393,6 +393,77 @@ function Task({ task, now }: { task: ActivityTask; now: number }) {
   );
 }
 
+type ReportSteps = NonNullable<NonNullable<ThreadStatus["report"]>["steps"]>;
+
+/**
+ * The report's next steps as actions: tick steps and Go ("go" or "go 1,3"),
+ * or, for a decision, one button per option that sends its number.
+ */
+function NextSteps({ steps, onReply }: { steps: ReportSteps; onReply: (text: string) => Promise<void> }) {
+  const [picked, setPicked] = useState<number[]>([]);
+  const [sent, setSent] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const send = async (text: string) => {
+    setSending(true);
+    setError(null);
+    try {
+      await onReply(text);
+      setSent(text);
+    } catch {
+      setError("Could not send. Try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+  const goText = picked.length ? `go ${[...picked].sort((a, b) => a - b).join(",")}` : "go";
+  return (
+    <div className="jf-next" data-mode={steps.mode} data-sent={sent !== null}>
+      {steps.question && <p className="jf-next-question">{steps.question}</p>}
+      <ol>
+        {steps.items.map((item, index) => {
+          const n = index + 1;
+          const recommended = steps.recommended.includes(n);
+          return (
+            <li key={n} data-recommended={recommended}>
+              {steps.mode === "go" ? (
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={picked.includes(n)}
+                    disabled={sent !== null || sending}
+                    onChange={(event) =>
+                      setPicked((current) => (event.target.checked ? [...current, n] : current.filter((value) => value !== n)))
+                    }
+                  />
+                  <span className="jf-next-n">{n}</span>
+                  <span className="jf-next-text">{item}</span>
+                  {recommended && <span className="jf-next-tag">recommended</span>}
+                </label>
+              ) : (
+                <button type="button" disabled={sent !== null || sending} onClick={() => void send(String(n))}>
+                  <span className="jf-next-n">{n}</span>
+                  <span className="jf-next-text">{item}</span>
+                  {recommended && <span className="jf-next-tag">recommended</span>}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      <div className="jf-next-actions">
+        {steps.mode === "go" && sent === null && (
+          <button type="button" className="jf-monitor-update" disabled={sending} onClick={() => void send(goText)}>
+            {sending ? "Sending…" : picked.length ? `Go with ${[...picked].sort((a, b) => a - b).join(", ")}` : "Go"}
+          </button>
+        )}
+        {sent !== null && <span className="jf-next-sent">Sent “{sent}”</span>}
+        {error && <span role="alert">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 /** A status report older than this asks to be refreshed. */
 const STATUS_OUTDATED_MS = 6 * 3_600_000;
 
@@ -414,7 +485,10 @@ export function ActivityCard({
   onRequestStatus,
   autoContinue,
   onToggleAutoContinue,
+  onReply,
 }: {
+  /** Sends a reply to the thread ("go", "go 1,3", or an option number). */
+  onReply?: (text: string) => Promise<void>;
   /** Per-thread "continue after a usage-limit reset" (null while loading). */
   autoContinue?: { enabled: boolean; scheduledAt: number | null } | null;
   onToggleAutoContinue?: (enabled: boolean) => Promise<void>;
@@ -524,7 +598,6 @@ export function ActivityCard({
           <Icon name="Zap" className="size-4" />
         </span>
         <div className="jf-live-heading-copy">
-          <span className="jf-live-eyebrow">THREAD MONITOR</span>
           <strong className="jf-live-now" title={title}>
             {title}
           </strong>
@@ -538,14 +611,20 @@ export function ActivityCard({
             {elapsed(now - startedAt)}
           </time>
         )}
-        {collapsed && outdated && (
+        {canRequest && outdated && (
+          <span className="jf-monitor-stale" title={outdatedReason ?? undefined}>
+            {monitor?.report ? "Out of date" : "No report yet"}
+          </span>
+        )}
+        {canRequest && (
           <button
             type="button"
-            className="jf-monitor-update jf-monitor-update-pill"
+            className={outdated ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
             disabled={requesting}
             onClick={requestStatus}
+            title="Ask the agent for a fresh status report"
           >
-            {requesting ? "Requesting…" : "Update status"}
+            {requesting ? "Requesting…" : outdated ? "Update status" : "Refresh"}
           </button>
         )}
         {!collapsed && (
@@ -585,29 +664,12 @@ export function ActivityCard({
             <p title={goal.objective}>{goal.objective}</p>
           </div>
         )}
-        {outdated && (
-          <div className="jf-monitor-outdated" role="status">
-            <Icon name="AlertCircle" className="size-4" />
-            <div>
-              <strong>{monitor?.report ? "Status is out of date" : "No status yet"}</strong>
-              <span>{monitor?.report ? outdatedReason : "Ask the agent for Goal, Done, Next and progress."}</span>
-            </div>
-            <button
-              type="button"
-              className="jf-monitor-update"
-              disabled={requesting}
-              onClick={requestStatus}
-            >
-              {requesting ? "Requesting…" : "Update status"}
-            </button>
-          </div>
-        )}
         {(!active || expanded) && (
           <div className="jf-monitor-report">
             {monitor?.report ? (
               <>
                 <div className="jf-monitor-caption">
-                  Last status report{" "}
+                  Status report{" "}
                   <time
                     title={new Date(monitor.report.capturedAt).toLocaleString()}
                   >
@@ -617,55 +679,39 @@ export function ActivityCard({
                 <dl className="jf-monitor-steps">
                   {(
                     [
-                      ["Just did", monitor.report.done, "Check"],
-                      ["Next step", monitor.report.next, "ArrowRight"],
-                      [
-                        "Goal",
-                        goal?.objective || monitor.report.goal,
-                        "Target",
-                      ],
-                      ["Blocked", monitor.report.blocked, "AlertCircle"],
+                      ["Done", monitor.report.done],
+                      ["Next", monitor.report.doingNow ? `Doing now: ${monitor.report.doingNow}` : monitor.report.next],
+                      ["Goal", goal?.objective || monitor.report.goal],
+                      ["Blocked", monitor.report.blocked],
                     ] as const
                   )
                     .filter(([, text]) => text)
-                    .map(([label, text, icon]) => (
+                    .map(([label, text]) => (
                       <div
                         key={label}
                         className="jf-monitor-step"
                         data-field={label}
                       >
-                        <dt>
-                          <span
-                            className="jf-monitor-step-icon"
-                            aria-hidden="true"
-                          >
-                            <Icon name={icon} className="size-3" />
-                          </span>
-                          <span>{label}</span>
-                        </dt>
+                        <dt>{label}</dt>
                         <dd>{text}</dd>
                       </div>
                     ))}
                 </dl>
-                {monitor.report.milestones.length > 0 && (
+                {/* The report is the agent's latest word: offer its next steps. */}
+                {!active && monitor.report.steps && monitor.latestAt <= monitor.report.capturedAt + 60_000 && onReply && (
+                  <NextSteps key={monitor.replyHash} steps={monitor.report.steps} onReply={onReply} />
+                )}
+                {expanded && monitor.report.milestones.length > 0 && (
                   <div className="jf-monitor-milestones">
-                    {monitor.report.milestones
-                      .slice(0, expanded ? 12 : 3)
-                      .map((milestone, index) => (
-                        <Meter
-                          key={`${index}:${milestone.label}`}
-                          label={milestone.label}
-                          value={milestone.percent}
-                          max={100}
-                          text={`${Math.round(milestone.percent)}%`}
-                        />
-                      ))}
-                    {!expanded && monitor.report.milestones.length > 3 && (
-                      <span className="jf-monitor-caption">
-                        +{monitor.report.milestones.length - 3} milestones in
-                        Details
-                      </span>
-                    )}
+                    {monitor.report.milestones.map((milestone, index) => (
+                      <Meter
+                        key={`${index}:${milestone.label}`}
+                        label={milestone.label}
+                        value={milestone.percent}
+                        max={100}
+                        text={`${Math.round(milestone.percent)}%`}
+                      />
+                    ))}
                   </div>
                 )}
               </>
@@ -754,7 +800,7 @@ export function ActivityCard({
               text={`${Math.round((goal.tokensUsed / goal.tokenBudget) * 100)}%`}
             />
           )}
-          {context && (
+          {context && (active || expanded) && (
             <Meter
               kind="context"
               label={
@@ -766,21 +812,17 @@ export function ActivityCard({
             />
           )}
         </div>
-        {(canRequest && !outdated) || (outdated && statusError) || onToggleAutoContinue ? (
+        {statusError || onToggleAutoContinue || (!active && !expanded) ? (
           <div className="jf-monitor-controls">
-            {canRequest && !outdated && (
-              <>
-                <button
-                  type="button"
-                  className="jf-monitor-update"
-                  disabled={requesting}
-                  onClick={requestStatus}
-                >
-                  {requesting ? "Requesting…" : "Update status"}
-                </button>
-                <span>Asks the agent for a fresh report</span>
-              </>
-            )}
+            {!active && !expanded && (() => {
+              // Quiet one-line summary; the bars are in Details.
+              const milestones = monitor?.report?.milestones ?? [];
+              const parts = [
+                milestones.length ? `${milestones.filter((m) => m.percent >= 100).length}/${milestones.length} milestones done` : null,
+                context && context.modelContextWindow > 0 ? `context ${Math.round((context.usedTokens / context.modelContextWindow) * 100)}%` : null,
+              ].filter(Boolean);
+              return parts.length ? <span className="jf-monitor-summary">{parts.join(" · ")}</span> : null;
+            })()}
             {onToggleAutoContinue && autoContinue && (
               <label className="jf-monitor-continue" title="When this thread stops on a usage limit, send “continue” 90 seconds after the limit resets.">
                 <input
@@ -1041,6 +1083,9 @@ export function LiveActivityBanner({
       }
       monitor={monitor?.snapshot}
       monitorStale={monitor?.stale}
+      onReply={async (text) => {
+        await rpc.call("thread_reply", { threadId, text });
+      }}
       autoContinue={autoContinue.state}
       onToggleAutoContinue={autoContinue.toggle}
       onRequestStatus={async () => {

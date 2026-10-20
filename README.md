@@ -104,22 +104,15 @@ styling. Reduced-motion preferences disable decorative animation.
 
 ### Persistent thread monitor
 
-On by default (**Thread monitor** in the plugin settings). The activity card stays visible when the agent is idle.
-When the last report is out of date (the agent replied since, it's over 6 hours old, or there is none), a
-call-out at the top offers **Update status**; otherwise it's a button under the report. The monitor also has a
-per-thread **Continue after usage-limit reset** switch (see Watchers). **Collapse monitor**
-reduces the entire card to one status row, including on mobile where it starts
-collapsed. The choice is saved per device, shared across threads and split panes;
-expanding restores the report, meters, controls and PR links. Live updates continue
-while collapsed. **Details** remains a separate control for the full trace.
+On by default (**Thread monitor** in the plugin settings). The activity card stays visible when the agent is idle,
+as a quiet summary of the agent's last status report: **Done**, **Next**, **Goal** and **Blocked**, with milestone
+bars and context use under **Details**. When the report is out of date (the agent replied since, it's over 6 hours
+old, or there is none), the header says so and offers **Update status**; otherwise a small **Refresh** does the same.
 
-It saves each thread's latest status report as **Just did → Next step → Goal**, followed by blockers
-and milestone bars. A report is a reply with **Goal:**, **Done:**, **Next:** and **Blocked:** lines and
-an optional `### Progress` block. Reports are
-captured on idle events even when the thread isn't open, and survive plugin
-reloads, navigation and ordinary replies. Dates distinguish the last report
-from a newer reply; deleted threads' records are removed. Existing threads
-without a saved report show their latest reply as a labeled fallback.
+If the report ends with numbered **Next steps**, they appear as a checklist with **Go**: Go alone sends `go`, and with
+steps ticked it sends `go 1,3`. A **Decision needed** list shows one button per option, which sends its number, and a
+**Doing now** line shows what the agent is already doing. The separate reply cards above the composer stay hidden for
+that message. The monitor also has a per-thread **Continue after usage-limit reset** switch (see Watchers).
 
 **Update status** sends the **Status report prompt** setting to this thread (empty uses a short
 built-in prompt in that format), preserving your composer draft. It runs only when clicked.

@@ -29,6 +29,8 @@ it("reads a status report template and reported milestone values without inventi
     done: "Built the monitor.",
     next: "Review it.",
     blocked: "Waiting for review.",
+    // A bulleted "Next steps" can't be picked by number.
+    steps: null,
     capturedAt: 10,
     milestones: [
       { label: "Build", percent: 100 },
@@ -121,4 +123,26 @@ it("serializes reads with idle updates so an old in-flight reply cannot overwrit
   );
   expect(stored?.report.goal).toBe("Ship the UI.");
   await harness.lifecycle.dispose();
+});
+
+it("reads next steps to run with go, a numbered decision, and Doing now", () => {
+  const head = "**Goal:** Ship it\n**Done:** Merged the fix\n**Next:** Release\n\n";
+  const go = parseStatusReport(
+    head + "### Next steps\n> [!TIP]\n> **Recommended:** 1\n> 1. Check the nightly run · first unattended run\n> 2. Try the staging app\n>\n> Reply **go** for all, or **go 1,3**.\n\n_2026-10-13 00:29 CEST_",
+    1,
+  );
+  expect(go?.steps).toEqual({
+    mode: "go",
+    question: "",
+    items: ["Check the nightly run · first unattended run", "Try the staging app"],
+    recommended: [1],
+  });
+  const choice = parseStatusReport(
+    head + "### Next steps\n> [!TIP]\n> **Decision needed:** which rollout?\n> 1. 10% today (recommended)\n> 2. Everyone on Monday\n>\n> Reply with the number.",
+    1,
+  );
+  expect(choice?.steps).toMatchObject({ mode: "choice", question: "which rollout?", items: ["10% today", "Everyone on Monday"], recommended: [1] });
+  const doing = parseStatusReport(head + "### Next steps\n**Doing now:** opening the PR and waiting for CI.", 1);
+  expect(doing?.doingNow).toBe("opening the PR and waiting for CI.");
+  expect(doing?.steps).toBeNull();
 });

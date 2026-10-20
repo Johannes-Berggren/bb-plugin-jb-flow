@@ -15,6 +15,21 @@ export const statusReportSchema = z.object({
       }),
     )
     .max(12),
+  /**
+   * The report's "Next steps": steps to run with "go" (all, or "go 1,3"), or a
+   * decision answered with a number. Optional: older saved reports lack it.
+   */
+  steps: z
+    .object({
+      mode: z.enum(["go", "choice"]),
+      question: z.string().max(300),
+      items: z.array(z.string().max(300)).max(9),
+      recommended: z.array(z.number()).max(9),
+    })
+    .nullable()
+    .optional(),
+  /** "Doing now: …": the agent is already carrying on, nothing to pick. */
+  doingNow: z.string().max(500).optional(),
   capturedAt: z.number(),
 });
 export const threadStatusSchema = z.object({
@@ -79,7 +94,36 @@ export function parseStatusReport(
     if (label) milestones.push({ label, percent });
     if (milestones.length === 12) break;
   }
-  return { ...fields, milestones, capturedAt };
+  return { ...fields, milestones, ...parseNextSteps(reply), capturedAt };
+}
+
+/** The "### Next steps" section: a go-list, a numbered decision, or "Doing now". */
+export function parseNextSteps(reply: string): Pick<StatusReport, "steps" | "doingNow"> {
+  const section =
+    /(?:^|\n)#{2,4}\s+Next steps?\s*\r?\n([\s\S]*?)(?=\n#{1,4}\s|$)/i.exec(reply)?.[1] ?? "";
+  if (!section.trim()) return {};
+  const lines = section.split("\n").map((line) => line.replace(/^\s*(?:>\s?)+/, ""));
+  const text = lines.join("\n");
+  const doing = /\*\*Doing now:\*\*\s*(.+)/i.exec(text)?.[1];
+  const question = /\*\*Decision needed:\*\*\s*(.+)/i.exec(text)?.[1];
+  const items: string[] = [];
+  const recommended: number[] = [];
+  for (const line of lines) {
+    const match = /^\s*(\d+)[.)]\s+(.+)$/.exec(line);
+    if (!match) continue;
+    if (/\(recommended\)/i.test(match[2]!)) recommended.push(items.length + 1);
+    items.push(plain(match[2]!.replace(/\s*\(recommended\)\s*/i, " ")).slice(0, 300));
+    if (items.length === 9) break;
+  }
+  // "**Recommended:** 1" or "1,3" names steps by number.
+  const named = /\*\*Recommended:?\*\*:?\s*([\d,\s]+)(?:$|\n)/i.exec(text)?.[1];
+  for (const n of named?.match(/\d+/g) ?? []) if (Number(n) <= items.length && !recommended.includes(Number(n))) recommended.push(Number(n));
+  return {
+    steps: items.length
+      ? { mode: question ? "choice" : "go", question: question ? plain(question).slice(0, 300) : "", items, recommended }
+      : null,
+    ...(doing ? { doingNow: plain(doing).slice(0, 500) } : {}),
+  };
 }
 
 export function recordThreadStatus(
