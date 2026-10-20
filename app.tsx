@@ -602,6 +602,7 @@ function ThreadRow({
   onUnsnooze,
   onTag,
   onRename,
+  onNewSection,
   machine,
   workspaceState, onWorkspace,
 }: {
@@ -625,6 +626,8 @@ function ThreadRow({
   onUnsnooze: () => void;
   onTag: () => void;
   onRename: () => void;
+  /** Asks for a name, creates the section and moves this thread into it. */
+  onNewSection: () => void;
 }) {
   const actions = useSidebarThreadActions();
   const sdk = useSdk();
@@ -863,6 +866,10 @@ function ThreadRow({
                 {section.name}
               </ContextMenuItem>
             ))}
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={onNewSection}>
+              <Icon name="Plus" className="size-4" /> New section…
+            </ContextMenuItem>
           </ContextMenuSubContent>
         </ContextMenuSub>
         {snoozeUntil !== undefined ? (
@@ -1372,7 +1379,7 @@ function TriageThreadList({
     const remote = (machines?.hosts.length ?? 0) > 1 && machines?.localHostId != null && host?.id !== machines.localHostId;
     return host ? { name: host.name, remote } : null;
   };
-  const [sectionDialog, setSectionDialog] = useState<{ mode: "create" | "rename"; id?: string; name: string } | null>(null);
+  const [sectionDialog, setSectionDialog] = useState<{ mode: "create" | "rename"; id?: string; name: string; threadId?: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
   const sdk = useSdk();
   const actions = useSidebarThreadActions();
@@ -1856,6 +1863,7 @@ function TriageThreadList({
                     }
                     onTag={() => setTagTarget(thread.id)}
                     onRename={() => setRenameTarget(thread)}
+                    onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
                     machine={rowMachine(thread)}
                   />
                 ))}
@@ -1896,6 +1904,7 @@ function TriageThreadList({
                     await workspaceRpc.call("workspace_save", { ...workspace, sectionIds: [...workspace.sectionIds, section.id] });
                     await refreshWorkspaces();
                   }
+                  if (sectionDialog.threadId) await sdk.threads.update({ threadId: sectionDialog.threadId, sectionId: section.id });
                   return section;
                 })
               : sdk.threadSections.update({ id: sectionDialog.id!, name }).then((result) => {
