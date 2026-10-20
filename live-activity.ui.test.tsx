@@ -677,7 +677,7 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { component: ActivityCard },
     { ...base, now: 200_000, monitor: { ...savedMonitor, latestAt: 150_000 } },
   );
-  expect(outdated.getByText("Out of date").getAttribute("title")).toBe("The agent replied after this report");
+  expect(outdated.getByText("· out of date").getAttribute("title")).toBe("The agent replied after this report");
   expect(outdated.getAllByRole("button", { name: "Update status" })).toHaveLength(1);
   outdated.lifecycle.unmount();
 
@@ -685,7 +685,7 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { component: ActivityCard },
     { ...base, now: 61_000, monitor: { ...savedMonitor, latestAt: 1000 } },
   );
-  expect(current.queryByText("Out of date")).toBeNull();
+  expect(current.queryByText("· out of date")).toBeNull();
   // Current: a quiet Refresh instead of the prominent Update status.
   expect(current.getByRole("button", { name: "Refresh" })).toBeTruthy();
   current.lifecycle.unmount();

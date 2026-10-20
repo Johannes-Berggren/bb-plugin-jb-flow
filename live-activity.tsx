@@ -616,11 +616,6 @@ export function ActivityCard({
             {elapsed(now - startedAt)}
           </time>
         )}
-        {canRequest && outdated && (
-          <span className="jf-monitor-stale" title={outdatedReason ?? undefined}>
-            {monitor?.report ? "Out of date" : "No report yet"}
-          </span>
-        )}
         {canRequest && (
           <button
             type="button"
@@ -674,7 +669,10 @@ export function ActivityCard({
             {monitor?.report ? (
               <>
                 <div className="jf-monitor-caption">
-                  Status report{" "}
+                  <span>
+                    Status report
+                    {outdated && <span className="jf-monitor-stale" title={outdatedReason ?? undefined}> · out of date</span>}
+                  </span>{" "}
                   <time
                     title={new Date(monitor.report.capturedAt).toLocaleString()}
                   >
@@ -723,7 +721,10 @@ export function ActivityCard({
             ) : monitor?.latest ? (
               <>
                 <div className="jf-monitor-caption">
-                  Latest reply{" "}
+                  <span>
+                    Latest reply
+                    {outdated && <span className="jf-monitor-stale"> · no status report yet</span>}
+                  </span>{" "}
                   <time title={new Date(monitor.latestAt).toLocaleString()}>
                     {elapsed(now - monitor.latestAt)} ago
                   </time>
@@ -817,8 +818,42 @@ export function ActivityCard({
             />
           )}
         </div>
-        {statusError || onToggleAutoContinue || (!active && !expanded) ? (
-          <div className="jf-monitor-controls">
+        <div className="jf-live-footer">
+          <div className="jf-live-badges">
+            {agents > 0 && (
+              <span>
+                {agents} background agent{agents === 1 ? "" : "s"}
+              </span>
+            )}
+            {commands > 0 && (
+              <span>
+                {commands} command{commands === 1 ? "" : "s"}
+              </span>
+            )}
+            {workflows > 0 && (
+              <span>
+                {workflows} workflow{workflows === 1 ? "" : "s"}
+              </span>
+            )}
+            {!running && primary?.model && <span>{primary.model}</span>}
+            {goal && (
+              <span className="jf-live-goal-usage">
+                {goal.tokensUsed.toLocaleString()} tokens ·{" "}
+                {elapsed(goal.timeUsedSeconds * 1000)} goal runtime
+              </span>
+            )}
+            {prs.slice(0, expanded ? prs.length : 2).map((pr) => (
+              <PrLink key={pr.url} pr={pr} />
+            ))}
+            {!expanded && prs.length > 2 && (
+              <button
+                type="button"
+                className="jf-live-pr-more"
+                onClick={() => setExpanded(true)}
+              >
+                +{prs.length - 2} PRs
+              </button>
+            )}
             {!active && !expanded && (() => {
               // Quiet one-line summary; the bars are in Details.
               const milestones = monitor?.report?.milestones ?? [];
@@ -828,6 +863,7 @@ export function ActivityCard({
               ].filter(Boolean);
               return parts.length ? <span className="jf-monitor-summary">{parts.join(" · ")}</span> : null;
             })()}
+          </div>
             {onToggleAutoContinue && autoContinue && (
               <div className="jf-monitor-wake" role="group" aria-label="Wake this thread">
                 <span className="jf-monitor-wake-label">Wake this thread:</span>
@@ -874,47 +910,8 @@ export function ActivityCard({
                 ))}
               </div>
             )}
-            {statusError && <p role="alert">{statusError}</p>}
-          </div>
-        ) : null}
-        <div className="jf-live-footer">
-          <div className="jf-live-badges">
-            {agents > 0 && (
-              <span>
-                {agents} background agent{agents === 1 ? "" : "s"}
-              </span>
-            )}
-            {commands > 0 && (
-              <span>
-                {commands} command{commands === 1 ? "" : "s"}
-              </span>
-            )}
-            {workflows > 0 && (
-              <span>
-                {workflows} workflow{workflows === 1 ? "" : "s"}
-              </span>
-            )}
-            {!running && primary?.model && <span>{primary.model}</span>}
-            {goal && (
-              <span className="jf-live-goal-usage">
-                {goal.tokensUsed.toLocaleString()} tokens ·{" "}
-                {elapsed(goal.timeUsedSeconds * 1000)} goal runtime
-              </span>
-            )}
-            {prs.slice(0, expanded ? prs.length : 2).map((pr) => (
-              <PrLink key={pr.url} pr={pr} />
-            ))}
-            {!expanded && prs.length > 2 && (
-              <button
-                type="button"
-                className="jf-live-pr-more"
-                onClick={() => setExpanded(true)}
-              >
-                +{prs.length - 2} PRs
-              </button>
-            )}
-          </div>
-          {hasLiveData && (!connected || now - updatedAt > 10000) && (
+          {statusError && <span role="alert" className="jf-monitor-error">{statusError}</span>}
+          {active && hasLiveData && (!connected || now - updatedAt > 10000) && (
             <span className="jf-live-freshness">
               {connected
                 ? `Updated ${elapsed(now - updatedAt)} ago`
