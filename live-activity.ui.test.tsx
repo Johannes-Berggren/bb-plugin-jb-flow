@@ -659,3 +659,53 @@ it("still collapses and expands when browser storage is blocked", () => {
   slot.lifecycle.unmount();
   spy.mockRestore();
 });
+
+it("calls out an outdated report with a prominent Update status, and stays quiet when it is current", async () => {
+  const base = {
+    data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+    running: false,
+    startedAt: null,
+    updatedAt: 61000,
+    connected: true,
+    onRequestStatus: async () => {},
+  };
+  // A reply well after the report makes it outdated; one at the same time does not.
+  const outdated = renderSlot(
+    { component: ActivityCard },
+    { ...base, now: 200_000, monitor: { ...savedMonitor, latestAt: 150_000 } },
+  );
+  expect(outdated.getByText("Status is out of date")).toBeTruthy();
+  expect(outdated.getByText("The agent replied after this report")).toBeTruthy();
+  expect(outdated.getAllByRole("button", { name: "Update status" })).toHaveLength(1);
+  outdated.lifecycle.unmount();
+
+  const current = renderSlot(
+    { component: ActivityCard },
+    { ...base, now: 61_000, monitor: { ...savedMonitor, latestAt: 1000 } },
+  );
+  expect(current.queryByText("Status is out of date")).toBeNull();
+  expect(current.getByRole("button", { name: "Update status" })).toBeTruthy();
+  current.lifecycle.unmount();
+});
+
+it("shows the thread's auto-continue switch and reports changes", async () => {
+  const toggle = vi.fn(async () => {});
+  const slot = renderSlot(
+    { component: ActivityCard },
+    {
+      data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+      running: false,
+      startedAt: null,
+      now: 61000,
+      updatedAt: 61000,
+      connected: true,
+      monitor: { ...savedMonitor, latestAt: 1000 },
+      autoContinue: { enabled: false, scheduledAt: null },
+      onToggleAutoContinue: toggle,
+    },
+  );
+  const box = slot.getByRole("switch", { name: /Continue after usage-limit reset/ });
+  fireEvent.click(box);
+  await waitFor(() => expect(toggle).toHaveBeenCalledWith(true));
+  slot.lifecycle.unmount();
+});

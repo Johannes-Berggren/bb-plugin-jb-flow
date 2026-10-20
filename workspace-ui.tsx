@@ -178,14 +178,19 @@ function WorkspaceTopBarInner() {
     ).length;
     return { total: visible.length, attention };
   };
-  const tabs = [
-    ...state.workspaces.map((workspace) => ({
-      id: workspace.id as string | null,
-      name: workspace.name,
-    })),
-    { id: null, name: "All" },
-    { id: "unassigned", name: "Unassigned" },
-  ];
+  // Until the first workspace exists, All and No workspace would show the same
+  // threads; the bar shows only the way to create one.
+  const tabs =
+    ready && state.workspaces.length === 0
+      ? []
+      : [
+          ...state.workspaces.map((workspace) => ({
+            id: workspace.id as string | null,
+            name: workspace.name,
+          })),
+          { id: null, name: "All" },
+          { id: "unassigned", name: NO_WORKSPACE },
+        ];
   return (
     <header
       className="jf-workspace-topbar"
@@ -250,7 +255,14 @@ function WorkspaceTopBarInner() {
           );
         })}
       </div>
-      <WorkspaceManager />
+      {ready && state.workspaces.length === 0 ? (
+        <WorkspaceManager mode="first" />
+      ) : (
+        <>
+          <WorkspaceManager mode="new" />
+          <WorkspaceManager mode="manage" />
+        </>
+      )}
       {error && (
         <button
           type="button"
@@ -360,27 +372,54 @@ export function WorkspaceRouteBridge() {
   return null;
 }
 
-function WorkspaceManager() {
+/** Shown for threads and tools outside every workspace (id "unassigned"). */
+export const NO_WORKSPACE = "No workspace";
+
+/**
+ * "first": no workspaces yet, a labelled call to action. "new": a + that opens
+ * the dialog on a blank workspace. "manage": the settings gear.
+ */
+function WorkspaceManager({ mode }: { mode: "first" | "new" | "manage" }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <button
-          type="button"
-          className="jf-workspace-manage"
-          aria-label="Manage workspaces"
-          title="Manage workspaces"
-        >
-          <Icon name="Settings" className="size-4" />
-        </button>
+        {mode === "first" ? (
+          <button
+            type="button"
+            className="jf-workspace-first"
+            title="Workspaces group projects, threads, sections and tools into tabs"
+          >
+            <Icon name="Plus" className="size-4" /> Create your first workspace
+          </button>
+        ) : mode === "new" ? (
+          <button
+            type="button"
+            className="jf-workspace-manage"
+            aria-label="New workspace"
+            title="New workspace"
+          >
+            <Icon name="Plus" className="size-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="jf-workspace-manage"
+            aria-label="Manage workspaces"
+            title="Manage workspaces"
+          >
+            <Icon name="Settings" className="size-4" />
+          </button>
+        )}
       </DialogTrigger>
       <DialogContent className="jf-workspace-dialog">
         <div className="jf-workspace-dialog-heading">
           <DialogTitle>Workspaces</DialogTitle>
           <DialogDescription>
-            Organise projects, sections and tools.
+            A workspace is a tab of related projects. Pick its projects, and its
+            threads, sections and tools follow.
           </DialogDescription>
         </div>
-        <WorkspaceSettings />
+        <WorkspaceSettings startNew={mode !== "manage"} />
       </DialogContent>
     </Dialog>
   );
@@ -396,7 +435,7 @@ const emptyWorkspace = (): Workspace => ({
   sectionOrder: [],
 });
 
-export function WorkspaceSettings() {
+export function WorkspaceSettings({ startNew = false }: { startNew?: boolean } = {}) {
   const { state, ready, error, rpc, refresh } = useWorkspaces();
   const selected = useSelectedWorkspace();
   const { projects, sections } = useSidebarThreads();
@@ -425,8 +464,12 @@ export function WorkspaceSettings() {
       mounted = false;
     };
   }, [sdk]);
-  const [editing, setEditing] = useState<Workspace | null>(null);
+  const [editing, setEditing] = useState<Workspace | null>(startNew ? emptyWorkspace() : null);
   const [viewedId, setViewedId] = useState(selected);
+  // Nothing to manage yet: open straight on a new workspace.
+  useEffect(() => {
+    if (ready && state.workspaces.length === 0 && editing === null) setEditing(emptyWorkspace());
+  }, [ready, state.workspaces.length, editing]);
   const [field, setField] = useState<MembershipField>("projectIds");
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -464,7 +507,7 @@ export function WorkspaceSettings() {
       field: "pluginIds",
       title: "Tools",
       entries: plugins,
-      hint: "Tools can belong to several workspaces. Unassigned tools are shared everywhere.",
+      hint: "Tools can belong to several workspaces. Tools in no workspace are shared everywhere.",
     },
   ] as const;
   const group = groups.find((group) => group.field === field)!;

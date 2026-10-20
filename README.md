@@ -12,9 +12,10 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 
 ### Workspaces
 
-Off by default; turn on **Workspaces** under Settings → JB Flow. Choose **JB Flow workspaces** under Settings → Appearance → Sidebar navigation
-if another navigation provider is pinned. Your workspaces, plus All and
-Unassigned, appear as tabs across the top of the BB window and filter its threads, sections,
+On by default (turn off under Settings → JB Flow → **Workspaces**). Choose **JB Flow workspaces** under Settings → Appearance → Sidebar navigation
+if another navigation provider is pinned. A new install has no workspaces yet: the bar shows **Create your first workspace**, which
+opens a form to name it and pick its projects. After that your workspaces, plus **All** and
+**No workspace**, appear as tabs (**+** adds another, the gear manages them) across the top of the BB window and filter its threads, sections,
 Studio and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention.
 Hover a tab for both counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
@@ -32,9 +33,9 @@ navigation visibility, not plugin execution, credentials or permissions.
 A thread uses an explicit workspace assignment first, then inherits its
 parent's assignment, then its section or project. Use **Move to workspace** in
 the sidebar context menu or BB's thread menu to override this, choose
-**Unassigned**, or restore **Automatic**. Removing a workspace keeps its
+**No workspace**, or restore **Automatic**. Removing a workspace keeps its
 threads, projects and native sections. Explicit assignments to the removed
-workspace become unassigned. Section order is saved per workspace; workflow
+workspace move to No workspace. Section order is saved per workspace; workflow
 lanes remain available with that workspace's threads. Workspace configuration
 and thread assignments sync between clients. The active tab and remembered
 threads belong to this browser session.
@@ -63,7 +64,7 @@ ID to edit it; names must be unique. These commands return JSON.
 
 ### App-wide appearance
 
-**Polish the entire BB interface** (Settings → JB Flow, off by default) applies
+**Polish the entire BB interface** (Settings → JB Flow, on by default) applies
 across the standard BB interface: inset sidebar selections, refined section
 headings and rail controls, layered page surfaces, elevated composers, panel tabs,
 menus, dialogs, and the command palette. It works with any palette; Graphite adds
@@ -103,7 +104,10 @@ styling. Reduced-motion preferences disable decorative animation.
 
 ### Persistent thread monitor
 
-Off by default; turn on **Thread monitor** in the plugin settings. The activity card then stays visible when the agent is idle. **Collapse monitor**
+On by default (**Thread monitor** in the plugin settings). The activity card stays visible when the agent is idle.
+When the last report is out of date (the agent replied since, it's over 6 hours old, or there is none), a
+call-out at the top offers **Update status**; otherwise it's a button under the report. The monitor also has a
+per-thread **Continue after usage-limit reset** switch (see Watchers). **Collapse monitor**
 reduces the entire card to one status row, including on mobile where it starts
 collapsed. The choice is saved per device, shared across threads and split panes;
 expanding restores the report, meters, controls and PR links. Live updates continue
@@ -225,8 +229,9 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **Start dev servers** runs a project's pinned `dev` command in one click.
 
 ### Plan reviews
-- Off by default; turn on **Expand plan reviews** in the plugin settings.
-- Plans awaiting approval open expanded and can use up to 75% of the window height instead of 288px.
+- On by default (**Expand plan reviews** in the plugin settings).
+- Plans awaiting approval open expanded and use up to 75% of the window height instead of 288px.
+- Drag the handle on top of a plan to make it taller or shorter; double-click it to reset. The height is remembered in this browser.
 - This is a content script, so it depends on bb's plan-banner markup.
 
 ### Multi-PR threads (stacked and cross-repo)
@@ -260,7 +265,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   | Alt+Shift+W | Watch CI |
 
 ### Watchers (no polling)
-- **Auto-continue after usage limits** (off by default, setting *Continue after usage-limit resets*): when Claude Code stops with "You've hit your session limit · resets 10pm", "continue" is scheduled for 90 seconds after the reset.
+- **Auto-continue after usage limits** (switch per thread in the thread monitor; the setting *Continue after usage-limit resets* is the default for threads, off unless you change it): when Claude Code stops with "You've hit your session limit · resets 10pm", "continue" is scheduled for 90 seconds after the reset.
   - If you resume the thread yourself first, the scheduled message is cancelled.
   - Spend limits are left alone, since they need a human to raise them.
 - **Release watcher:** threads that go idle "waiting for release" are woken with a "released: …" message.
@@ -300,13 +305,13 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 
 Under **Settings → JB Flow**:
 
-- **Polish the entire BB interface**: restyles bb and folds finished commands behind *Show trace* (off by default).
-- **Thread monitor**: the idle activity card with the last status report (off by default).
+- **Polish the entire BB interface**: restyles bb and folds finished commands behind *Show trace* (on by default).
+- **Thread monitor**: the idle activity card with the last status report (on by default).
+- **Workspaces**: workspace tabs across the top of bb (on by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
-- **Continue after usage-limit resets**: auto-continue for Claude Code (off by default).
-- **Cmd+N opens the new thread in a split**: replaces bb's own Cmd+N (off by default). The *New thread in a split* command works either way.
-- **Expand plan reviews** (off by default).
+- **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).
+- **Expand plan reviews**: expanded, resizable plan reviews (on by default).
 - **Advanced config (JSON)**: see below.
 - **Triage lanes**, **Repo commands** and **Area tags** have their own sections.
 

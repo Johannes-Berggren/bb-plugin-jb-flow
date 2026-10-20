@@ -477,48 +477,9 @@ function focusRowSoon(threadId: string | null) {
 }
 
 /** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
-// SDK 0.6 dropped the sidebar navigation hook, and with it the only way to
-// open New thread in a split. Use it while the host runtime still has it;
-// otherwise the command opens the new-thread page normally.
-type NavActions = { activate(itemId: string, options: { openInSplit: boolean }): void };
-const legacyUseNavigation = (
-  globalThis as { __bbPluginRuntime?: { pluginSdkApp?: { experimental_useSidebarNavigation?: () => { actions: NavActions } } } }
-).__bbPluginRuntime?.pluginSdkApp?.experimental_useSidebarNavigation;
-const useNavActions = (): NavActions | null => legacyUseNavigation?.().actions ?? null;
-
-// Set by CommandHost (always mounted) so the command can reach them outside React.
-let navActions: NavActions | null = null;
-let openCompose: (() => void) | null = null;
-const NEW_THREAD_ITEM = "__bb__/new-thread";
-
-function newThreadInSplit() {
-  if (navActions) navActions.activate(NEW_THREAD_ITEM, { openInSplit: true });
-  else openCompose?.();
-}
-
-// With the "Cmd+N opens the new thread in a split" setting on. Caught here
-// rather than through the command's keybinding: bb's own thread.new owns Mod+N
-// on the desktop app and a plugin binding on the same key never fires.
-function onNewThreadKey(event: globalThis.KeyboardEvent) {
-  if (event.key.toLowerCase() !== "n" || !event.metaKey) return;
-  if (event.shiftKey || event.altKey || event.ctrlKey) return;
-  event.preventDefault();
-  event.stopPropagation();
-  newThreadInSplit();
-}
-
 function CommandHost() {
-  navActions = useNavActions();
-  const navigate = useBbNavigate();
-  openCompose = () => navigate.toCompose({ focusPrompt: true });
   const settings = useSettings().values;
-  const splitOnCmdN = settings?.newThreadInSplit === true;
   const expandPlans = settings?.expandPlans === true;
-  useEffect(() => {
-    if (!splitOnCmdN) return;
-    window.addEventListener("keydown", onNewThreadKey, true);
-    return () => window.removeEventListener("keydown", onNewThreadKey, true);
-  }, [splitOnCmdN]);
   useEffect(() => {
     // Read by the plan-expander content script, which can't use hooks.
     if (expandPlans) document.documentElement.dataset[EXPAND_PLANS_FLAG] = "";
@@ -874,7 +835,7 @@ function ThreadRow({
           <ContextMenuSubContent className="w-52">
             <ContextMenuItem onSelect={() => onWorkspace(null, true)}>Automatic</ContextMenuItem>
             {workspaceState.workspaces.map((workspace) => <ContextMenuItem key={workspace.id} onSelect={() => onWorkspace(workspace.id, false)}>{workspace.name}</ContextMenuItem>)}
-            <ContextMenuItem onSelect={() => onWorkspace(null, false)}>Unassigned</ContextMenuItem>
+            <ContextMenuItem onSelect={() => onWorkspace(null, false)}>No workspace</ContextMenuItem>
           </ContextMenuSubContent>
         </ContextMenuSub>
         <ContextMenuSub>
@@ -2476,17 +2437,47 @@ function FocusReporter() {
 // body at min(32rem, 50dvh) and sizes the banner to the space left in the thread.
 // Core renderers can't be replaced, so this content script expands each banner
 // once when it appears (a manual collapse sticks) and lets it take ~75% of the
-// window with a single scroll area. Selectors are BB's own test ids.
+// window with a single scroll area, resizable by dragging. Selectors are BB's own test ids.
 
 // Only with the "Expand plan reviews" setting on: CommandHost sets this flag on <html>.
 const EXPAND_PLANS_FLAG = "jbFlowExpandPlans";
 const PLAN_BANNER = 'html[data-jb-flow-expand-plans] section[data-testid="plan-review-banner"]';
+// The plan's height, set by dragging the handle on top of the banner (the
+// banner sits above the composer, so it grows upwards). Remembered per browser.
+const PLAN_HEIGHT_VAR = "--jf-plan-height";
+const PLAN_HEIGHT_KEY = "jb-flow-plan-height";
 const PLAN_STYLE = `
 ${PLAN_BANNER}[data-expanded] {
-  max-height: 80dvh !important;
+  position: relative;
+  max-height: calc(var(${PLAN_HEIGHT_VAR}, 75dvh) + 5dvh) !important;
 }
 ${PLAN_BANNER} .overflow-y-auto:has([data-testid="plan-review-request"]) {
-  max-height: 75dvh !important;
+  max-height: var(${PLAN_HEIGHT_VAR}, 75dvh) !important;
+}
+${PLAN_BANNER} .jf-plan-resize {
+  position: absolute;
+  z-index: 2;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+${PLAN_BANNER} .jf-plan-resize::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 999px;
+  background: var(--border);
+}
+${PLAN_BANNER} .jf-plan-resize:hover::after,
+${PLAN_BANNER} .jf-plan-resize[data-dragging]::after {
+  background: var(--muted-foreground);
 }
 /* The plan body itself doesn't scroll; the banner body does. */
 ${PLAN_BANNER} [data-testid="plan-review-request"] > div:first-child {
@@ -2504,10 +2495,67 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
   style.textContent = PLAN_STYLE;
   document.head.append(style);
 
+  const root = document.documentElement;
+  try {
+    const saved = Number(localStorage.getItem(PLAN_HEIGHT_KEY));
+    if (saved > 0) root.style.setProperty(PLAN_HEIGHT_VAR, `${saved}px`);
+  } catch {
+    /* No storage: the default height applies. */
+  }
+
+  /** A grip on top of the banner: drag up to grow, down to shrink, double-click to reset. */
+  const addHandle = (banner: HTMLElement) => {
+    if (banner.querySelector(":scope > .jf-plan-resize")) return;
+    const handle = document.createElement("div");
+    handle.className = "jf-plan-resize";
+    handle.title = "Drag to resize the plan · double-click to reset";
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "horizontal");
+    handle.addEventListener("pointerdown", (event) => {
+      const body = banner.querySelector<HTMLElement>('.overflow-y-auto:has([data-testid="plan-review-request"])');
+      if (!body) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      handle.dataset.dragging = "";
+      const startY = event.clientY;
+      const startHeight = body.getBoundingClientRect().height;
+      // Grow until the banner's top (and this handle) is 110px from the window
+      // top, so the handle stays clear of the thread header and can be grabbed again.
+      const maxHeight = startHeight + Math.max(0, banner.getBoundingClientRect().top - 110);
+      let height = startHeight;
+      const move = (next: PointerEvent) => {
+        height = Math.round(Math.min(maxHeight, Math.max(160, startHeight + (startY - next.clientY))));
+        root.style.setProperty(PLAN_HEIGHT_VAR, `${height}px`);
+      };
+      const end = () => {
+        delete handle.dataset.dragging;
+        handle.removeEventListener("pointermove", move);
+        try {
+          localStorage.setItem(PLAN_HEIGHT_KEY, String(height));
+        } catch {
+          /* Keep it for this session only. */
+        }
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", end, { once: true });
+      handle.addEventListener("pointercancel", end, { once: true });
+    });
+    handle.addEventListener("dblclick", () => {
+      root.style.removeProperty(PLAN_HEIGHT_VAR);
+      try {
+        localStorage.removeItem(PLAN_HEIGHT_KEY);
+      } catch {
+        /* Nothing saved. */
+      }
+    });
+    banner.prepend(handle);
+  };
+
   const seen = new WeakSet<Element>();
   const expand = () => {
     if (!(EXPAND_PLANS_FLAG in document.documentElement.dataset)) return;
     for (const banner of Array.from(document.querySelectorAll<HTMLElement>(PLAN_BANNER))) {
+      if (banner.hasAttribute("data-expanded")) addHandle(banner);
       if (seen.has(banner)) continue;
       seen.add(banner);
       if (banner.hasAttribute("data-expanded")) continue;
@@ -2517,12 +2565,14 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
   };
   expand();
   const observer = new MutationObserver(expand);
-  observer.observe(document.body, { childList: true, subtree: true });
+  // Also when a banner is expanded by hand, so it gets its handle.
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-expanded"] });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-jb-flow-expand-plans"] });
   signal.addEventListener("abort", () => observer.disconnect(), { once: true });
   return () => {
     observer.disconnect();
     style.remove();
+    for (const handle of Array.from(document.querySelectorAll(".jf-plan-resize"))) handle.remove();
   };
 }
 
@@ -2566,7 +2616,7 @@ export default definePluginApp((app) => {
       choices: { items: [
         { id: "auto", label: "Automatic (from parent, section or project)" },
         ...data.state.workspaces.map((workspace) => ({ id: workspace.id, label: workspace.name })),
-        { id: "unassigned", label: "Unassigned" },
+        { id: "unassigned", label: "No workspace" },
       ] },
       run: async ({ value }) => {
         if (!value) return;
@@ -2598,11 +2648,6 @@ export default definePluginApp((app) => {
   });
   app.slots.experimental_appOverlay({ id: "command-host", component: CommandHost });
   const inThread = ({ threadId }: { threadId: string | null }) => threadId !== null;
-  app.commands.register({
-    id: "new-thread-split",
-    title: "New thread in a split",
-    run: newThreadInSplit,
-  });
   app.commands.register({
     id: "snooze",
     title: "Snooze this thread…",

@@ -475,3 +475,25 @@
 .jb-flow-workspace-bar:has([data-testid="app-desktop-sidebar-trigger"]) {
   --jf-workspace-bar-leading: 216px;
 }
+.jf-workspace-manage + .jf-workspace-manage {
+  margin-inline-start: 2px;
+}
+/* No workspaces yet: one clear way to start. */
+.jf-workspace-first {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: 12px;
+  padding: 4px 10px;
+  border: 1px dashed color-mix(in oklab, var(--primary) 55%, var(--border));
+  border-radius: 7px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.jf-workspace-first:hover {
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+}

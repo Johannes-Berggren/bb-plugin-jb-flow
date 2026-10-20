@@ -943,3 +943,75 @@
     min-height: 44px;
   }
 }
+
+/* "Update status": always a primary action; a call-out when the report is out of date. */
+.jf-monitor-controls button.jf-monitor-update,
+.jf-monitor-update {
+  padding: 6px 12px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.jf-monitor-controls button.jf-monitor-update:hover,
+.jf-monitor-update:hover {
+  background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+}
+.jf-monitor-update:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.jf-monitor-update:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.jf-monitor-update-pill {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+.jf-monitor-outdated {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--warning-text, #d97706) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--warning-text, #d97706) 10%, transparent);
+  color: var(--warning-text, #d97706);
+}
+.jf-monitor-outdated > div {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.jf-monitor-outdated strong {
+  color: var(--foreground);
+  font-size: 13px;
+}
+.jf-monitor-outdated span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.jf-monitor-outdated .jf-monitor-update {
+  padding: 8px 16px;
+  font-size: 13px;
+}
+.jf-monitor-continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.jf-monitor-continue input {
+  accent-color: var(--primary);
+}

@@ -92,7 +92,8 @@ function truncate(text: string, max: number): string {
 export function createWatchers(
   bb: BbPluginApi,
   releaseConfig: Record<string, ReleaseWatchConfig>,
-  autoContinueEnabled: () => Promise<boolean>,
+  /** Per thread: its own switch in the thread monitor, else the plugin setting. */
+  autoContinueEnabled: (threadId: string) => Promise<boolean>,
   changed: () => void,
   /** The PRs a thread created, for cross-repo release waits. */
   threadPrs: (threadId: string) => Promise<ThreadPrRef[]> = async () => [],
@@ -133,7 +134,7 @@ export function createWatchers(
     if (text === null || thread.parentThreadId !== null) return;
     const hit = parseLimitHit(text);
     if (hit !== null) {
-      if (!(await autoContinueEnabled())) return;
+      if (!(await autoContinueEnabled(thread.id))) return;
       const pending = await get<Record<string, AutoContinue>>("autoContinue", {});
       if (pending[thread.id]?.resetsAt === hit.resetsAt) return;
       const sendAt = hit.resetsAt + CONTINUE_DELAY_MS;
@@ -152,13 +153,26 @@ export function createWatchers(
 
   /** The user resumed the thread before the reset: drop our scheduled "continue". */
   async function onActive(thread: Thread) {
+    await cancelAutoContinue(thread.id);
+  }
+
+  /** When the scheduled "continue" for this thread will be sent, if any. */
+  async function autoContinueAt(threadId: string): Promise<number | null> {
+    const entry = (await get<Record<string, AutoContinue>>("autoContinue", {}))[threadId];
+    return entry ? entry.resetsAt + CONTINUE_DELAY_MS : null;
+  }
+
+  /** Drops a scheduled "continue" (the user resumed the thread, or switched it off). */
+  async function cancelAutoContinue(threadId: string) {
+    const thread = { id: threadId };
     const pending = await get<Record<string, AutoContinue>>("autoContinue", {});
     const entry = pending[thread.id];
     if (entry === undefined) return;
     await update<Record<string, AutoContinue>>("autoContinue", {}, (all) => {
       delete all[thread.id];
     });
-    if (entry.queuedMessageId !== null && Date.now() < entry.resetsAt) {
+    // Until it is actually sent (90s after the reset), it can still be taken back.
+    if (entry.queuedMessageId !== null && Date.now() < entry.resetsAt + CONTINUE_DELAY_MS) {
       await bb.sdk.threads.queuedMessages
         .delete({ threadId: thread.id, queuedMessageId: entry.queuedMessageId })
         .catch(() => undefined);
@@ -618,5 +632,5 @@ export function createWatchers(
     };
   }
 
-  return { watchCi, registerReleaseWaiter, checkReleases, checkCi, status, RELEASE_WAIT };
+  return { watchCi, registerReleaseWaiter, checkReleases, checkCi, status, autoContinueAt, cancelAutoContinue, RELEASE_WAIT };
 }

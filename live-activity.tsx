@@ -1,9 +1,10 @@
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   useComposer,
   useRpc,
   useSdk,
   useSettings,
+  useRealtime,
   useRealtimeConnectionState,
   UrlLink,
   experimental_useSidebarThreadPullRequest as useBranchPr,
@@ -392,6 +393,9 @@ function Task({ task, now }: { task: ActivityTask; now: number }) {
   );
 }
 
+/** A status report older than this asks to be refreshed. */
+const STATUS_OUTDATED_MS = 6 * 3_600_000;
+
 export function ActivityCard({
   data,
   running,
@@ -408,7 +412,12 @@ export function ActivityCard({
   monitorStale = false,
   hasLiveData = true,
   onRequestStatus,
+  autoContinue,
+  onToggleAutoContinue,
 }: {
+  /** Per-thread "continue after a usage-limit reset" (null while loading). */
+  autoContinue?: { enabled: boolean; scheduledAt: number | null } | null;
+  onToggleAutoContinue?: (enabled: boolean) => Promise<void>;
   idleLabel?: string;
   monitor?: ThreadStatus | null;
   monitorStale?: boolean;
@@ -432,6 +441,7 @@ export function ActivityCard({
   const [goalError, setGoalError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [togglingContinue, setTogglingContinue] = useState(false);
   const detailsId = useId();
   const tasks = activityTasks(data);
   const count = tasks.length;
@@ -451,6 +461,30 @@ export function ActivityCard({
     tasks.some(
       (task) => task.taskStatus === "running" || task.taskStatus === "pending",
     );
+  // A report the agent has replied past, an old one, or none at all: ask for a
+  // fresh one prominently instead of presenting stale text as current.
+  const reportAge = monitor?.report ? now - monitor.report.capturedAt : null;
+  const outdatedReason = !monitor?.report
+    ? "No status report yet"
+    : monitor.latestAt > monitor.report.capturedAt + 60_000
+      ? "The agent replied after this report"
+      : reportAge !== null && reportAge > STATUS_OUTDATED_MS
+        ? `Last report ${elapsed(reportAge)} ago`
+        : null;
+  const canRequest = !active && !!onRequestStatus;
+  const outdated = canRequest && outdatedReason !== null;
+  const requestStatus = async () => {
+    if (!onRequestStatus) return;
+    setRequesting(true);
+    setStatusError(null);
+    try {
+      await onRequestStatus();
+    } catch {
+      setStatusError("Could not request status. Try again.");
+    } finally {
+      setRequesting(false);
+    }
+  };
   const steps = tasks.flatMap((task) => task.workflow?.agents ?? []);
   const finishedSteps = steps.filter(
     (step) => step.state === "done" || step.state === "skipped",
@@ -504,6 +538,16 @@ export function ActivityCard({
             {elapsed(now - startedAt)}
           </time>
         )}
+        {collapsed && outdated && (
+          <button
+            type="button"
+            className="jf-monitor-update jf-monitor-update-pill"
+            disabled={requesting}
+            onClick={requestStatus}
+          >
+            {requesting ? "Requesting…" : "Update status"}
+          </button>
+        )}
         {!collapsed && (
           <button
             type="button"
@@ -539,6 +583,23 @@ export function ActivityCard({
           <div className="jf-live-goal">
             <Icon name="Target" className="size-3.5" />
             <p title={goal.objective}>{goal.objective}</p>
+          </div>
+        )}
+        {outdated && (
+          <div className="jf-monitor-outdated" role="status">
+            <Icon name="AlertCircle" className="size-4" />
+            <div>
+              <strong>{monitor?.report ? "Status is out of date" : "No status yet"}</strong>
+              <span>{monitor?.report ? outdatedReason : "Ask the agent for Goal, Done, Next and progress."}</span>
+            </div>
+            <button
+              type="button"
+              className="jf-monitor-update"
+              disabled={requesting}
+              onClick={requestStatus}
+            >
+              {requesting ? "Requesting…" : "Update status"}
+            </button>
           </div>
         )}
         {(!active || expanded) && (
@@ -619,10 +680,12 @@ export function ActivityCard({
                 <p className="jf-monitor-latest">{monitor.latest}</p>
               </>
             ) : (
-              <p className="jf-monitor-empty">
-                Ready when you are. Request a status report for Goal, Done,
-                Next, Blocked and milestone progress.
-              </p>
+              !outdated && (
+                <p className="jf-monitor-empty">
+                  Ready when you are. Request a status report for Goal, Done,
+                  Next, Blocked and milestone progress.
+                </p>
+              )
             )}
             {monitorStale && (
               <p className="jf-monitor-caption" role="status">
@@ -703,29 +766,48 @@ export function ActivityCard({
             />
           )}
         </div>
-        {!active && onRequestStatus && (
+        {(canRequest && !outdated) || (outdated && statusError) || onToggleAutoContinue ? (
           <div className="jf-monitor-controls">
-            <button
-              type="button"
-              disabled={requesting}
-              onClick={async () => {
-                setRequesting(true);
-                setStatusError(null);
-                try {
-                  await onRequestStatus();
-                } catch {
-                  setStatusError("Could not request status. Try again.");
-                } finally {
-                  setRequesting(false);
-                }
-              }}
-            >
-              {requesting ? "Requesting…" : "Update status"}
-            </button>
-            <span>Sends the status report prompt (Settings → JB Flow)</span>
+            {canRequest && !outdated && (
+              <>
+                <button
+                  type="button"
+                  className="jf-monitor-update"
+                  disabled={requesting}
+                  onClick={requestStatus}
+                >
+                  {requesting ? "Requesting…" : "Update status"}
+                </button>
+                <span>Asks the agent for a fresh report</span>
+              </>
+            )}
+            {onToggleAutoContinue && autoContinue && (
+              <label className="jf-monitor-continue" title="When this thread stops on a usage limit, send “continue” 90 seconds after the limit resets.">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={autoContinue.enabled}
+                  disabled={togglingContinue}
+                  onChange={async (event) => {
+                    setTogglingContinue(true);
+                    try {
+                      await onToggleAutoContinue(event.target.checked);
+                    } finally {
+                      setTogglingContinue(false);
+                    }
+                  }}
+                />
+                <span>
+                  Continue after usage-limit reset
+                  {autoContinue.enabled && autoContinue.scheduledAt !== null
+                    ? ` · at ${new Date(autoContinue.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                    : ""}
+                </span>
+              </label>
+            )}
             {statusError && <p role="alert">{statusError}</p>}
           </div>
-        )}
+        ) : null}
         <div className="jf-live-footer">
           <div className="jf-live-badges">
             {agents > 0 && (
@@ -867,6 +949,30 @@ export function ActivityCard({
   );
 }
 
+type AutoContinueState = { enabled: boolean; scheduledAt: number | null };
+
+/** The thread's "continue after a usage-limit reset" switch, kept in step with the server. */
+function useAutoContinue(threadId: string, enabled: boolean) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [state, setState] = useState<AutoContinueState | null>(null);
+  const load = useCallback(() => {
+    if (!enabled || !threadId) return;
+    rpc.call("auto_continue_get", { threadId }).then(setState, () => setState(null));
+  }, [rpc, threadId, enabled]);
+  useEffect(() => {
+    setState(null);
+    load();
+  }, [load]);
+  useRealtime("jb-flow-changed", load);
+  const toggle = useCallback(
+    async (next: boolean) => {
+      setState(await rpc.call("auto_continue_set", { threadId, enabled: next }));
+    },
+    [rpc, threadId],
+  );
+  return { state, toggle };
+}
+
 export function LiveActivityBanner({
   runningSince,
   trackedPrs = {},
@@ -892,6 +998,7 @@ export function LiveActivityBanner({
     thread?.status === "stopping";
   const enabled =
     !!threadId && values?.threadMonitor === true && !thread?.isArchived;
+  const autoContinue = useAutoContinue(threadId ?? "", enabled);
   const { data, updatedAt } = useActivity(threadId ?? "", enabled);
   const monitor = useThreadStatus(threadId ?? "", enabled, running);
   const connection = useRealtimeConnectionState();
@@ -934,6 +1041,8 @@ export function LiveActivityBanner({
       }
       monitor={monitor?.snapshot}
       monitorStale={monitor?.stale}
+      autoContinue={autoContinue.state}
+      onToggleAutoContinue={autoContinue.toggle}
       onRequestStatus={async () => {
         await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
       }}
