@@ -196,7 +196,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **Right-click menu:**
   - open / open in split view
   - pin, read/unread, rename
-  - move to a section, snooze, tags
+  - move to a section (or **Move to → New section…** to create one in the current workspace and file the thread there), snooze, tags
   - copy link or ID
   - archive, delete
 - Drag a row into the main area to open it in a split, or onto another section to move it there.
