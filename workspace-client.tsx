@@ -73,6 +73,14 @@ export function selectWorkspace(id: string | null) {
   }
   for (const listener of selectionListeners) listener();
 }
+// The Workspaces setting (off by default). While off, everything behaves as
+// "All": no filtering anywhere, whatever was selected before.
+let workspacesEnabled = false;
+export function setWorkspacesEnabled(enabled: boolean) {
+  if (workspacesEnabled === enabled) return;
+  workspacesEnabled = enabled;
+  for (const listener of selectionListeners) listener();
+}
 export function useSelectedWorkspace() {
   return useSyncExternalStore(
     (listener) => {
@@ -81,7 +89,7 @@ export function useSelectedWorkspace() {
         selectionListeners.delete(listener);
       };
     },
-    () => selection,
+    () => (workspacesEnabled ? selection : null),
   );
 }
 export function rememberWorkspaceThread(workspaceId: string | null, threadId: string) {

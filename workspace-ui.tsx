@@ -7,6 +7,7 @@ import {
   useBbContext,
   useBbNavigate,
   useSdk,
+  useSettings,
   type ExperimentalSidebarNavigationItem,
   type ExperimentalSidebarNavigationProps,
 } from "@get-bb/plugin-sdk/app";
@@ -20,6 +21,7 @@ import {
   useWorkspaces,
   useSelectedWorkspace,
   selectWorkspace,
+  setWorkspacesEnabled,
   rememberWorkspaceThread,
   lastWorkspaceThread,
 } from "./workspace-client";
@@ -83,7 +85,17 @@ function NavItem({
   );
 }
 
+/** The bar and all workspace filtering only run with the Workspaces setting on. */
 export function WorkspaceTopBar() {
+  const { values, isLoading } = useSettings();
+  const enabled = values?.workspaces === true;
+  useEffect(() => {
+    if (!isLoading) setWorkspacesEnabled(enabled);
+  }, [enabled, isLoading]);
+  return enabled ? <WorkspaceTopBarInner /> : null;
+}
+
+function WorkspaceTopBarInner() {
   const { state, ready, error, refresh } = useWorkspaces();
   const selected = useSelectedWorkspace();
   const { threads, projects } = useSidebarThreads();
@@ -252,7 +264,17 @@ export function WorkspaceTopBar() {
   );
 }
 
-export function WorkspaceNavigation(
+/** With Workspaces off, BB's own navigation renders unchanged. */
+export function WorkspaceNavigation(props: ExperimentalSidebarNavigationProps) {
+  const { values } = useSettings();
+  if (values?.workspaces !== true) {
+    const Original = props.experimental_Original;
+    return <Original />;
+  }
+  return <WorkspaceNavigationInner {...props} />;
+}
+
+function WorkspaceNavigationInner(
   _props: ExperimentalSidebarNavigationProps,
 ) {
   const { state, ready, error, refresh } = useWorkspaces();
@@ -521,7 +543,7 @@ export function WorkspaceSettings() {
               maxLength={60}
               value={active.name}
               disabled={busy}
-              placeholder="e.g. HitLight"
+              placeholder="e.g. Client work"
               onChange={(event) =>
                 setEditing({ ...active, name: event.target.value })
               }

@@ -4,7 +4,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
 import type { WorkspaceState } from "./workspaces";
-import { selectWorkspace } from "./workspace-client";
+import { selectWorkspace, setWorkspacesEnabled } from "./workspace-client";
 
 const state: FlowState = {
   projectShortNames: {},
@@ -124,6 +124,7 @@ async function mount(
 afterEach(() => {
   cleanup();
   selectWorkspace(null);
+  setWorkspacesEnabled(false);
 });
 
 describe("Studio host integration", () => {
@@ -228,6 +229,7 @@ describe("Studio host integration", () => {
 });
 
 it("retains Unassigned project names and clears stale filters when the workspace changes", async () => {
+  setWorkspacesEnabled(true);
   selectWorkspace("unassigned");
   const { slot } = await mount("", {
     workspaces: [

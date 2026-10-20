@@ -73,35 +73,7 @@ export function pluginInWorkspace(
   return owners.length === 0 || owners.some((workspace) => workspace.id === selected);
 }
 
-export function initialWorkspaces(projects: readonly { id: string; name: string }[]): Workspace[] {
-  const make = (
-    id: string,
-    name: string,
-    matches: (name: string) => boolean,
-    pluginIds: string[],
-  ): Workspace => ({
-    id,
-    name,
-    projectIds: projects
-      .filter((project) => matches(project.name.toLowerCase()))
-      .map((project) => project.id),
-    sectionIds: [],
-    pluginIds,
-    sectionOrder: [],
-  });
-  return [
-    make("hitlight", "HitLight", (name) => /hitl(?:ight|aight)/.test(name), [
-      "hitlight-devops",
-      "release-train",
-      "runner-monitor",
-    ]),
-    make(
-      "findable",
-      "Findable",
-      (name) =>
-        /findable/.test(name) ||
-        ["monorepo-apps", "monorepo-ai", "infrastructure_v2"].includes(name),
-      ["findable-devops", "findable-team"],
-    ),
-  ];
+/** A new install starts with no workspaces: All and Unassigned until you add your own. */
+export function initialWorkspaces(_projects: readonly { id: string; name: string }[]): Workspace[] {
+  return [];
 }

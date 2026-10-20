@@ -18,8 +18,8 @@ permissions or background plugin execution.
 - `bb jb-flow workspaces remove <workspace-id>`: remove grouping only, keeping threads, projects and sections; explicit assignments become unassigned.
 
 Thread membership: explicit override, inherited parent, section, project, then
-Unassigned. All shows every workspace. HitLight and Findable defaults are seeded
-once from project names, then saved. The active tab and last thread are local to
+Unassigned. All shows every workspace. Workspaces are off until the user turns on
+the Workspaces setting, and a new install has none until the user creates them. The active tab and last thread are local to
 the browser session; configuration and assignments are server-persisted.
 
 RPC equivalents are `workspaces_get(null)`, `workspace_save(workspace)`,
