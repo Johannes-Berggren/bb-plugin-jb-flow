@@ -22,8 +22,11 @@ If a feature needs data like this, add a setting or a JSON config key and leave 
 
 - A new install starts empty: no seeded workspaces, lanes, commands or watches based on someone's names.
 - Anything that restyles bb, replaces a native bb surface (navigation, sidebar, composer, timeline), sends
-  messages to threads, or runs on a schedule against external services is **off by default** behind a
-  setting. When off, bb must look and behave exactly as without the plugin.
+  messages to threads, or runs on a schedule against external services sits **behind a setting** that turns it
+  off. With it off, bb must look and behave exactly as without the plugin.
+- Which of those are on by default is the maintainer's product decision. Today: restyle, thread monitor,
+  workspaces and expanded plan reviews are on; auto-continue (spends usage quota) is off. Don't flip a default
+  without asking. Anything that spends money or quota, or messages a thread unprompted, starts off.
 - Credential handling, native helpers and anything macOS-only belong in a separate plugin, not here.
 - When a change needs a newer bb or plugin SDK, raise `engines` in `package.json` in the same PR.
 

@@ -127,6 +127,14 @@ export const rpcContract = defineRpcContract({
   workspace_remove: { input: z.object({ id: z.string() }), output: z.object({ ok: z.boolean() }) },
   workspace_assign: { input: z.object({ threadId: z.string(), workspaceId: z.string().nullable(), automatic: z.boolean() }), output: z.object({ ok: z.boolean() }) },
   state_get: { input: z.null(), output: stateSchema },
+  auto_continue_get: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
+  },
+  auto_continue_set: {
+    input: z.object({ threadId: z.string(), enabled: z.boolean() }),
+    output: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
+  },
   snooze: {
     input: z.object({
       threadId: z.string(),
@@ -279,20 +287,20 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Workspaces",
       description:
         "Tabs across the top of BB that group projects, threads, sections and plugin tools. Off shows everything as before.",
-      default: false,
+      default: true,
     },
     polishShell: {
       type: "boolean",
       label: "Polish the entire BB interface",
       description: "Refine the sidebar, composer, conversation, panel tabs and menus across BB. Off restores BB's standard styling.",
-      default: false,
+      default: true,
     },
     threadMonitor: {
       type: "boolean",
       label: "Thread monitor",
       description:
         "Keep the activity card visible when a thread is idle, with the agent's last status report (Just did, Next step, Goal), progress bars and an Update status button.",
-      default: false,
+      default: true,
     },
     statusPrompt: {
       type: "string",
@@ -310,22 +318,16 @@ export default async function plugin(bb: BbPluginApi) {
     },
     autoContinue: {
       type: "boolean",
-      label: "Continue after usage-limit resets",
+      label: "Continue after usage-limit resets (default for threads)",
       description:
-        "When Claude Code stops on a session limit, send \"continue\" to the thread 90 seconds after the limit resets.",
-      default: false,
-    },
-    newThreadInSplit: {
-      type: "boolean",
-      label: "Cmd+N opens the new thread in a split",
-      description: "Replaces BB's own Cmd+N. The \"New thread in a split\" command works either way.",
+        "When Claude Code stops on a session limit, send \"continue\" 90 seconds after the limit resets. Each thread can switch it on or off in the thread monitor.",
       default: false,
     },
     expandPlans: {
       type: "boolean",
       label: "Expand plan reviews",
-      description: "Plans awaiting approval open expanded and use up to 75% of the window height.",
-      default: false,
+      description: "Plans awaiting approval open expanded. Drag the handle under a plan to set its height.",
+      default: true,
     },
     advancedConfig: {
       type: "string",
@@ -706,12 +708,16 @@ export default async function plugin(bb: BbPluginApi) {
     return { archived: threadIds.length - failed.length, failed };
   }
 
+  // Each thread's own auto-continue switch (thread monitor); absent = the setting.
+  const autoContinueOverrides = async () =>
+    (await bb.storage.kv.get<Record<string, boolean>>("autoContinueThreads")) ?? {};
+
   // Late-bound: the awaiting tracker is created below.
   const focus = createFocus(bb, () => awaiting.all(), () => findSnoozedSection());
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
-  const watchers = createWatchers(bb, localConfig.releaseWatch, async () => (await settings.get()).autoContinue, changed, async (threadId) =>
+  const watchers = createWatchers(bb, localConfig.releaseWatch, async (threadId) => (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue, changed, async (threadId) =>
     ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
   );
   const activity = createActivity(bb, changed);
@@ -833,6 +839,19 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     workspace_assign: async ({ threadId, workspaceId, automatic }) => { await workspaces.assign(threadId, workspaceId, automatic); return { ok: true }; },
     // Concurrent callers (every open window refetches on the same publish) share one build.
     state_get: () => (stateBuild ??= buildState().finally(() => (stateBuild = null))),
+    auto_continue_get: async ({ threadId }) => ({
+      enabled: (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
+      scheduledAt: await watchers.autoContinueAt(threadId),
+    }),
+    auto_continue_set: async ({ threadId, enabled }) => {
+      const overrides = await autoContinueOverrides();
+      overrides[threadId] = enabled;
+      await bb.storage.kv.set("autoContinueThreads", overrides);
+      // Switched off with a "continue" already queued: take it back.
+      if (!enabled) await watchers.cancelAutoContinue(threadId);
+      changed();
+      return { enabled, scheduledAt: enabled ? await watchers.autoContinueAt(threadId) : null };
+    },
     snooze: ({ threadId, when, note, until }) => snooze(threadId, when, note, until),
     unsnooze: async ({ threadId }) => ({ removed: await unsnooze(threadId) }),
     tags_set: async ({ threadId, tags }) => {
@@ -993,6 +1012,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const tags = await getTags();
     const kept = await getKept();
     const runs = (await bb.storage.kv.get<Record<string, { threadId: string }>>("devRuns")) ?? {};
+    const continues = await autoContinueOverrides();
+    const goneContinues = Object.keys(continues).filter(isGone);
+    if (goneContinues.length > 0) {
+      for (const threadId of goneContinues) delete continues[threadId];
+      await bb.storage.kv.set("autoContinueThreads", continues);
+    }
     const goneTags = Object.keys(tags).filter(isGone);
     const goneKept = Object.entries(kept).filter(([threadId, until]) => isGone(threadId) || until < Date.now());
     const goneRuns = Object.entries(runs).filter(([, run]) => isGone(run.threadId));

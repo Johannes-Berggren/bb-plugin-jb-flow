@@ -18,14 +18,14 @@ permissions or background plugin execution.
 - `bb jb-flow workspaces remove <workspace-id>`: remove grouping only, keeping threads, projects and sections; explicit assignments become unassigned.
 
 Thread membership: explicit override, inherited parent, section, project, then
-Unassigned. All shows every workspace. Workspaces are off until the user turns on
-the Workspaces setting, and a new install has none until the user creates them. The active tab and last thread are local to
+No workspace (id `unassigned`). All shows every workspace. A new install has no
+workspaces until the user creates them (Create your first workspace in the bar). The active tab and last thread are local to
 the browser session; configuration and assignments are server-persisted.
 
 RPC equivalents are `workspaces_get(null)`, `workspace_save(workspace)`,
 `workspace_remove({ id })`, and
 `workspace_assign({ threadId, workspaceId, automatic })`. `automatic: true`
-removes an override; `workspaceId: null, automatic: false` forces Unassigned.
+removes an override; `workspaceId: null, automatic: false` forces No workspace.
 
 ## Snooze
 

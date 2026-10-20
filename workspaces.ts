@@ -73,7 +73,7 @@ export function pluginInWorkspace(
   return owners.length === 0 || owners.some((workspace) => workspace.id === selected);
 }
 
-/** A new install starts with no workspaces: All and Unassigned until you add your own. */
+/** A new install starts with no workspaces: All and No workspace until you add your own. */
 export function initialWorkspaces(_projects: readonly { id: string; name: string }[]): Workspace[] {
   return [];
 }

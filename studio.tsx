@@ -97,7 +97,7 @@ export function Studio({
     workspaceState.workspaces.find(
       (workspace) => workspace.id === selectedWorkspace,
     )?.name ??
-    (selectedWorkspace === "unassigned" ? "Unassigned" : "All workspaces");
+    (selectedWorkspace === "unassigned" ? "No workspace" : "All workspaces");
   const threads = allThreads.filter((thread) =>
     inWorkspace(thread, selectedWorkspace, workspaceState, allThreads),
   );

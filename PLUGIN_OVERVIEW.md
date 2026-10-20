@@ -1,6 +1,6 @@
 ## What you get
 
-- **Workspaces** (optional, off by default). Your own workspace tabs across the top of BB group projects, threads, sections and plugin navigation. All and Unassigned keep everything reachable. Manage membership in settings or move a thread from its context menu. Tools can be shared, tab badges show thread totals with a separate attention dot, and each workspace remembers its last thread and section order. Workspace filtering also applies to Studio and home-page follow-ups. It changes navigation visibility, not plugin execution or permissions.
+- **Workspaces.** Your own workspace tabs across the top of BB group projects, threads, sections and plugin navigation; **Create your first workspace** gets you started. All and No workspace keep everything reachable. Manage membership in settings or move a thread from its context menu. Tools can be shared, tab badges show thread totals with a separate attention dot, and each workspace remembers its last thread and section order. Workspace filtering also applies to Studio and home-page follow-ups. It changes navigation visibility, not plugin execution or permissions.
 
 - **Triage thread list.** A replacement sidebar. Threads blocked on a prompt, a permission or a question to you sit in *Needs me* at the top. Below that are numbered lanes (Priority, Active, Waiting for others, Pick up later, Low priority), with a project chip and tags on each row. On a focused row, `1`–`5` moves it to a lane, `s` snoozes, `t` tags, `e` archives and `j`/`k` move up and down.
 - **Waiting for others fills itself.** A thread whose agent says it is waiting on a person, or whose open PRs all wait on a reviewer, goes there and comes back to Active when its next turn no longer waits on anyone.
@@ -12,11 +12,10 @@
 
 ## Optional
 
-Off until you turn them on in the plugin settings:
+Each can be switched in the plugin settings:
 
-- Send "continue" after a Claude Code usage limit resets.
-- Cmd+N opens the new thread in a split.
-- Plans awaiting approval open expanded.
+- A restyled bb interface, a thread monitor with the agent's latest status report, and expanded, resizable plan reviews are on by default.
+- Send "continue" after a Claude Code usage limit resets: per thread in the thread monitor, with a default in settings (off).
 - Wake threads waiting for a release once a release PR merges and its workflows finish (per-project JSON config).
 
 ## Requirements
