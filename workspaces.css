@@ -451,9 +451,13 @@
   top: var(--jf-workspace-bar-height);
   height: calc(var(--bb-shell-height, 100dvh) - var(--jf-workspace-bar-height));
 }
+/* The bar starts after bb's own title-row controls (window buttons, sidebar
+   toggle, back/forward) instead of covering them: on macOS the bar is a
+   window-drag area, and a drag area over a button swallows its clicks. */
 .jf-workspace-topbar {
   position: fixed;
-  inset-inline: 0;
+  inset-inline-start: var(--jf-workspace-bar-leading, 56px);
+  inset-inline-end: 0;
   top: 0;
   z-index: 43;
   display: flex;
@@ -461,8 +465,7 @@
   height: calc(var(--jf-workspace-bar-height, 48px) + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);
   min-width: 0;
-  padding-inline: var(--jf-workspace-bar-leading, 56px)
-    max(12px, env(safe-area-inset-right));
+  padding-inline: 8px max(12px, env(safe-area-inset-right));
   color: var(--foreground);
   background: var(--sidebar, var(--background));
   border-bottom: 1px solid var(--border);
