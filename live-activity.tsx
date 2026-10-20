@@ -10,7 +10,9 @@ import {
   experimental_useSidebarThreadPullRequest as useBranchPr,
   experimental_useSidebarThreads as useSidebarThreads,
 } from "@get-bb/plugin-sdk/app";
+import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Icon } from "@/components/ui/icon";
+import { usePortalScopeProps } from "@/lib/portal-scope";
 import "./live-activity.css";
 import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
@@ -464,6 +466,92 @@ function NextSteps({ steps, onReply }: { steps: ReportSteps; onReply: (text: str
   );
 }
 
+/**
+ * Everything that will prompt this thread on its own, behind one quiet
+ * "Auto-prompt" control: continue after a usage limit (a switch), and each
+ * CI/review watch and release wait (untick to stop it).
+ */
+function AutoPromptMenu({
+  autoContinue,
+  onToggleAutoContinue,
+  watches,
+  onCancelWatch,
+}: {
+  autoContinue: { enabled: boolean; scheduledAt: number | null };
+  onToggleAutoContinue: (enabled: boolean) => Promise<void>;
+  watches: readonly { kind: "ci" | "release"; key: string; label: string }[];
+  onCancelWatch?: (watch: { kind: "ci" | "release"; key: string }) => Promise<void>;
+}) {
+  const portalScope = usePortalScopeProps();
+  const count = (autoContinue.enabled ? 1 : 0) + watches.length;
+  const item =
+    "relative flex cursor-default select-none items-start gap-2 rounded-sm py-[0.3125rem] pl-7 pr-3 text-xs outline-none focus:bg-state-hover focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
+  const check = (
+    <span className="absolute left-2 top-[0.4rem] flex size-3.5 items-center justify-center">
+      <DropdownMenuPrimitive.ItemIndicator>
+        <Icon name="Check" className="size-3.5" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </span>
+  );
+  return (
+    <DropdownMenuPrimitive.Root>
+      <DropdownMenuPrimitive.Trigger asChild>
+        <button type="button" className="jf-autoprompt" data-on={count > 0}>
+          <Icon name="RefreshCw" className="size-3" />
+          Auto-prompt
+          <span>{count > 0 ? `· ${count}` : "· off"}</span>
+        </button>
+      </DropdownMenuPrimitive.Trigger>
+      <DropdownMenuPrimitive.Portal>
+        <DropdownMenuPrimitive.Content
+          {...portalScope}
+          align="end"
+          sideOffset={6}
+          className="z-50 min-w-64 max-w-80 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+        >
+          <DropdownMenuPrimitive.Label className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">
+            Prompt this thread automatically
+          </DropdownMenuPrimitive.Label>
+          <DropdownMenuPrimitive.CheckboxItem
+            className={item}
+            checked={autoContinue.enabled}
+            onSelect={(event) => event.preventDefault()}
+            onCheckedChange={(checked) => void onToggleAutoContinue(checked === true)}
+          >
+            {check}
+            <span>
+              Continue after a usage limit resets
+              {autoContinue.enabled && autoContinue.scheduledAt !== null && (
+                <span className="block text-muted-foreground">
+                  Queued for {new Date(autoContinue.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+            </span>
+          </DropdownMenuPrimitive.CheckboxItem>
+          {watches.map((watch) => (
+            <DropdownMenuPrimitive.CheckboxItem
+              key={watch.key}
+              className={item}
+              checked
+              disabled={!onCancelWatch}
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(checked) => {
+                if (!checked && onCancelWatch) void onCancelWatch(watch);
+              }}
+            >
+              {check}
+              <span>{watch.kind === "ci" ? `When ${watch.label} report back` : `When the ${watch.label} is out`}</span>
+            </DropdownMenuPrimitive.CheckboxItem>
+          ))}
+          {watches.length === 0 && (
+            <p className="px-2 pb-1.5 pt-1 text-[11px] text-muted-foreground">No CI or release watches for this thread.</p>
+          )}
+        </DropdownMenuPrimitive.Content>
+      </DropdownMenuPrimitive.Portal>
+    </DropdownMenuPrimitive.Root>
+  );
+}
+
 /** A status report older than this asks to be refreshed. */
 const STATUS_OUTDATED_MS = 6 * 3_600_000;
 
@@ -616,11 +704,6 @@ export function ActivityCard({
             {elapsed(now - startedAt)}
           </time>
         )}
-        {canRequest && outdated && (
-          <span className="jf-monitor-stale" title={outdatedReason ?? undefined}>
-            {monitor?.report ? "Out of date" : "No report yet"}
-          </span>
-        )}
         {canRequest && (
           <button
             type="button"
@@ -674,7 +757,10 @@ export function ActivityCard({
             {monitor?.report ? (
               <>
                 <div className="jf-monitor-caption">
-                  Status report{" "}
+                  <span>
+                    Status report
+                    {outdated && <span className="jf-monitor-stale" title={outdatedReason ?? undefined}> · out of date</span>}
+                  </span>{" "}
                   <time
                     title={new Date(monitor.report.capturedAt).toLocaleString()}
                   >
@@ -723,7 +809,10 @@ export function ActivityCard({
             ) : monitor?.latest ? (
               <>
                 <div className="jf-monitor-caption">
-                  Latest reply{" "}
+                  <span>
+                    Latest reply
+                    {outdated && <span className="jf-monitor-stale"> · no status report yet</span>}
+                  </span>{" "}
                   <time title={new Date(monitor.latestAt).toLocaleString()}>
                     {elapsed(now - monitor.latestAt)} ago
                   </time>
@@ -817,66 +906,6 @@ export function ActivityCard({
             />
           )}
         </div>
-        {statusError || onToggleAutoContinue || (!active && !expanded) ? (
-          <div className="jf-monitor-controls">
-            {!active && !expanded && (() => {
-              // Quiet one-line summary; the bars are in Details.
-              const milestones = monitor?.report?.milestones ?? [];
-              const parts = [
-                milestones.length ? `${milestones.filter((m) => m.percent >= 100).length}/${milestones.length} milestones done` : null,
-                context && context.modelContextWindow > 0 ? `context ${Math.round((context.usedTokens / context.modelContextWindow) * 100)}%` : null,
-              ].filter(Boolean);
-              return parts.length ? <span className="jf-monitor-summary">{parts.join(" · ")}</span> : null;
-            })()}
-            {onToggleAutoContinue && autoContinue && (
-              <div className="jf-monitor-wake" role="group" aria-label="Wake this thread">
-                <span className="jf-monitor-wake-label">Wake this thread:</span>
-                <label
-                  className="jf-monitor-continue"
-                  title="When this thread stops on a Claude Code usage limit, send “continue” 90 seconds after the limit resets."
-                >
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    aria-label="After a usage limit resets"
-                    checked={autoContinue.enabled}
-                    disabled={togglingContinue}
-                    onChange={async (event) => {
-                      setTogglingContinue(true);
-                      try {
-                        await onToggleAutoContinue(event.target.checked);
-                      } finally {
-                        setTogglingContinue(false);
-                      }
-                    }}
-                  />
-                  <span>
-                    after a usage limit
-                    {autoContinue.enabled && autoContinue.scheduledAt !== null
-                      ? ` · at ${new Date(autoContinue.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                      : ""}
-                  </span>
-                </label>
-                {watches.map((watch) => (
-                  <span key={watch.key} className="jf-monitor-watch" title={`A message arrives here when there's news on ${watch.label}`}>
-                    {watch.label}
-                    {onCancelWatch && (
-                      <button
-                        type="button"
-                        aria-label={`Stop waiting for ${watch.label}`}
-                        title="Stop waiting for this"
-                        onClick={() => void onCancelWatch(watch)}
-                      >
-                        <Icon name="X" className="size-3" />
-                      </button>
-                    )}
-                  </span>
-                ))}
-              </div>
-            )}
-            {statusError && <p role="alert">{statusError}</p>}
-          </div>
-        ) : null}
         <div className="jf-live-footer">
           <div className="jf-live-badges">
             {agents > 0 && (
@@ -913,8 +942,26 @@ export function ActivityCard({
                 +{prs.length - 2} PRs
               </button>
             )}
+            {!active && !expanded && (() => {
+              // Quiet one-line summary; the bars are in Details.
+              const milestones = monitor?.report?.milestones ?? [];
+              const parts = [
+                milestones.length ? `${milestones.filter((m) => m.percent >= 100).length}/${milestones.length} milestones done` : null,
+                context && context.modelContextWindow > 0 ? `context ${Math.round((context.usedTokens / context.modelContextWindow) * 100)}%` : null,
+              ].filter(Boolean);
+              return parts.length ? <span className="jf-monitor-summary">{parts.join(" · ")}</span> : null;
+            })()}
           </div>
-          {hasLiveData && (!connected || now - updatedAt > 10000) && (
+            {onToggleAutoContinue && autoContinue && (
+              <AutoPromptMenu
+                autoContinue={autoContinue}
+                onToggleAutoContinue={onToggleAutoContinue}
+                watches={watches}
+                onCancelWatch={onCancelWatch}
+              />
+            )}
+          {statusError && <span role="alert" className="jf-monitor-error">{statusError}</span>}
+          {active && hasLiveData && (!connected || now - updatedAt > 10000) && (
             <span className="jf-live-freshness">
               {connected
                 ? `Updated ${elapsed(now - updatedAt)} ago`

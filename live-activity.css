@@ -925,18 +925,6 @@
   padding: 3px 9px;
   font-size: 11px;
 }
-.jf-monitor-continue {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--muted-foreground);
-  cursor: pointer;
-}
-.jf-monitor-continue input {
-  accent-color: var(--primary);
-}
 
 /* --- quiet monitor ------------------------------------------------------- */
 .jf-live-card[data-active="false"] .jf-live-orbit {
@@ -987,9 +975,6 @@
 }
 .jf-monitor-controls {
   margin-top: 10px;
-}
-.jf-monitor-continue {
-  font-size: 10.5px;
 }
 
 /* Next steps: tick and Go, or pick an option. */
@@ -1061,38 +1046,55 @@
   color: var(--destructive-text);
 }
 
-/* "Wake this thread:" auto-continue switch and the watches that will message it. */
-.jf-monitor-wake {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px 10px;
-  margin-left: auto;
+
+
+/* --- one quiet footer line ---------------------------------------------- */
+.jf-live-card[data-active="false"] .jf-live-footer {
+  padding: 10px 0 11px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.jf-live-card[data-active="false"] .jf-live-pr {
+  border-color: transparent;
+  padding: 1px 2px;
+  font-size: 10.5px;
+}
+.jf-live-badges > span.jf-monitor-summary {
+  padding: 0;
+  border: 0;
+  background: none;
   font-size: 10.5px;
   color: var(--muted-foreground);
 }
-.jf-monitor-wake .jf-monitor-continue {
-  margin-left: 0;
+.jf-monitor-stale {
+  color: var(--warning-text);
 }
-.jf-monitor-watch {
+.jf-monitor-error {
+  color: var(--destructive-text);
+  font-size: 11px;
+}
+
+/* Auto-prompt: one quiet control; the details are in its menu. */
+.jf-live-card .jf-autoprompt {
+  all: unset;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 1px 2px 1px 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-}
-.jf-monitor-watch button {
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
+  gap: 5px;
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
   color: var(--muted-foreground);
   cursor: pointer;
 }
-.jf-monitor-watch button:hover {
+.jf-live-card .jf-autoprompt:hover,
+.jf-live-card .jf-autoprompt[data-state="open"] {
   background: var(--accent);
   color: var(--foreground);
+}
+.jf-live-card .jf-autoprompt:focus-visible {
+  outline: 2px solid var(--ring);
+}
+.jf-live-card .jf-autoprompt > span {
+  opacity: 0.75;
 }

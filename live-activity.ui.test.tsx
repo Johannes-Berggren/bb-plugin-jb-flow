@@ -677,7 +677,7 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { component: ActivityCard },
     { ...base, now: 200_000, monitor: { ...savedMonitor, latestAt: 150_000 } },
   );
-  expect(outdated.getByText("Out of date").getAttribute("title")).toBe("The agent replied after this report");
+  expect(outdated.getByText("· out of date").getAttribute("title")).toBe("The agent replied after this report");
   expect(outdated.getAllByRole("button", { name: "Update status" })).toHaveLength(1);
   outdated.lifecycle.unmount();
 
@@ -685,13 +685,13 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { component: ActivityCard },
     { ...base, now: 61_000, monitor: { ...savedMonitor, latestAt: 1000 } },
   );
-  expect(current.queryByText("Out of date")).toBeNull();
+  expect(current.queryByText("· out of date")).toBeNull();
   // Current: a quiet Refresh instead of the prominent Update status.
   expect(current.getByRole("button", { name: "Refresh" })).toBeTruthy();
   current.lifecycle.unmount();
 });
 
-it("shows the thread's auto-continue switch and reports changes", async () => {
+it("shows auto-prompt in a menu and switches continue-after-limit from there", async () => {
   const toggle = vi.fn(async () => {});
   const slot = renderSlot(
     { component: ActivityCard },
@@ -707,12 +707,15 @@ it("shows the thread's auto-continue switch and reports changes", async () => {
       onToggleAutoContinue: toggle,
     },
   );
-  const box = slot.getByRole("switch", { name: "After a usage limit resets" });
-  fireEvent.click(box);
+  const trigger = slot.getByRole("button", { name: /Auto-prompt/ });
+  expect(trigger.textContent).toContain("off");
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
+  const item = await waitFor(() => document.body.querySelector('[role="menuitemcheckbox"]') as HTMLElement);
+  expect(item.textContent).toContain("Continue after a usage limit resets");
+  fireEvent.click(item);
   await waitFor(() => expect(toggle).toHaveBeenCalledWith(true));
   slot.lifecycle.unmount();
 });
-
 it("offers the report's next steps: Go for all, Go with picked steps, or a numbered decision", async () => {
   const reply = vi.fn(async () => {});
   const steps = { mode: "go" as const, question: "", items: ["Check the nightly run", "Try the staging app", "Tidy the docs"], recommended: [1] };
@@ -746,7 +749,7 @@ it("offers the report's next steps: Go for all, Go with picked steps, or a numbe
   choiceSlot.lifecycle.unmount();
 });
 
-it("lists what will wake the thread and stops a watch on ×", async () => {
+it("lists watches in the auto-prompt menu and stops one when unticked", async () => {
   const cancel = vi.fn(async () => {});
   const slot = renderSlot(
     { component: ActivityCard },
@@ -767,9 +770,14 @@ it("lists what will wake the thread and stops a watch on ×", async () => {
       onCancelWatch: cancel,
     },
   );
-  expect(slot.getByText("Wake this thread:")).toBeTruthy();
-  expect(slot.getByText("web-app#12 checks")).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Stop waiting for next web-app release" }));
+  const trigger = slot.getByRole("button", { name: /Auto-prompt/ });
+  expect(trigger.textContent).toContain("· 3");
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
+  await waitFor(() => expect(document.body.querySelectorAll('[role="menuitemcheckbox"]')).toHaveLength(3));
+  const release = Array.from(document.body.querySelectorAll('[role="menuitemcheckbox"]')).find((el) =>
+    el.textContent?.includes("next web-app release"),
+  ) as HTMLElement;
+  fireEvent.click(release);
   await waitFor(() => expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ kind: "release", key: "t1@web-app" })));
   slot.lifecycle.unmount();
 });
