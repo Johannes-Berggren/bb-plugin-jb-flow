@@ -11,7 +11,7 @@ import { laneSections } from "./lanes.ts";
 const ASKS = new RegExp(
   [
     String.raw`\?\s*$`,
-    String.raw`\b(reply|answer)\s+["“*]{0,2}(go|yes)\b`,
+    String.raw`\b(reply|answer|write|type|send)\s+["“*]{0,2}(go|yes)\b`,
     String.raw`\bsay\s+["“*]{1,2}(go|yes)\b`, // quoted: "if they say yes" is about someone else
     String.raw`\b(want me to|should i|shall i|would you like|do you want|if you('d)? (want|like|prefer))\b`,
     String.raw`\bif you (place|send|run|give|share|paste|confirm|approve|sign)\b`,
@@ -35,7 +35,7 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 10;
+const AWAITING_VERSION = 11;
 
 /** True when the tail of the message hands the next step to the user. */
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
@@ -50,7 +50,8 @@ export function asksUser(text: string): boolean {
     .slice(-900)
     .replace(/(^|[.!?\n]\s*)if (?!you\b)(?:[^.!?\n]|[.!?](?=\S))*[.!?]?/gi, "$1");
   // Trailing numbered options are a choice for you, whatever the wording.
-  return ASKS.test(tail) || parseDecisionOptions(text).length > 0;
+  // Any trailing numbered list counts here: a to-do list for you is an ask too.
+  return ASKS.test(tail) || parseDecisionOptions(text, { strict: false }).length > 0;
 }
 
 // The agent said it would come back on its own ("I'll report when it finishes",

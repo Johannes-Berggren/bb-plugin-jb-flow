@@ -66,3 +66,7 @@ test("sign-offs, summaries and other people's steps aren't asks", () => {
   assert.ok(!waitsOnOthers("Waiting for the tests to finish before merging."));
   assert.ok(promisesFollowUp("I’ll report back when the build finishes."));
 });
+
+test("'write go' is an ask", () => {
+  assert.ok(asksUser("> **Recommended:** remove the endpoint.\n>\n> Write **go** and I'll make that change."));
+});
