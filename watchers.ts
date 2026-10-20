@@ -632,5 +632,38 @@ export function createWatchers(
     };
   }
 
-  return { watchCi, registerReleaseWaiter, checkReleases, checkCi, status, autoContinueAt, cancelAutoContinue, RELEASE_WAIT };
+  /** What will message this thread on its own: CI/review watches and release waits. */
+  async function wakeupsFor(threadId: string): Promise<Array<{ kind: "ci" | "release"; key: string; label: string }>> {
+    const watches = await get<Record<string, CiWatch>>("ciWatches", {});
+    const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
+    const what = { checks: "checks", reviews: "reviews", both: "checks and reviews" } as const;
+    return [
+      ...Object.entries(watches)
+        .filter(([, watch]) => watch.threadId === threadId)
+        .map(([key, watch]) => ({
+          kind: "ci" as const,
+          key,
+          label: `${watch.repo.split("/")[1]}#${watch.pr} ${watch.quiet ? "reviews" : what[watch.watchFor]}`,
+        })),
+      ...Object.entries(waiters)
+        .filter(([, waiter]) => waiter.threadId === threadId)
+        .map(([key, waiter]) => ({ kind: "release" as const, key, label: `next ${waiter.projectName} release` })),
+    ];
+  }
+
+  /** Stops one watch or release wait for a thread. */
+  async function cancelWakeup(threadId: string, kind: "ci" | "release", key: string) {
+    if (kind === "ci") {
+      await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
+        if (all[key]?.threadId === threadId) delete all[key];
+      });
+    } else {
+      await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
+        if (all[key]?.threadId === threadId) delete all[key];
+      });
+    }
+    changed();
+  }
+
+  return { watchCi, registerReleaseWaiter, checkReleases, checkCi, status, autoContinueAt, cancelAutoContinue, wakeupsFor, cancelWakeup, RELEASE_WAIT };
 }

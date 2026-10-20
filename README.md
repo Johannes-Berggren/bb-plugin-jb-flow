@@ -112,7 +112,8 @@ old, or there is none), the header says so and offers **Update status**; otherwi
 If the report ends with numbered **Next steps**, they appear as a checklist with **Go**: Go alone sends `go`, and with
 steps ticked it sends `go 1,3`. A **Decision needed** list shows one button per option, which sends its number, and a
 **Doing now** line shows what the agent is already doing. The separate reply cards above the composer stay hidden for
-that message. The monitor also has a per-thread **Continue after usage-limit reset** switch (see Watchers).
+that message. Its bottom row, **Wake this thread:**, lists everything that will message the thread on its own: a
+switch for continuing after a usage limit, and each CI/review watch and release wait (see Watchers), each with × to stop it.
 
 **Update status** sends the **Status report prompt** setting to this thread (empty uses a short
 built-in prompt in that format), preserving your composer draft. It runs only when clicked.
