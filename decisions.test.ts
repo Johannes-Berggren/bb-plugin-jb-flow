@@ -20,3 +20,37 @@ test("preserves longer reply choices for the multiline cards while bounding outp
   assert.equal(parseDecisionOptions(`Choose an approach?\n1. ${text} (recommended)\n2. Stop here`)[0]?.text, text);
   assert.equal(parseDecisionOptions(`Choose an approach?\n1. ${"x".repeat(600)} (recommended)\n2. Stop here`)[0]?.text.length, 500);
 });
+
+test("a list of steps is not a choice, even near the end", () => {
+  const steps = [
+    "Manual fallback:",
+    "",
+    "1. Acme pushes the order as Draft.",
+    "2. Finance verifies customer, amount and delivery method in the ledger.",
+    "3. Finance changes it to Ready to Invoice in the GUI.",
+    "4. The read-only reconciliation detects the assigned invoice number.",
+    "",
+    "The current branch implements the unsupported promotion path, so it should not ship as written.",
+    "",
+    "> **Recommended:** remove the promotion endpoint and keep Draft creation.",
+    ">",
+    "> Write **go** and I'll make that change.",
+  ].join("\n");
+  assert.deepEqual(parseDecisionOptions(steps), []);
+  // Still a trailing list for the "needs me" check.
+  assert.equal(parseDecisionOptions("Two things:\n1. Check the login.\n2. Remove the worktree.", { strict: false }).length, 2);
+});
+
+test("a list is a choice when the intro asks, an option is recommended, or the outro asks for a number", () => {
+  assert.equal(parseDecisionOptions("Which should I do?\n1. Merge now\n2. Wait for review").length, 2);
+  assert.equal(parseDecisionOptions("Options:\n1. Merge now\n2. Wait for review").length, 2);
+  assert.equal(parseDecisionOptions("Next:\n1. Merge now (recommended)\n2. Wait for review").length, 2);
+  assert.equal(parseDecisionOptions("Two ways forward:\n1. Merge now\n2. Wait for review\n\nReply with the number.").length, 2);
+  assert.equal(parseDecisionOptions("Two ways forward:\n1. Merge now\n2. Wait for review").length, 2);
+  assert.deepEqual(parseDecisionOptions("Steps:\n1. Merge now\n2. Wait for review"), []);
+});
+
+test("next-step lists you pick from with go are choices", () => {
+  assert.equal(parseDecisionOptions("> **Recommended:** 1\n> 1. Check the nightly run\n> 2. Try the staging app\n>\n> Reply **go** for all, or **go 1,3**.").length, 2);
+  assert.equal(parseDecisionOptions("> **Reply `go` for the next slice:**\n>\n> 1. Slim the reads\n> 2. Run the probe").length, 2);
+});

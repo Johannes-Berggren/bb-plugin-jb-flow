@@ -9,7 +9,21 @@ const plain = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-export function parseDecisionOptions(message: string): DecisionOption[] {
+// Words in the line before a list that make it a choice for the user.
+const CHOICE_INTRO =
+  /\?\s*\**\s*$|\b(options?|alternatives?|choose|choices?|pick|which|prefer|either|decide|decision|want me to|should (i|we)|shall (i|we)|how (should|do) (i|we)|what (should|do) (i|we)|reply|recommended|your call|ways? (forward|to)|approaches|paths?)\b/i;
+// Text after a list that asks for one of its numbers.
+const CHOICE_OUTRO =
+  /\b(reply|answer|respond|write|type|say|send)\b[^.\n]{0,40}\b(number|option|one of)\b|\bpick (one|a number|an option)\b|\bwhich (one|option)\b|\bgo\**\s+(for all|\d)/i;
+
+/**
+ * Numbered options the user can pick from, for one-click replies. A numbered
+ * list is only a choice when something says so: an option marked recommended,
+ * an intro that asks or offers, or a closing line asking for a number. With
+ * `{ strict: false }` any trailing list counts (the "does this need me" check,
+ * where a to-do list for the user is also an ask).
+ */
+export function parseDecisionOptions(message: string, { strict = true }: { strict?: boolean } = {}): DecisionOption[] {
   const lines = message.trim().split("\n").slice(-30);
   // Walk up from the end, skipping trailing chatter (timestamps, "Reply with the number").
   let end = lines.length - 1;
@@ -46,5 +60,8 @@ export function parseDecisionOptions(message: string): DecisionOption[] {
   // A real choice: 2–9 consecutive options numbered from 1.
   if (options.length < 2 || options.length > 9 || options[0]!.n !== 1) return [];
   if (options.some((option, index) => option.n !== index + 1)) return [];
+  // "Manual fallback: 1. Finance verifies… 2. …" describes steps; no buttons.
+  const outro = lines.slice(end + 1).join("\n");
+  if (strict && !recommended && !CHOICE_INTRO.test(intro) && !CHOICE_OUTRO.test(outro)) return [];
   return options;
 }
