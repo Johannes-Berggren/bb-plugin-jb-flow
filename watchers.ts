@@ -171,7 +171,8 @@ export function createWatchers(
     await update<Record<string, AutoContinue>>("autoContinue", {}, (all) => {
       delete all[thread.id];
     });
-    if (entry.queuedMessageId !== null && Date.now() < entry.resetsAt) {
+    // Until it is actually sent (90s after the reset), it can still be taken back.
+    if (entry.queuedMessageId !== null && Date.now() < entry.resetsAt + CONTINUE_DELAY_MS) {
       await bb.sdk.threads.queuedMessages
         .delete({ threadId: thread.id, queuedMessageId: entry.queuedMessageId })
         .catch(() => undefined);
