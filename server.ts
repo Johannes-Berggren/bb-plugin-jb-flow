@@ -1,6 +1,7 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, parseStatusReport, threadStatusSchema } from "./thread-status";
+import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
@@ -320,6 +321,13 @@ export default async function plugin(bb: BbPluginApi) {
         "What Update status sends to the agent. Leave empty for a short built-in prompt. The monitor reads **Goal:**, **Done:**, **Next:**, **Blocked:** and a ### Progress block.",
       experimental_multiline: true,
       default: "",
+    },
+    autoStatus: {
+      type: "boolean",
+      label: "Status report at hand-back",
+      description:
+        "Ask agents to end replies that hand the thread back to you with the status report above, so the thread monitor stays current without Update status. Threads pick this up when their session next starts.",
+      default: false,
     },
     staleDays: {
       type: "number",
@@ -1136,7 +1144,18 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         .join("\n");
     },
   });
-  bb.agents.configure(() => ({ tools: ["snooze_thread", "wait_for_ci", "pr_status"], skills: [] }));
+  // configure() must answer synchronously, so keep the settings it reads at hand.
+  let agentSettings = await settings.get();
+  settings.onChange((next) => {
+    agentSettings = next;
+  });
+  bb.agents.configure(() => ({
+    tools: ["snooze_thread", "wait_for_ci", "pr_status"],
+    skills: [],
+    ...(agentSettings.autoStatus && agentSettings.threadMonitor
+      ? { instructions: handBackInstructions(agentSettings.statusPrompt) }
+      : {}),
+  }));
 
   // --- CLI ------------------------------------------------------------------
 
