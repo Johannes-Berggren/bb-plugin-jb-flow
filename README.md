@@ -199,8 +199,9 @@ unloads. Unrecognized markup stays native. Reduced motion disables the sweep.
 
 ### Reply choices
 
-Numbered decisions appear as full-width action cards with number badges,
-multiline text, a Recommended label, and distinct hover/focus states. Choosing
+Numbered decisions appear as one compact list with a row per option: a number
+badge, up to two lines of text, and a Recommended label on the right. A long
+list scrolls inside a capped box instead of pushing the composer. Choosing
 one sends only its number, with visible sending/sent feedback. Duplicate clicks
 are blocked; failed sends show an error and allow retry. Choices reset when the
 thread or source reply changes. Motion respects reduced-motion preferences.
