@@ -98,8 +98,10 @@ again or Escape to close it.
     - BB's own and other plugins' thread actions (archive, pin, rename, copy link, …)
   - Escape, Shift+Tab or ← goes back.
 
-Rows show the same status icon as the Triage list, plus project, workspace, branch,
-PR state, tags and snooze. The command *Open JB Flow palette* (in BB's quick palette,
+Rows show the same status icon as the Triage list, plus project, workspace, PR state,
+tags, snooze and branch. On wide windows a pane beside the results previews the
+selected thread: its goal, next step or blocker, PRs and details, as in the Triage
+hover card. When the selection isn't a thread, the pane shows the scopes and keys. The command *Open JB Flow palette* (in BB's quick palette,
 rebindable under Settings → Keyboard) opens it even with the setting off.
 
 The setting is off, or the plugin is disabled? Then the key is BB's Search threads

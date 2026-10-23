@@ -92,6 +92,18 @@ test("matchToken prefers word starts and keeps ranges on the original text", () 
   assert.equal(matchToken("fg", "xfooooooooooooog"), null);
 });
 
+test("loose letter matches only count in titles", () => {
+  const flow = { ...input().flow!, threadPrs: { b: [pr(1, "merged", { title: "Pay all endpoints, then test everything" })] } };
+  const threads = [thread("a", "Command palette"), thread("b", "Exports")];
+  // "palette" is in no PR title as a word, though its letters are, in order.
+  assert.deepEqual(itemIds(group(search(input({ threads, flow }), "all", "palette"), "threads")), ["thread:a"]);
+  assert.equal(matchToken("plt", "Command palette") !== null, true);
+  assert.equal(matchToken("plt", "Command palette", true), null);
+  assert.equal(matchToken("palette", "feat(platform-addons): let the worker write"), null);
+  const prs = { ...input().flow!, threadPrs: { b: [pr(872, "merged", { title: "platform-addons: let the sync worker write" }), pr(20, "merged", { title: "Palette: ⌘K" })] } };
+  assert.deepEqual(itemIds(search(input({ threads, flow: prs }), "prs", "palette")[0]), ["pr:https://github.com/acme/web-app/pull/20"]);
+});
+
 test("a word-start title hit outranks a mid-word one", () => {
   const sections = search(
     input({ threads: [thread("a", "Unbilled invoices"), thread("b", "Billing export")] }),
@@ -150,8 +162,9 @@ test("scopes show one kind; actions keep their order without text", () => {
   const places = search(input({ workspaces: [{ id: "ws", name: "Client work" }] }), "places", "client");
   assert.deepEqual(ids(places), ["places"]);
   assert.deepEqual(itemIds(places[0]), ["workspace:ws"]);
-  // Opening a project ranks above starting a thread in it.
+  // Opening a project ranks above starting a thread in it; an empty scope lists each project once.
   assert.deepEqual(itemIds(search(input(), "places", "billing")[0]), ["project:p2", "project-new:p2"]);
+  assert.deepEqual(itemIds(search(input(), "places", "")[0]), ["project:p1", "project:p2"]);
 });
 
 test("a new thread from the query is always offered last", () => {

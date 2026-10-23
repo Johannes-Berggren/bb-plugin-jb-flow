@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread, PluginThreadActionEntry } from "@get-bb/plugin-sdk/app";
@@ -225,7 +225,7 @@ describe("palette results", () => {
       },
       archived: { total: 0, results: [] },
     }));
-    const slot = await mount({ search });
+    const slot = await mount({ search, context: { projectId: "p1" } });
     const input = await openPalette(slot);
     fireEvent.change(input, { target: { value: "invoice" } });
     expect(await slot.findByRole("group", { name: "Messages" })).toBeTruthy();
@@ -315,5 +315,40 @@ describe("palette thread actions", () => {
     fireEvent.change(input, { target: { value: "archive" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(archive).toHaveBeenCalled());
+  });
+});
+
+describe("palette preview", () => {
+  it("previews the selected thread beside the results on wide windows", async () => {
+    // Last in this file: the media-query store caches the stub.
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(min-width: 1100px)",
+      media: query,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    }));
+    const preview = vi.fn((input: { threadId: string }) => ({
+      goal: input.threadId === "a" ? "Ship the export fix" : "Roll out the worker",
+      done: "",
+      next: "Review the diff",
+      blocked: "",
+      latest: "",
+      prompts: 3,
+    }));
+    const slot = await mount({ rpc: { thread_preview: preview as never } });
+    const input = await openPalette(slot);
+    const pane = await slot.findByRole("complementary", { name: "Preview" });
+    expect(await within(pane).findByText("Ship the export fix")).toBeTruthy();
+    expect(within(pane).getByText(/3 prompts/)).toBeTruthy();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(await within(pane).findByText("Roll out the worker")).toBeTruthy();
+    // Not a thread: tips instead.
+    fireEvent.change(input, { target: { value: ">" } });
+    expect(await within(pane).findByText("Tips")).toBeTruthy();
+    vi.unstubAllGlobals();
   });
 });

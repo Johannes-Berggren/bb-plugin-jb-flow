@@ -216,34 +216,136 @@ function Field({ label, children, tone }: { label: string; children: ReactNode; 
   );
 }
 
+type PreviewCardProps = {
+  title: string;
+  status: { glyph: GlyphName; tone: string; label: string; spin?: boolean };
+  /** Null while it loads. */
+  preview: Preview | null;
+  prs: readonly ThreadPr[];
+  watching: FlowState["watching"][string] | undefined;
+  snoozeUntil: number | undefined;
+  /** Project, section, branch and so on, shown last. */
+  details: readonly string[];
+  /** How many PRs to list before "+N more". */
+  prLimit?: number;
+};
+
+const previews = new Map<string, { updatedAt: number; preview: Preview }>();
+const NO_PREVIEW: Preview = { goal: "", done: "", next: "", blocked: "", latest: "", prompts: 0 };
+
+/**
+ * A thread's goal, next step, blockers and latest reply, fetched once per
+ * update of the thread and shared by the hover card and the palette. Pass a
+ * null id to fetch nothing; `delayMs` skips threads you only pass over.
+ */
+export function useThreadPreview(threadId: string | null, updatedAt: number, delayMs = 0): Preview | null {
+  const rpc = useRpc<typeof rpcContract>();
+  const cached = threadId === null ? undefined : previews.get(threadId);
+  const fresh = cached !== undefined && cached.updatedAt === updatedAt ? cached.preview : null;
+  const [loaded, setLoaded] = useState<{ threadId: string; preview: Preview } | null>(null);
+  useEffect(() => {
+    if (threadId === null || fresh !== null) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      rpc.call("thread_preview", { threadId }).then(
+        (preview) => {
+          previews.set(threadId, { updatedAt, preview });
+          if (live) setLoaded({ threadId, preview });
+        },
+        () => {
+          if (live) setLoaded({ threadId, preview: NO_PREVIEW });
+        },
+      );
+    }, delayMs);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [delayMs, fresh, rpc, threadId, updatedAt]);
+  if (threadId === null) return null;
+  return fresh ?? (loaded?.threadId === threadId ? loaded.preview : null);
+}
+
+/** The body of a thread preview, in order of importance: status, goal, next/blocked, PRs, then details. */
+export function ThreadPreviewCard({ title, status, preview, prs, watching, snoozeUntil, details, prLimit = 4 }: PreviewCardProps) {
+  const shownPrs = prs.slice(0, prLimit);
+  return (
+    <>
+      <div className="space-y-1">
+        <div className={cn("flex items-center gap-1.5 text-[11px] font-medium", status.tone)}>
+          <Glyph name={status.glyph} className={cn("size-3.5", status.spin && "animate-spin")} />
+          <span className="truncate">{status.label}</span>
+          {snoozeUntil !== undefined ? (
+            <span className="ml-auto shrink-0 font-normal text-muted-foreground">snoozed · {formatWhen(snoozeUntil)}</span>
+          ) : null}
+        </div>
+        <div className="text-sm font-medium leading-snug">{title}</div>
+      </div>
+
+      {preview === null ? (
+        <div className="h-10 animate-pulse rounded-md bg-muted/60" />
+      ) : (
+        <div className="space-y-1.5">
+          {preview.goal ? <Field label="Goal">{preview.goal}</Field> : null}
+          {preview.blocked ? (
+            <Field label="Blocked" tone="text-amber-600">
+              {preview.blocked}
+            </Field>
+          ) : null}
+          {preview.next ? <Field label="Next">{preview.next}</Field> : null}
+          {!preview.next && !preview.blocked && preview.latest ? (
+            <Field label="Latest" tone="text-muted-foreground">
+              {preview.latest}
+            </Field>
+          ) : null}
+        </div>
+      )}
+
+      {watching && !status.label.startsWith(watching.label) ? (
+        <div className="text-[11px] text-muted-foreground">{watching.label}</div>
+      ) : null}
+
+      {shownPrs.length > 0 ? (
+        <div className="space-y-0.5 border-t border-border pt-2">
+          {shownPrs.map((pr) => (
+            <div key={pr.url} className={cn("flex items-center gap-1.5 text-xs", pr.stackedOn !== null && "pl-3")}>
+              <Glyph name={prGlyph(pr)} className={cn("size-3.5", PR_TONE[pr.attention])} />
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {prs.some((other) => other.repo !== pr.repo) ? `${pr.repo.split("/")[1]}#` : "#"}
+                {pr.number}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{pr.title}</span>
+              <span className={cn("shrink-0 text-[10px]", PR_TONE[pr.attention])}>{attentionLabel(pr.attention)}</span>
+            </div>
+          ))}
+          {prs.length > shownPrs.length ? (
+            <div className="text-[11px] text-muted-foreground">+{prs.length - shownPrs.length} more</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="truncate border-t border-border pt-2 text-[10px] text-muted-foreground">{details.join(" · ")}</div>
+    </>
+  );
+}
+
 /**
  * Wraps a row in a hover card. Forwards the ref and any props (event handlers
  * from an outer `asChild` trigger such as the context menu) to the row
  * element, so wrapping never swallows right-click or keyboard handling.
- *
- * Order is by importance: status, goal, next/blocked, PRs, then details.
  */
 export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProps>(function ThreadHoverPreview(
   { thread, status, projectName, machineName, sectionName, tags, prs, watching, snoozeUntil, children, ...triggerProps },
   ref,
 ) {
-  const rpc = useRpc<typeof rpcContract>();
   // Portaled to <body>: these attributes put the card inside the plugin's CSS scope.
   const portalScope = usePortalScopeProps();
   const [open, setOpen] = useState(false);
   // A right-click opens the row's context menu; the card would cover it. Stay
   // closed until the pointer leaves the row.
   const [suppressed, setSuppressed] = useState(false);
-  const [preview, setPreview] = useState<Preview | null>(null);
-  useEffect(() => {
-    if (!open || preview !== null) return;
-    rpc.call("thread_preview", { threadId: thread.id }).then(setPreview, () =>
-      setPreview({ goal: "", done: "", next: "", blocked: "", latest: "", prompts: 0 }),
-    );
-  }, [open, preview, rpc, thread.id]);
-  useEffect(() => setPreview(null), [thread.updatedAt]);
+  const preview = useThreadPreview(open ? thread.id : null, thread.updatedAt);
 
-  const shownPrs = prs.slice(0, 4);
   const details = [
     projectName === "Personal" ? null : projectName,
     sectionName,
@@ -252,7 +354,7 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
     `updated ${duration(Date.now() - thread.updatedAt)} ago`,
     preview && preview.prompts > 0 ? `${preview.prompts} prompts` : null,
     ...tags.map((tag) => `#${tag}`),
-  ].filter(Boolean);
+  ].filter((detail): detail is string => Boolean(detail));
 
   return (
     <HoverCard.Root open={open} onOpenChange={(next) => setOpen(next && !suppressed)} openDelay={1000} closeDelay={60}>
@@ -281,60 +383,15 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
           collisionPadding={12}
           className="z-50 w-[26rem] max-w-[calc(100vw-2rem)] space-y-2.5 rounded-xl border border-border bg-popover p-3.5 text-popover-foreground shadow-lg"
         >
-          <div className="space-y-1">
-            <div className={cn("flex items-center gap-1.5 text-[11px] font-medium", status.tone)}>
-              <Glyph name={status.glyph} className={cn("size-3.5", status.spin && "animate-spin")} />
-              <span className="truncate">{status.label}</span>
-              {snoozeUntil !== undefined ? (
-                <span className="ml-auto shrink-0 font-normal text-muted-foreground">snoozed · {formatWhen(snoozeUntil)}</span>
-              ) : null}
-            </div>
-            <div className="text-sm font-medium leading-snug">{thread.displayTitle}</div>
-          </div>
-
-          {preview === null ? (
-            <div className="h-10 animate-pulse rounded-md bg-muted/60" />
-          ) : (
-            <div className="space-y-1.5">
-              {preview.goal ? <Field label="Goal">{preview.goal}</Field> : null}
-              {preview.blocked ? (
-                <Field label="Blocked" tone="text-amber-600">
-                  {preview.blocked}
-                </Field>
-              ) : null}
-              {preview.next ? <Field label="Next">{preview.next}</Field> : null}
-              {!preview.next && !preview.blocked && preview.latest ? (
-                <Field label="Latest" tone="text-muted-foreground">
-                  {preview.latest}
-                </Field>
-              ) : null}
-            </div>
-          )}
-
-          {watching && !status.label.startsWith(watching.label) ? (
-            <div className="text-[11px] text-muted-foreground">{watching.label}</div>
-          ) : null}
-
-          {shownPrs.length > 0 ? (
-            <div className="space-y-0.5 border-t border-border pt-2">
-              {shownPrs.map((pr) => (
-                <div key={pr.url} className={cn("flex items-center gap-1.5 text-xs", pr.stackedOn !== null && "pl-3")}>
-                  <Glyph name={prGlyph(pr)} className={cn("size-3.5", PR_TONE[pr.attention])} />
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {prs.some((other) => other.repo !== pr.repo) ? `${pr.repo.split("/")[1]}#` : "#"}
-                    {pr.number}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{pr.title}</span>
-                  <span className={cn("shrink-0 text-[10px]", PR_TONE[pr.attention])}>{attentionLabel(pr.attention)}</span>
-                </div>
-              ))}
-              {prs.length > shownPrs.length ? (
-                <div className="text-[11px] text-muted-foreground">+{prs.length - shownPrs.length} more</div>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="truncate border-t border-border pt-2 text-[10px] text-muted-foreground">{details.join(" · ")}</div>
+          <ThreadPreviewCard
+            title={thread.displayTitle}
+            status={status}
+            preview={preview}
+            prs={prs}
+            watching={watching}
+            snoozeUntil={snoozeUntil}
+            details={details}
+          />
         </HoverCard.Content>
       </HoverCard.Portal>
     </HoverCard.Root>
