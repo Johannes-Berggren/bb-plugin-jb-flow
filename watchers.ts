@@ -8,7 +8,8 @@
 //   workflow runs pass. Configured per project in local.config.json.
 // - CI watcher: agents call `wait_for_ci` instead of polling `gh` in loops; the
 //   plugin polls once for everyone and messages the thread when checks finish,
-//   reviews/comments arrive, or the PR merges.
+//   reviews/comments arrive, or the PR merges. A thread that is still working
+//   is left alone; its news arrives as one message once it goes idle.
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -37,6 +38,8 @@ const RELEASE_BACKFILL_VERSION = 1;
 const CI_TIMEOUT_MS = 3 * 3_600_000;
 const NO_CHECKS_AFTER_MS = 10 * 60_000;
 const OK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+/** Thread states where CI news would only pile up in the queue. */
+const BUSY_STATUSES = new Set(["active", "starting", "stopping", "pending"]);
 /** Deploy-preview and housekeeping bots: their comments are not review feedback. */
 const BOT_LOGINS = new Set(["vercel", "github-actions", "dependabot", "linear", "changeset-bot", "codecov", "netlify", "sonarcloud"]);
 const isBot = (login: string | undefined, body: string) =>
@@ -429,8 +432,17 @@ export function createWatchers(
     const outbox = new Map<string, { notes: string[]; stillWatching: boolean }>();
     // Applied to a fresh read at the end, so watches added during the check survive.
     const removed = new Set<string>();
+    // A working agent checks its PRs itself (pr_status). Its watches stay as
+    // they are until it goes idle; the first idle cycle then reports the
+    // current checks and every review since the last report, in one message.
+    const busy = new Map<string, boolean>();
     let me: string | null = null;
     for (const [key, watch] of Object.entries(watches)) {
+      if (!busy.has(watch.threadId)) {
+        const thread = await bb.sdk.threads.get({ threadId: watch.threadId }).catch(() => null);
+        busy.set(watch.threadId, thread !== null && BUSY_STATUSES.has(thread.status));
+      }
+      if (busy.get(watch.threadId)) continue;
       let pr: PrState;
       try {
         pr = JSON.parse(

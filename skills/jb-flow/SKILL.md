@@ -94,6 +94,8 @@ Never poll GitHub in loops. That means no `gh pr checks --watch`, no `gh run wat
   - the checks finish (failed logs included),
   - a review or comment arrives, or
   - the PR merges or closes.
+
+  The message only comes once your thread is idle. While you keep working, nothing arrives, so use `pr_status` to check a PR yourself.
 - **Releases:** when you're blocked on a release, say so plainly ("waiting for release") and end your turn.
   - In projects with `releaseWatch` configured, the thread is woken with "released: …" once a release PR merges and its workflows pass.
   - To register explicitly: `bb jb-flow release-wait --self`.
