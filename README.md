@@ -109,7 +109,7 @@ as a quiet summary of the agent's last status report: **Done**, **Next**, **Goal
 bars and context use under **Details**. When the report is out of date (the agent replied since, it's over 6 hours
 old, or there is none), the header says so and offers **Update status**; otherwise a small **Refresh** does the same.
 
-If the report ends with numbered **Next steps**, they appear as a checklist with **Go**: Go alone sends `go`, and with
+If the report ends with numbered **Next steps** (the built-in prompt asks for a recommended path forward in a callout), they appear as a checklist with **Go**: Go alone sends `go`, and with
 steps ticked it sends `go 1,3`. A **Decision needed** list shows one button per option, which sends its number, and a
 **Doing now** line shows what the agent is already doing. The separate reply cards above the composer stay hidden for
 that message. **Auto-prompt** in its footer (with a count, or "off") opens a menu of everything that will message the thread on
