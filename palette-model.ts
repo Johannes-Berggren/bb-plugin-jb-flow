@@ -82,9 +82,11 @@ export type TokenMatch = { score: number; ranges: Range[] };
 /**
  * One lower-case word against one text. Best first: the whole text, its start,
  * a word start, anywhere, the initials of its words, then its letters in order
- * when they sit close together.
+ * when they sit close together. `strict` stops after "anywhere": loose letters
+ * find something in any long text (a thread's 40 PR titles), so only titles
+ * get them.
  */
-export function matchToken(token: string, text: string): TokenMatch | null {
+export function matchToken(token: string, text: string, strict = false): TokenMatch | null {
   if (!token || !text) return null;
   const lower = text.toLowerCase();
   const first = lower.indexOf(token);
@@ -99,7 +101,7 @@ export function matchToken(token: string, text: string): TokenMatch | null {
     const base = lower.length === token.length ? 100 : at === 0 ? 85 : wordStart(text, at) ? 70 : 45;
     return { score: base + Math.min(token.length, 12), ranges: [[at, at + token.length]] };
   }
-  if (token.length < 2) return null;
+  if (strict || token.length < 2) return null;
   const acronym = initials(token, text);
   if (acronym) return { score: 60, ranges: acronym };
   const ranges: Range[] = [];
@@ -117,7 +119,7 @@ export function matchToken(token: string, text: string): TokenMatch | null {
   return { score: Math.max(8, 30 - (span - token.length) * 2 - ranges.length), ranges };
 }
 
-export type Field = { key: string; text: string; weight: number };
+export type Field = { key: string; text: string; weight: number; strict?: boolean };
 export type FieldsMatch = { score: number; ranges: Record<string, Range[]> };
 
 function mergeRanges(ranges: Range[]): Range[] {
@@ -144,7 +146,7 @@ export function matchFields(tokens: readonly string[], fields: readonly Field[])
   for (const token of tokens) {
     let best: { field: Field; match: TokenMatch } | null = null;
     for (const field of fields) {
-      const match = matchToken(token, field.text);
+      const match = matchToken(token, field.text, field.strict);
       if (match && (best === null || match.score * field.weight > best.match.score * best.field.weight)) best = { field, match };
     }
     if (best === null) return null;
@@ -340,12 +342,12 @@ function threadFields(thread: PaletteThread, input: PaletteInput, index: ReturnT
   const workspace = input.workspaceOf[thread.id];
   return [
     { key: "title", text: thread.displayTitle, weight: 1 },
-    { key: "project", text: project && !project.isPersonal ? project.name : "", weight: 0.6 },
-    { key: "branch", text: thread.environment?.branchName ?? "", weight: 0.55 },
-    { key: "prs", text: (input.flow?.threadPrs[thread.id] ?? []).map((pr) => `#${pr.number} ${pr.title}`).join(" · "), weight: 0.7 },
-    { key: "tags", text: (input.flow?.tags[thread.id] ?? []).join(" "), weight: 0.6 },
-    { key: "workspace", text: workspace ? (index.workspaces.get(workspace) ?? "") : "", weight: 0.5 },
-    { key: "section", text: thread.sectionId ? (index.sections.get(thread.sectionId) ?? "") : "", weight: 0.45 },
+    { key: "project", text: project && !project.isPersonal ? project.name : "", weight: 0.6, strict: true },
+    { key: "branch", text: thread.environment?.branchName ?? "", weight: 0.55, strict: true },
+    { key: "prs", text: (input.flow?.threadPrs[thread.id] ?? []).map((pr) => `#${pr.number} ${pr.title}`).join(" · "), weight: 0.7, strict: true },
+    { key: "tags", text: (input.flow?.tags[thread.id] ?? []).join(" "), weight: 0.6, strict: true },
+    { key: "workspace", text: workspace ? (index.workspaces.get(workspace) ?? "") : "", weight: 0.5, strict: true },
+    { key: "section", text: thread.sectionId ? (index.sections.get(thread.sectionId) ?? "") : "", weight: 0.45, strict: true },
   ];
 }
 
@@ -506,9 +508,9 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
       }
       const fields: Field[] = [
         { key: "title", text: `#${pr.number} ${pr.title}`, weight: 1 },
-        { key: "repo", text: pr.repo, weight: 0.5 },
-        { key: "thread", text: index.threads.get(threadId)?.displayTitle ?? "", weight: 0.4 },
-        { key: "attention", text: pr.attention.replace(/_/g, " "), weight: 0.4 },
+        { key: "repo", text: pr.repo, weight: 0.5, strict: true },
+        { key: "thread", text: index.threads.get(threadId)?.displayTitle ?? "", weight: 0.4, strict: true },
+        { key: "attention", text: pr.attention.replace(/_/g, " "), weight: 0.4, strict: true },
       ];
       const match = matchFields(tokens, fields);
       if (match === null) continue;
@@ -532,12 +534,14 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     for (const place of places) {
       const boost = frecencyBoost(input.frecency[place.item.id], input.now);
       if (empty) {
+        // Listing every project twice reads as noise; "New thread in …" shows once you type.
+        if (place.item.kind === "project" && place.item.compose) continue;
         push("places", { item: place.item, score: boost - place.order / 100 });
         continue;
       }
       const match = matchFields(tokens, [
         { key: "title", text: place.text, weight: 1 },
-        { key: "keyword", text: place.keyword, weight: 0.35 },
+        { key: "keyword", text: place.keyword, weight: 0.35, strict: true },
       ]);
       if (match === null) continue;
       const item = { ...place.item, ranges: match.ranges } as PaletteItem;
@@ -557,7 +561,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
       }
       const match = matchFields(tokens, [
         { key: "title", text: action.title, weight: 1 },
-        { key: "keywords", text: action.keywords ?? "", weight: 0.6 },
+        { key: "keywords", text: action.keywords ?? "", weight: 0.6, strict: true },
       ]);
       if (match === null) return;
       push("actions", { item: { ...item, ranges: match.ranges }, score: match.score + boost });

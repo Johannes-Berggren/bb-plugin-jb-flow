@@ -51,10 +51,12 @@ import { resolveLanes } from "./lanes";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
 import { workspaceForThread } from "./workspaces";
-import { PR_TONE, StatusIcon, attentionLabel, prGlyph, rowStatus, runInfo, threadPrs, useNow } from "./ui-extras";
+import { PR_TONE, StatusIcon, ThreadPreviewCard, attentionLabel, prGlyph, rowStatus, runInfo, threadPrs, useNow, useThreadPreview } from "./ui-extras";
+import type { RowStatus } from "./ui-extras";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Glyph } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
+import { useMediaQuery } from "@/components/ui/hooks/use-media-query";
 import { cn } from "@/lib/utils";
 
 /** Opens the palette; the command and anything else in this window dispatch it. */
@@ -320,6 +322,8 @@ export function Palette({
   const selectedWorkspace = useSelectedWorkspace();
   const now = useNow(30_000);
   const platform = useMemo(currentPlatform, []);
+  // Room for a preview of the selected thread beside the results.
+  const wide = useMediaQuery("(min-width: 1100px)");
   const mod = platform === "mac" ? "⌘" : "Ctrl+";
 
   const [query, setQuery] = useState("");
@@ -382,7 +386,8 @@ export function Palette({
   );
 
   const projectName = (projectId: string) => projectsById.get(projectId)?.name ?? "this project";
-  const composeProject = context.projectId ?? current?.projectId ?? projects.find((project) => !project.isPersonal)?.id ?? projects[0]?.id;
+  // No project in view: leave the choice to bb's new-thread screen rather than guess.
+  const composeProject = context.projectId ?? current?.projectId ?? null;
 
   /** Everything you can do to one thread: replies, snooze, moves, PRs, then bb's and other plugins' actions. */
   const threadEntries = (thread: ThreadInfo, replies: readonly Reply[], hostActions: readonly PluginThreadActionEntry[], typed: string): Entry[] => {
@@ -647,6 +652,12 @@ export function Palette({
   const rows = sections.flatMap((section) => section.items);
   const activeIndex = Math.max(0, rows.findIndex((row) => row.id === activeId));
   const active = rows[activeIndex] ?? null;
+  const previewThreadId =
+    level?.mode.kind === "thread"
+      ? level.mode.thread.id
+      : active?.kind === "thread" || active?.kind === "pr"
+        ? active.threadId
+        : null;
 
   useEffect(() => {
     document.getElementById(`${listId}-${activeIndex}`)?.scrollIntoView?.({ block: "nearest" });
@@ -833,7 +844,7 @@ export function Palette({
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent
         hideCloseButton
-        className="jf-palette top-[12%] max-w-[680px] translate-y-0 gap-0 overflow-hidden p-0 sm:rounded-xl"
+        className={cn("jf-palette top-[12%] translate-y-0 gap-0 overflow-hidden p-0 sm:rounded-xl", wide ? "max-w-[1000px]" : "max-w-[680px]")}
         onEscapeKeyDown={(event) => {
           if (levels.length > 0) event.preventDefault();
         }}
@@ -879,6 +890,7 @@ export function Palette({
           />
           {shortcut ? <kbd className="jf-palette-kbd" title="Closes the palette">{shortcutLabel(shortcut, platform)}</kbd> : null}
         </div>
+        <div className={cn("jf-palette-body", wide && "jf-palette-body-split")}>
         <div id={listId} role="listbox" aria-label="Results" className="jf-palette-list">
           {rows.length === 0 ? (
             <p className="jf-palette-empty">{level !== null ? "No matching actions" : scope === "prs" ? "No tracked pull requests" : "Nothing matches"}</p>
@@ -925,6 +937,26 @@ export function Palette({
               </div>
             ));
           })()}
+        </div>
+        {wide ? (
+          <aside className="jf-palette-preview" aria-label="Preview">
+            {previewThreadId !== null ? (
+              <PalettePreview
+                key={previewThreadId}
+                threadId={previewThreadId}
+                flow={flow}
+                thread={threadsById.get(previewThreadId)}
+                hit={serverById.get(previewThreadId)}
+                project={(projectId) => projectsById.get(projectId)}
+                section={(sectionId) => threadSections.find((section) => section.id === sectionId)?.name ?? null}
+                workspace={workspaces.find((workspace) => workspace.id === workspaceOf[previewThreadId])?.name ?? null}
+                now={now}
+              />
+            ) : (
+              <PaletteTips mod={mod} />
+            )}
+          </aside>
+        ) : null}
         </div>
         <div className="jf-palette-footer" aria-hidden="true">
           <span>
@@ -1051,16 +1083,28 @@ function Simple({ icon, title, detail, destructive }: { icon: ReactNode; title: 
   );
 }
 
+const PR_GLYPHS = new Set<string>(["pr", "prDraft", "prClosed", "merged"]);
+
+/** The Triage row icon for a thread, or a plain dot for one this window hasn't loaded. */
+function threadStatus(
+  thread: PluginSidebarThread | undefined,
+  hit: ServerHit | null | undefined,
+  flow: FlowState | null,
+  prs: ReturnType<typeof threadPrs>,
+  now: number,
+): RowStatus {
+  if (!thread) return { glyph: "dot", tone: "text-muted-foreground/40", label: hit?.archived ? "Archived" : "Thread" };
+  const busy = thread.status === "active" || thread.status === "starting";
+  return rowStatus(thread, busy, flow?.watching[thread.id], prs, busy ? runInfo(flow?.running[thread.id], now) : null);
+}
+
 function ThreadRow({ item, flow, thread, project, workspaceName, now }: RowProps & { item: Extract<PaletteItem, { kind: "thread" }> }) {
   const { pullRequest } = useSidebarThreadPullRequest(item.threadId);
   const title = thread?.displayTitle ?? item.server?.title ?? "Untitled thread";
   const projectId = thread?.projectId ?? item.server?.projectId ?? "";
   const owner = project(projectId);
   const prs = threadPrs(flow?.threadPrs[item.threadId], pullRequest);
-  const busy = thread?.status === "active" || thread?.status === "starting";
-  const status = thread
-    ? rowStatus(thread, busy, flow?.watching[item.threadId], prs, busy ? runInfo(flow?.running[item.threadId], now) : null)
-    : { glyph: "dot" as const, tone: "text-muted-foreground/40", label: item.server?.archived ? "Archived" : "Thread" };
+  const status = threadStatus(thread, item.server, flow, prs, now);
   const snooze = flow?.snoozes[item.threadId];
   const tags = flow?.tags[item.threadId] ?? [];
   const workspace = workspaceName(item.threadId);
@@ -1078,7 +1122,6 @@ function ThreadRow({ item, flow, thread, project, workspaceName, now }: RowProps
         <span className="jf-palette-meta">
           {owner && !owner.isPersonal ? <span><Highlight text={owner.name} ranges={item.ranges.project} /></span> : null}
           {workspace ? <span>{workspace}</span> : null}
-          {branch ? <span className="jf-palette-branch"><Highlight text={branch} ranges={item.ranges.branch} /></span> : null}
           {pr ? (
             <span className={PR_TONE[pr.attention]}>
               #{pr.number} {attentionLabel(pr.attention)}
@@ -1093,6 +1136,8 @@ function ThreadRow({ item, flow, thread, project, workspaceName, now }: RowProps
           {snooze ? <span>Snoozed until {formatWhen(snooze.until)}</span> : null}
           {item.server?.archived || thread?.isArchived ? <span>Archived</span> : null}
           <span>{ago(thread?.updatedAt ?? item.server?.updatedAt ?? now, now)}</span>
+          {/* Last and shortened: branch names run long. */}
+          {branch ? <span className="jf-palette-branch"><Highlight text={branch} ranges={item.ranges.branch} /></span> : null}
         </span>
         {item.snippet ? (
           <span className="jf-palette-snippet">
@@ -1100,7 +1145,78 @@ function ThreadRow({ item, flow, thread, project, workspaceName, now }: RowProps
           </span>
         ) : null}
       </span>
-      {status.label !== "Idle" && thread ? <span className="jf-palette-detail">{status.label}</span> : null}
+      {/* The PR chip already says what a PR status would. */}
+      {thread && status.label !== "Idle" && !PR_GLYPHS.has(status.glyph) ? <span className="jf-palette-detail">{status.label}</span> : null}
     </>
+  );
+}
+
+// --- preview pane ------------------------------------------------------------------------
+
+/** What the selected thread is about, beside the results on wide windows. */
+function PalettePreview({
+  threadId,
+  flow,
+  thread,
+  hit,
+  project,
+  section,
+  workspace,
+  now,
+}: {
+  threadId: string;
+  flow: FlowState | null;
+  thread: PluginSidebarThread | undefined;
+  hit: ServerHit | undefined;
+  project: (projectId: string) => { name: string; isPersonal: boolean } | undefined;
+  section: (sectionId: string) => string | null;
+  workspace: string | null;
+  now: number;
+}) {
+  const { pullRequest } = useSidebarThreadPullRequest(threadId);
+  const updatedAt = thread?.updatedAt ?? hit?.updatedAt ?? 0;
+  // Arrowing past a row shouldn't fetch it.
+  const preview = useThreadPreview(threadId, updatedAt, 150);
+  const prs = threadPrs(flow?.threadPrs[threadId], pullRequest);
+  const owner = project(thread?.projectId ?? hit?.projectId ?? "");
+  const details = [
+    owner && !owner.isPersonal ? owner.name : null,
+    workspace,
+    thread?.sectionId ? section(thread.sectionId) : null,
+    thread?.environment?.branchName ? `⎇ ${thread.environment.branchName}` : null,
+    updatedAt ? `updated ${ago(updatedAt, now)}` : null,
+    preview && preview.prompts > 0 ? `${preview.prompts} prompts` : null,
+    ...(flow?.tags[threadId] ?? []).map((tag) => `#${tag}`),
+  ].filter((detail): detail is string => Boolean(detail));
+  return (
+    <div className="jf-palette-preview-card space-y-2.5">
+      <ThreadPreviewCard
+        title={thread?.displayTitle ?? hit?.title ?? "Untitled thread"}
+        status={threadStatus(thread, hit, flow, prs, now)}
+        preview={preview}
+        prs={prs}
+        watching={flow?.watching[threadId]}
+        snoozeUntil={flow?.snoozes[threadId]?.until}
+        details={details}
+        prLimit={6}
+      />
+    </div>
+  );
+}
+
+/** Shown in the preview pane when the selection isn't a thread. */
+function PaletteTips({ mod }: { mod: string }) {
+  return (
+    <div className="jf-palette-tips">
+      <p className="jf-palette-tips-heading">Tips</p>
+      <dl>
+        <dt><kbd>&gt;</kbd></dt><dd>Actions</dd>
+        <dt><kbd>#</kbd></dt><dd>Pull requests, or <code>#123</code> for one</dd>
+        <dt><kbd>@</kbd></dt><dd>Workspaces and projects</dd>
+        <dt><code>is:needs</code></dt><dd>Also <code>is:running</code>, <code>is:snoozed</code>, <code>is:unread</code>, <code>is:pinned</code>, <code>is:pr</code></dd>
+        <dt><kbd>⇥</kbd></dt><dd>A thread's actions: reply, snooze <code>tomorrow</code>, <code>tag urgent</code>, move</dd>
+        <dt><kbd>{mod}↵</kbd></dt><dd>Open a thread in a split</dd>
+      </dl>
+    </div>
   );
 }
