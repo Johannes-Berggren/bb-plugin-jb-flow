@@ -65,6 +65,7 @@ const input = (changes: Partial<PaletteInput> = {}): PaletteInput => ({
   frecency: {},
   actions: [],
   server: null,
+  files: null,
   now: NOW,
   ...changes,
 });
@@ -286,4 +287,32 @@ test("matchesShortcut maps Mod per platform and survives Option/Shift keys", () 
   assert.equal(matchesShortcut(event({ metaKey: true, altKey: true, key: "˚" }), { key: "k", mod: true, alt: true }, "mac"), true);
   assert.equal(shortcutLabel({ key: "k", mod: true, shift: true }, "mac"), "⇧⌘K");
   assert.equal(shortcutLabel({ key: "k", mod: true }, "windows"), "Ctrl+K");
+});
+
+test("a capped group ends with a Show all row into its scope", () => {
+  const threads = Array.from({ length: 11 }, (_, index) => thread(`t${index}`, `Task ${index}`));
+  const sections = search(input({ threads }), "all", "task");
+  const listed = group(sections, "threads")!;
+  assert.equal(listed.items.length, 9);
+  assert.deepEqual(listed.items.at(-1), { kind: "more", id: "more:threads", scope: "threads", label: "Show all 11 threads" });
+  // The scope itself lists them all, without the row.
+  const all = search(input({ threads }), "threads", "task");
+  assert.equal(all[0]!.items.length, 11);
+  assert.equal(all[0]!.items.some((item) => item.kind === "more"), false);
+  assert.equal(group(all, "compose"), undefined);
+});
+
+test("the files scope keeps bb's order and highlights names", () => {
+  const files = [
+    { name: "palette.tsx", path: "src/palette.tsx" },
+    { name: "palette-model.ts", path: "src/palette-model.ts" },
+    { name: "README.md", path: "README.md" },
+  ];
+  const sections = search(input({ files }), "files", "pal");
+  assert.deepEqual(ids(sections), ["files"]);
+  assert.deepEqual(itemIds(sections[0]), ["file:src/palette.tsx", "file:src/palette-model.ts", "file:README.md"]);
+  const first = sections[0]!.items[0]!;
+  assert.deepEqual(first.kind === "file" && first.ranges.title, [[0, 3]]);
+  // Files only show in their own scope.
+  assert.equal(group(search(input({ files }), "all", "pal"), "files"), undefined);
 });
