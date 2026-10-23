@@ -816,11 +816,19 @@ export function Palette({
         done(() => navigate.toCompose({ ...(composeProject ? { projectId: composeProject } : {}), initialPrompt: item.prompt, focusPrompt: true }));
         return;
       case "file": {
-        if (checkout === null) return;
+        if (checkout === null || current === null) return;
         const options = { target: { kind: "workspace" as const, environmentId: checkout, path: item.path }, location: null };
-        done(() => {
-          const opened = secondary ? navigate.experimental_openFileExternally(options) : navigate.experimental_openFilePreview(options) || navigate.experimental_openFileExternally(options);
-          if (!opened) throw new Error("This window can't open the file here; open the thread first.");
+        const threadId = current.id;
+        done(async () => {
+          if (secondary) {
+            if (!navigate.experimental_openFileExternally(options)) throw new Error("No editor is set up to open files from BB.");
+            return;
+          }
+          // An app overlay has no preview panel of its own (bb declines), so the
+          // file opens in the thread's panel the way `bb thread open <path>` does.
+          if (navigate.experimental_openFilePreview(options)) return;
+          const { delivered } = await sdk.threads.open({ threadId, file: { source: "workspace", path: item.path, lineNumber: null } });
+          if (delivered === 0) throw new Error("No BB window took the file; open the thread and try again.");
         });
         return;
       }

@@ -92,6 +92,8 @@ type MountOptions = {
   context?: { threadId?: string | null; projectId?: string | null };
   threads?: PluginSidebarThread[];
   files?: (args: { query?: string; environmentId?: string }) => unknown;
+  openFilePreview?: () => boolean;
+  threadOpen?: (args: unknown) => Promise<unknown>;
 };
 
 async function mount(options: MountOptions = {}) {
@@ -116,7 +118,7 @@ async function mount(options: MountOptions = {}) {
       context: options.context,
       threadActions: options.threadActions,
       openUrl: () => true,
-      openFilePreview: () => true,
+      openFilePreview: options.openFilePreview ?? (() => true),
       sdk: {
         subscribe: (() => () => {}) as never,
         system: {
@@ -124,6 +126,7 @@ async function mount(options: MountOptions = {}) {
         },
         threads: {
           search: (async (args: { query: string }) => options.search?.(args) ?? { active: { results: [], total: 0 }, archived: { results: [], total: 0 } }) as never,
+          open: (options.threadOpen ?? (async () => ({ delivered: 1 }))) as never,
         },
         projects: {
           files: (async (args: { query?: string; environmentId?: string }) => options.files?.(args) ?? { files: [], truncated: false }) as never,
@@ -347,6 +350,21 @@ describe("palette scopes and memory", () => {
         options: { target: { kind: "workspace", environmentId: "env1", path: "src/palette.tsx" } },
       }),
     );
+  });
+
+  it("opens a file in the thread's panel when the overlay can't preview it", async () => {
+    const open = vi.fn(async () => ({ delivered: 1 }));
+    const slot = await mount({
+      context: { threadId: "e", projectId: "p1" },
+      files: () => ({ files: [{ name: "README.md", path: "README.md" }], truncated: false }),
+      openFilePreview: () => false,
+      threadOpen: open,
+    });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "/" } });
+    await waitFor(() => expect(options(slot)[0]).toContain("README.md"));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(open).toHaveBeenCalledWith({ threadId: "e", file: { source: "workspace", path: "README.md", lineNumber: null } }));
   });
 
   it("explains the files scope without an open thread", async () => {

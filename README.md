@@ -83,7 +83,8 @@ again or Escape to close it.
 - **Narrow the scope.**
   - Prefixes: `>` for actions, `#` for pull requests (`#123` finds that PR), `@` for
     workspaces and projects, `/` for files in the open thread's checkout (Enter
-    previews one, ⌘Enter opens it in your editor). Backspace on an empty query
+    opens one in the thread's panel, like `bb thread open <path>`; ⌘Enter opens it
+    in your editor). Backspace on an empty query
     clears the scope.
   - A group with more matches than fit ends in *Show all N …*. For threads, messages
     and archived matches, that opens *Threads & messages*: every match, up to 50 per
