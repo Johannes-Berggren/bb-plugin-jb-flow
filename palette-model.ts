@@ -115,7 +115,7 @@ export function matchToken(token: string, text: string, strict = false): TokenMa
     from = index + 1;
   }
   const span = ranges.at(-1)![1] - ranges[0]![0];
-  if (span > token.length * 3 + 4) return null;
+  if (span > token.length * 2 + 3) return null;
   return { score: Math.max(8, 30 - (span - token.length) * 2 - ranges.length), ranges };
 }
 
@@ -507,7 +507,8 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
         continue;
       }
       const fields: Field[] = [
-        { key: "title", text: `#${pr.number} ${pr.title}`, weight: 1 },
+        // PR titles run long; loose letters would find most of them.
+        { key: "title", text: `#${pr.number} ${pr.title}`, weight: 1, strict: true },
         { key: "repo", text: pr.repo, weight: 0.5, strict: true },
         { key: "thread", text: index.threads.get(threadId)?.displayTitle ?? "", weight: 0.4, strict: true },
         { key: "attention", text: pr.attention.replace(/_/g, " "), weight: 0.4, strict: true },

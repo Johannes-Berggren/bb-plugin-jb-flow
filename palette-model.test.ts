@@ -99,6 +99,9 @@ test("loose letter matches only count in titles", () => {
   assert.deepEqual(itemIds(group(search(input({ threads, flow }), "all", "palette"), "threads")), ["thread:a"]);
   assert.equal(matchToken("plt", "Command palette") !== null, true);
   assert.equal(matchToken("plt", "Command palette", true), null);
+  assert.equal(matchToken("palette", "feat(platform-addons): let the worker write"), null);
+  const prs = { ...input().flow!, threadPrs: { b: [pr(872, "merged", { title: "platform-addons: let the sync worker write" }), pr(20, "merged", { title: "Palette: ⌘K" })] } };
+  assert.deepEqual(itemIds(search(input({ threads, flow: prs }), "prs", "palette")[0]), ["pr:https://github.com/acme/web-app/pull/20"]);
 });
 
 test("a word-start title hit outranks a mid-word one", () => {
