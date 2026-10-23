@@ -43,6 +43,43 @@ export function matchLanes(sections: readonly { id: string; name: string }[], pi
   return result;
 }
 
+/** A lane as the client lists it. */
+export type Lane = {
+  id: LaneId | "active";
+  title: string;
+  sectionId: string | null;
+  key: string;
+};
+
+/** Lane titles copy section names; key memos on them so a rename shows at once. */
+export const sectionNames = (sections: readonly { id: string; name: string }[]) => sections.map((section) => `${section.id}:${section.name}`).join("\n");
+
+/**
+ * Lanes on top of your sections. The server pins each lane to a section id
+ * (matched by name the first time), so a renamed lane keeps its role and shows
+ * the section's own name. Before state loads, name matching fills in.
+ */
+export function resolveLanes(sections: readonly { id: string; name: string }[], pinned: LaneSections = {}): Lane[] {
+  const matched = matchLanes(sections, pinned);
+  const lane = (id: LaneId, fallback: string, key: string): Lane => {
+    const sectionId = matched[id] ?? null;
+    const title = sections.find((section) => section.id === sectionId)?.name ?? fallback;
+    return { id, title, sectionId, key };
+  };
+  const lanes: Lane[] = [
+    lane("priority", "Priority", "1"),
+    { id: "active", title: "Active", sectionId: null, key: "2" },
+    lane("waiting", "Waiting for others", "3"),
+    lane("later", "Pick up later", "4"),
+    lane("low", "Low priority", "5"),
+  ];
+  // A lane whose section is missing is dropped; Active is the unsectioned bucket.
+  return lanes.filter(
+    (lane) => lane.id === "active" || lane.sectionId !== null,
+  );
+}
+
+
 export async function laneSections(bb: BbPluginApi): Promise<LaneSections> {
   const pinned = (await bb.storage.kv.get<LaneSections>("laneSections")) ?? {};
   const sections = await bb.sdk.threadSections.list().catch(() => null);

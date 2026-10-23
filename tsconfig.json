@@ -57,6 +57,11 @@
     "workspace-storage.ts",
     "workspaces.test.ts",
     "workspaces.ui.test.tsx",
-    "workspace-topbar.ts"
+    "workspace-topbar.ts",
+    "palette-model.ts",
+    "palette.tsx",
+    "palette-model.test.ts",
+    "palette.ui.test.tsx",
+    "lanes.ts"
   ]
 }

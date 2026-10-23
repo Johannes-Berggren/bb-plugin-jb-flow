@@ -9,6 +9,7 @@ import * as HoverCard from "@radix-ui/react-hover-card";
 import { experimental_useSidebarThreads as useSidebarThreads, useBbNavigate, useComposers, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { JsonValue, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
+import { PR_ATTENTION_RANK } from "./palette-model";
 import type { FlowState, rpcContract } from "./server";
 import type { Unreleased as UnreleasedState } from "./unreleased";
 import { parseWhen } from "./when";
@@ -29,20 +30,6 @@ export type ThreadPr = Pick<PrStatus, "repo" | "number" | "title" | "url" | "sta
   stackedOn: number | null;
 };
 
-/** Worst first: what most needs attention leads the summary. */
-const ATTENTION_RANK: Record<string, number> = {
-  conflicts: 0,
-  checks_failed: 1,
-  changes_requested: 2,
-  blocked: 3,
-  checks_pending: 4,
-  review_requested: 5,
-  ready_to_merge: 6,
-  draft: 7,
-  none: 8,
-  merged: 9,
-  closed: 10,
-};
 
 export const PR_TONE: Record<string, string> = {
   blocked: "text-red-500",
@@ -85,7 +72,7 @@ export function threadPrs(
 }
 
 export function worstPr(prs: readonly ThreadPr[]): ThreadPr | null {
-  return [...prs].sort((a, b) => (ATTENTION_RANK[a.attention] ?? 9) - (ATTENTION_RANK[b.attention] ?? 9))[0] ?? null;
+  return [...prs].sort((a, b) => (PR_ATTENTION_RANK[a.attention] ?? 9) - (PR_ATTENTION_RANK[b.attention] ?? 9))[0] ?? null;
 }
 
 export const allSettled = (prs: readonly ThreadPr[]) =>
@@ -114,6 +101,48 @@ export function runInfo(running: FlowState["running"][string] | undefined, now: 
   if (!running) return null;
   const silent = now - running.lastEventAt;
   return { elapsed: now - running.since, silent, stuck: silent > STUCK_AFTER_MS };
+}
+
+// --- row status icon ---------------------------------------------------------------
+// One glyph that answers "what is this thread doing / waiting on?", replacing the
+// provider badge. Priority: needs you > error > running > watched > PR > finished.
+
+export type RowStatus = { glyph: GlyphName; tone: string; label: string; spin?: boolean };
+export function rowStatus(
+  thread: PluginSidebarThread,
+  busy: boolean,
+  watching: FlowState["watching"][string] | undefined,
+  prs: readonly ThreadPr[],
+  run: RunInfo | null,
+): RowStatus {
+  if (thread.hasPendingInteraction || thread.indicator === "waiting-for-input") {
+    return { glyph: "question", tone: "text-amber-500", label: thread.indicatorLabel ?? "Needs your input" };
+  }
+  if (thread.status === "error" || thread.indicator === "unread-error") {
+    return { glyph: "alert", tone: "text-red-500", label: thread.indicatorLabel ?? "Failed" };
+  }
+  if (busy && run?.stuck) {
+    return { glyph: "alert", tone: "text-amber-500", label: `Possibly stuck: no output for ${duration(run.silent)}` };
+  }
+  if (busy) return { glyph: "spinner", tone: "text-sky-500", label: run && run.elapsed >= 60_000 ? `Working for ${duration(run.elapsed)}` : "Working", spin: true };
+  if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };
+  if (watching?.kind === "release") return { glyph: "rocket", tone: "text-violet-500", label: watching.label };
+  if (watching?.kind === "continue") return { glyph: "alarm", tone: "text-amber-500", label: watching.label };
+  const worst = worstPr(prs);
+  if (worst) {
+    const label = prs.length === 1 ? `PR #${worst.number}: ${attentionLabel(worst.attention)}` : `${prs.length} PRs; worst: #${worst.number} ${attentionLabel(worst.attention)}`;
+    return { glyph: prGlyph(worst), tone: PR_TONE[worst.attention] ?? "text-muted-foreground", label };
+  }
+  if (thread.isUnread) return { glyph: "check", tone: "text-green-500", label: "Finished, unread" };
+  return { glyph: "dot", tone: "text-muted-foreground/40", label: "Idle" };
+}
+
+export function StatusIcon({ status }: { status: RowStatus }) {
+  return (
+    <span title={status.label} aria-label={status.label} className="flex size-4 shrink-0 items-center justify-center">
+      <Glyph name={status.glyph} className={cn("size-3.5", status.tone, status.spin && "animate-spin")} />
+    </span>
+  );
 }
 
 // --- PR list (hover card, panel) ---------------------------------------------------

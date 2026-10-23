@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
+import type { BbNavigate, PluginSidebarProject, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
-import { EMPTY_WORKSPACES, type WorkspaceState } from "./workspaces";
+import { EMPTY_WORKSPACES, inWorkspace, type WorkspaceState } from "./workspaces";
 
 type Snapshot = { state: WorkspaceState; ready: boolean; error: string | null };
 let snapshot: Snapshot = { state: EMPTY_WORKSPACES, ready: false, error: null };
@@ -105,4 +106,46 @@ export function lastWorkspaceThread(workspaceId: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Selects a workspace and lands somewhere useful in it: the thread you last had
+ * open there, otherwise a new thread in its first project. The top bar and the
+ * palette both switch this way.
+ */
+export function switchWorkspace(
+  id: string | null,
+  {
+    state,
+    threads,
+    projects,
+    currentThreadId,
+    navigate,
+  }: {
+    state: WorkspaceState;
+    threads: readonly PluginSidebarThread[];
+    projects: readonly Pick<PluginSidebarProject, "id">[];
+    currentThreadId: string | null;
+    navigate: Pick<BbNavigate, "toThread" | "toCompose">;
+  },
+) {
+  if (currentThreadId) rememberWorkspaceThread(workspacesEnabled ? selection : null, currentThreadId);
+  selectWorkspace(id);
+  const last = lastWorkspaceThread(id);
+  const thread = threads.find(
+    (thread) =>
+      thread.id === last &&
+      !thread.isArchived &&
+      !thread.isHidden &&
+      inWorkspace(thread, id, state, threads),
+  );
+  if (thread) {
+    navigate.toThread(thread.id);
+    return;
+  }
+  const workspace = state.workspaces.find((workspace) => workspace.id === id);
+  const projectId = workspace?.projectIds.find((projectId) =>
+    projects.some((project) => project.id === projectId),
+  );
+  navigate.toCompose({ ...(projectId ? { projectId } : {}), focusPrompt: true });
 }
