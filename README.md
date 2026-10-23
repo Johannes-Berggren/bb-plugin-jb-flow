@@ -118,6 +118,9 @@ to stop it.
 
 **Update status** sends the **Status report prompt** setting to this thread (empty uses a short
 built-in prompt in that format), preserving your composer draft. It runs only when clicked.
+To skip the button, turn on **Status report at hand-back**: agents then end every reply that hands the
+thread back to you (done, blocked, or waiting for your input) with that report, and the monitor keeps itself
+current. Threads pick it up when their session next starts.
 The monitor refreshes on thread
 events and reconnects. Running agents retain the live command/workflow view;
 idle headers reflect pending input, errors and JB Flow watches. Milestone bars
@@ -304,6 +307,7 @@ Under **Settings → JB Flow**:
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
+- **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).
 - **Expand plan reviews**: expanded, resizable plan reviews (on by default).

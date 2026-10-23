@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
+import { DEFAULT_STATUS_PROMPT, handBackInstructions } from "./status-prompt";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -158,4 +159,11 @@ it("reads a go-list under a **Path forward:** line without taking it for a recom
     items: ["Add the item · one step instead of three", "Update the README · keep docs current"],
     recommended: [],
   });
+});
+
+it("hands back with the status prompt the user set, or the built-in one", () => {
+  expect(handBackInstructions("")).toContain(DEFAULT_STATUS_PROMPT);
+  expect(handBackInstructions("**Goal:** <x>")).toContain("**Goal:** <x>");
+  // bb truncates thread instructions at 4096 characters.
+  expect(handBackInstructions("").length).toBeLessThan(4096);
 });
