@@ -27,6 +27,19 @@ RPC equivalents are `workspaces_get(null)`, `workspace_save(workspace)`,
 `workspace_assign({ threadId, workspaceId, automatic })`. `automatic: true`
 removes an override; `workspaceId: null, automatic: false` forces No workspace.
 
+## Palette (⌘K)
+
+A UI feature, with no CLI. While the **⌘K opens the JB Flow palette** setting is on (it
+is by default), BB's Search threads key opens JB Flow's palette. That key is ⌘K unless
+it was rebound. In the palette:
+- Typing searches threads, messages, PRs, workspaces, projects and actions.
+- `>` narrows to actions, `#` to PRs and `@` to workspaces and projects.
+- `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and `is:pr` filter threads.
+- Tab on a thread lists its actions, including snooze, reply and move.
+
+When a user asks how to search messages or act on threads quickly, point them here.
+BB's own search stays in the quick palette under *Search threads…*.
+
 ## Snooze
 
 Snoozing moves a thread into the hidden "😴 Snoozed" section. Once a minute a

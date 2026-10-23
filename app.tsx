@@ -46,19 +46,22 @@ import {
   HeaderStatusStrip,
   PR_TONE,
   PullRequestsPanel,
+  StatusIcon,
   ThreadHoverPreview,
   allSettled,
   attentionLabel,
   duration,
   prGlyph,
+  rowStatus,
   runInfo,
   threadPrs,
   useNow,
   worstPr,
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
-import { formatWhen, parseWhen } from "./when";
-import { LANE_NAMES, matchLanes, type LaneId, type LaneSections } from "./lanes";
+import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
+import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
+import { needsMe } from "./studio-model";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -88,15 +91,9 @@ import { cn } from "@/lib/utils";
 import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { LiveActivityBanner } from "./live-activity";
+import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 
 const DAY_MS = 86_400_000;
-const SNOOZE_PRESETS = [
-  { label: "Later today", when: "today" },
-  { label: "Tomorrow", when: "tomorrow" },
-  { label: "Monday", when: "mon" },
-  { label: "In 1 week", when: "1w" },
-  { label: "In 2 weeks", when: "2w" },
-] as const;
 
 // --- shared state -------------------------------------------------------------
 
@@ -166,55 +163,6 @@ function errorText(cause: unknown): string {
 }
 
 // --- lanes --------------------------------------------------------------------
-
-type Lane = {
-  id: LaneId | "active";
-  title: string;
-  sectionId: string | null;
-  key: string;
-};
-
-/**
- * Lanes on top of your sections. The server pins each lane to a section id
- * (matched by name the first time), so a renamed lane keeps its role and shows
- * the section's own name. Before state loads, name matching fills in.
- */
-/** Lane titles copy section names; key memos on them so a rename shows at once. */
-const sectionNames = (sections: readonly PluginSidebarSection[]) => sections.map((section) => `${section.id}:${section.name}`).join("\n");
-
-function resolveLanes(sections: readonly PluginSidebarSection[], pinned: LaneSections = {}): Lane[] {
-  const matched = matchLanes(sections, pinned);
-  const lane = (id: LaneId, fallback: string, key: string): Lane => {
-    const sectionId = matched[id] ?? null;
-    const title = sections.find((section) => section.id === sectionId)?.name ?? fallback;
-    return { id, title, sectionId, key };
-  };
-  const lanes: Lane[] = [
-    lane("priority", "Priority", "1"),
-    { id: "active", title: "Active", sectionId: null, key: "2" },
-    lane("waiting", "Waiting for others", "3"),
-    lane("later", "Pick up later", "4"),
-    lane("low", "Low priority", "5"),
-  ];
-  // A lane whose section is missing is dropped; Active is the unsectioned bucket.
-  return lanes.filter(
-    (lane) => lane.id === "active" || lane.sectionId !== null,
-  );
-}
-
-/**
- * Blocked on you (prompt, permission, failure), or finished unread with a last
- * message that asks you something. Unread status updates don't count: they stay
- * in their section, in bold.
- */
-function needsMe(thread: PluginSidebarThread, awaiting: Record<string, number> | undefined): boolean {
-  return (
-    thread.hasPendingInteraction ||
-    thread.indicator === "waiting-for-input" ||
-    thread.indicator === "unread-error" ||
-    (thread.isUnread && thread.status === "idle" && awaiting?.[thread.id] !== undefined)
-  );
-}
 
 // --- project chips ------------------------------------------------------------
 
@@ -476,6 +424,18 @@ function focusRowSoon(threadId: string | null) {
   }, 150);
 }
 
+/** The ⌘K palette: mounted once per window, rendered only while open. */
+function PaletteHost() {
+  const enabled = useSettings().values?.palette === true;
+  const { open, close, shortcut } = usePaletteTrigger(enabled);
+  return open ? <PaletteWithFlow onClose={close} shortcut={shortcut} /> : null;
+}
+
+function PaletteWithFlow(props: { onClose: () => void; shortcut: Parameters<typeof Palette>[0]["shortcut"] }) {
+  const { state } = useFlowState();
+  return <Palette {...props} flow={state} />;
+}
+
 /** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
 function CommandHost() {
   const settings = useSettings().values;
@@ -542,48 +502,6 @@ type Group = {
   /** Your section behind this group (null = the unsectioned Active lane). */
   section?: { id: string | null; name: string; isLane: boolean };
 };
-
-// --- row status icon ---------------------------------------------------------------
-// One glyph that answers "what is this thread doing / waiting on?", replacing the
-// provider badge. Priority: needs you > error > running > watched > PR > finished.
-
-type RowStatus = { glyph: GlyphName; tone: string; label: string; spin?: boolean };
-function rowStatus(
-  thread: PluginSidebarThread,
-  busy: boolean,
-  watching: FlowState["watching"][string] | undefined,
-  prs: readonly ThreadPr[],
-  run: RunInfo | null,
-): RowStatus {
-  if (thread.hasPendingInteraction || thread.indicator === "waiting-for-input") {
-    return { glyph: "question", tone: "text-amber-500", label: thread.indicatorLabel ?? "Needs your input" };
-  }
-  if (thread.status === "error" || thread.indicator === "unread-error") {
-    return { glyph: "alert", tone: "text-red-500", label: thread.indicatorLabel ?? "Failed" };
-  }
-  if (busy && run?.stuck) {
-    return { glyph: "alert", tone: "text-amber-500", label: `Possibly stuck: no output for ${duration(run.silent)}` };
-  }
-  if (busy) return { glyph: "spinner", tone: "text-sky-500", label: run && run.elapsed >= 60_000 ? `Working for ${duration(run.elapsed)}` : "Working", spin: true };
-  if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };
-  if (watching?.kind === "release") return { glyph: "rocket", tone: "text-violet-500", label: watching.label };
-  if (watching?.kind === "continue") return { glyph: "alarm", tone: "text-amber-500", label: watching.label };
-  const worst = worstPr(prs);
-  if (worst) {
-    const label = prs.length === 1 ? `PR #${worst.number}: ${attentionLabel(worst.attention)}` : `${prs.length} PRs; worst: #${worst.number} ${attentionLabel(worst.attention)}`;
-    return { glyph: prGlyph(worst), tone: PR_TONE[worst.attention] ?? "text-muted-foreground", label };
-  }
-  if (thread.isUnread) return { glyph: "check", tone: "text-green-500", label: "Finished, unread" };
-  return { glyph: "dot", tone: "text-muted-foreground/40", label: "Idle" };
-}
-
-function StatusIcon({ status }: { status: RowStatus }) {
-  return (
-    <span title={status.label} aria-label={status.label} className="flex size-4 shrink-0 items-center justify-center">
-      <Glyph name={status.glyph} className={cn("size-3.5", status.tone, status.spin && "animate-spin")} />
-    </span>
-  );
-}
 
 function ThreadRow({
   thread,
@@ -2656,7 +2574,15 @@ export default definePluginApp((app) => {
     },
   });
   app.slots.experimental_appOverlay({ id: "command-host", component: CommandHost });
+  app.slots.experimental_appOverlay({ id: "palette", component: PaletteHost });
   const inThread = ({ threadId }: { threadId: string | null }) => threadId !== null;
+  app.commands.register({
+    id: "palette",
+    title: "Open JB Flow palette",
+    run: () => {
+      window.dispatchEvent(new CustomEvent(PALETTE_EVENT));
+    },
+  });
   app.commands.register({
     id: "snooze",
     title: "Snooze this thread…",

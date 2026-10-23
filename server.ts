@@ -301,6 +301,13 @@ export default async function plugin(bb: BbPluginApi) {
         "Tabs across the top of BB that group projects, threads, sections and plugin tools. Off shows everything as before.",
       default: true,
     },
+    palette: {
+      type: "boolean",
+      label: "⌘K opens the JB Flow palette",
+      description:
+        "BB's Search threads key (⌘K unless you changed it) opens a palette that also finds messages, PRs, workspaces and projects, shows what needs you, and acts on any thread with Tab. BB's own search stays under Open quick palette → Search threads. Off gives the key back to BB.",
+      default: true,
+    },
     polishShell: {
       type: "boolean",
       label: "Polish the entire BB interface",

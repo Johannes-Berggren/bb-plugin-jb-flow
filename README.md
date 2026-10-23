@@ -62,6 +62,52 @@ bb jb-flow workspaces remove <workspace-id>
 `save` returns the saved workspace, including its generated ID. Pass an existing
 ID to edit it; names must be unique. These commands return JSON.
 
+### Command palette (⌘K)
+
+On by default (turn off under Settings → JB Flow → **⌘K opens the JB Flow palette**).
+The key BB uses for Search threads (⌘K, or Ctrl+K on Windows and Linux, unless you
+rebound it under Settings → Keyboard) opens JB Flow's palette instead. Press the key
+again or Escape to close it.
+
+- **An empty query shows your triage.** Sections: *Needs you* (oldest first),
+  *Running*, *PRs to act on* (failing checks, changes requested, conflicts, ready to
+  merge), *Recent* (the threads you visited) and *This thread*.
+- **Typing searches everything at once.**
+  - Threads match on their title, project, branch, PR numbers and titles, tags,
+    workspace and section. Threads in your current workspace, the ones you pick often
+    and the ones waiting on you rank first.
+  - BB's full-text search adds message matches, with snippets, and archived threads.
+  - Pull requests, workspaces, projects and actions are ranked into the same list.
+  - The last row always starts a new thread with what you typed. Press Tab on it to
+    pick the project.
+- **Narrow the scope.**
+  - Prefixes: `>` for actions, `#` for pull requests (`#123` finds that PR), `@` for
+    workspaces and projects. Backspace on an empty query clears the scope.
+  - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and
+    `is:pr` narrow threads, with or without text.
+- **Act without opening.**
+  - Enter opens the selected item. ⌘Enter opens a thread in a split, or a PR's thread.
+  - Tab (or →) lists everything you can do to the selected thread, ready to filter:
+    - reply to a numbered decision
+    - snooze (type `tomorrow` or `3d` for "Snooze until …")
+    - move to a lane, section or workspace
+    - add (`tag urgent`) or remove tags
+    - open its PRs or watch their CI
+    - stop a run
+    - copy its ID
+    - BB's own and other plugins' thread actions (archive, pin, rename, copy link, …)
+  - Escape, Shift+Tab or ← goes back.
+
+Rows show the same status icon as the Triage list, plus project, workspace, branch,
+PR state, tags and snooze. The command *Open JB Flow palette* (in BB's quick palette,
+rebindable under Settings → Keyboard) opens it even with the setting off.
+
+The setting is off, or the plugin is disabled? Then the key is BB's Search threads
+again. BB's own search also stays reachable through the quick palette → *Search
+threads…*. A message match opens its thread, but it can't scroll to the message yet,
+because the plugin SDK has no way to do that. Recent picks and visits are stored in
+this browser only.
+
 ### App-wide appearance
 
 **Polish the entire BB interface** (Settings → JB Flow, on by default) applies
@@ -261,6 +307,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   | Alt+Shift+D | Start dev servers |
   | Alt+Shift+P | Show pull requests |
   | Alt+Shift+W | Watch CI |
+  | BB's Search threads key (⌘K) | Open the JB Flow palette (see above) |
 
 ### Watchers (no polling)
 - **Auto-continue after usage limits** (switch per thread in the thread monitor; the setting *Continue after usage-limit resets* is the default for threads, off unless you change it): when Claude Code stops with "You've hit your session limit · resets 10pm", "continue" is scheduled for 90 seconds after the reset.
@@ -307,6 +354,7 @@ Under **Settings → JB Flow**:
 - **Polish the entire BB interface**: restyles bb and folds finished commands behind *Show trace* (on by default).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
+- **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
 - **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).

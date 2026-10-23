@@ -34,6 +34,15 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
+/** The snooze choices offered before free text. */
+export const SNOOZE_PRESETS = [
+  { label: "Later today", when: "today" },
+  { label: "Tomorrow", when: "tomorrow" },
+  { label: "Monday", when: "mon" },
+  { label: "In 1 week", when: "1w" },
+  { label: "In 2 weeks", when: "2w" },
+] as const;
+
 export function parseWhen(input: string, now: Date = new Date()): number {
   const value = input.trim().toLowerCase();
   if (value === "") throw new Error("Missing time. Try 2h, 3d, tomorrow, mon, or 2026-10-05.");

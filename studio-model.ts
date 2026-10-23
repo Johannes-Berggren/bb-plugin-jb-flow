@@ -23,19 +23,28 @@ type WorkflowFacts = Pick<
   "awaiting" | "watching" | "threadPrs" | "snoozes" | "waitingOthers"
 >;
 
+/**
+ * Blocked on you (prompt, permission, failure), or finished unread with a last
+ * message that asks you something. Unread status updates don't count: they stay
+ * in their section, in bold.
+ */
+export function needsMe(
+  thread: Pick<PluginSidebarThread, "id" | "hasPendingInteraction" | "indicator" | "isUnread" | "status">,
+  awaiting: Record<string, number> | undefined,
+): boolean {
+  return (
+    thread.hasPendingInteraction ||
+    thread.indicator === "waiting-for-input" ||
+    thread.indicator === "unread-error" ||
+    (thread.isUnread && thread.status === "idle" && awaiting?.[thread.id] !== undefined)
+  );
+}
+
 export function studioStatus(
   thread: ThreadFacts,
   state: WorkflowFacts | null,
 ): StudioStatus {
-  if (
-    thread.hasPendingInteraction ||
-    thread.indicator === "waiting-for-input" ||
-    thread.indicator === "unread-error" ||
-    thread.status === "error" ||
-    (thread.isUnread &&
-      thread.status === "idle" &&
-      state?.awaiting[thread.id] !== undefined)
-  )
+  if (thread.status === "error" || needsMe(thread, state?.awaiting))
     return "attention";
   if (["active", "starting", "stopping"].includes(thread.status))
     return "running";

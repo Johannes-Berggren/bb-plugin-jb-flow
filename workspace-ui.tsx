@@ -22,8 +22,8 @@ import {
   useSelectedWorkspace,
   selectWorkspace,
   setWorkspacesEnabled,
+  switchWorkspace,
   rememberWorkspaceThread,
-  lastWorkspaceThread,
 } from "./workspace-client";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -131,33 +131,8 @@ function WorkspaceTopBarInner() {
     if (ready && selected && selected !== "unassigned" && !active)
       selectWorkspace(null);
   }, [ready, selected, active]);
-  function choose(id: string | null) {
-    if (context.threadId) rememberWorkspaceThread(selected, context.threadId);
-    selectWorkspace(id);
-    const last = lastWorkspaceThread(id);
-    const thread = threads.find(
-      (thread) =>
-        thread.id === last &&
-        !thread.isArchived &&
-        !thread.isHidden &&
-        inWorkspace(thread, id, state, threads),
-    );
-    const workspace = state.workspaces.find((workspace) => workspace.id === id);
-    if (thread) navigate.toThread(thread.id);
-    else
-      navigate.toCompose({
-        ...(workspace?.projectIds.find((id) =>
-          projects.some((project) => project.id === id),
-        )
-          ? {
-              projectId: workspace.projectIds.find((id) =>
-                projects.some((project) => project.id === id),
-              ),
-            }
-          : {}),
-        focusPrompt: true,
-      });
-  }
+  const choose = (id: string | null) =>
+    switchWorkspace(id, { state, threads, projects, currentThreadId: context.threadId, navigate });
   const summary = (id: string | null) => {
     const scoped = threads.filter((thread) =>
       inWorkspace(thread, id, state, threads),
