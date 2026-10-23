@@ -11,13 +11,16 @@ export type Range = [start: number, end: number];
 
 // --- query ---------------------------------------------------------------------
 
-export type Scope = "all" | "actions" | "prs" | "places";
+export type Scope = "all" | "threads" | "actions" | "prs" | "places" | "files";
 /** A first character that narrows the palette, like `>` in an editor. */
-export const SCOPE_PREFIX: Record<string, Exclude<Scope, "all">> = { ">": "actions", "#": "prs", "@": "places" };
+export const SCOPE_PREFIX: Record<string, Exclude<Scope, "all">> = { ">": "actions", "#": "prs", "@": "places", "/": "files" };
 export const SCOPE_LABEL: Record<Exclude<Scope, "all">, string> = {
+  // Reached from a group's "Show all" row: every thread and message match, uncapped.
+  threads: "Threads & messages",
   actions: "Actions",
   prs: "Pull requests",
   places: "Workspaces & projects",
+  files: "Files",
 };
 
 export type Filter = "needs" | "running" | "snoozed" | "unread" | "pinned" | "pr";
@@ -237,6 +240,8 @@ export type PaletteInput = {
   frecency: Frecency;
   actions: readonly PaletteAction[];
   server: readonly ServerHit[] | null;
+  /** The open thread's checkout files matching the query, from bb's quick open; null outside the files scope. */
+  files: readonly { name: string; path: string }[] | null;
   now: number;
 };
 
@@ -254,6 +259,9 @@ export type PaletteItem =
   | { kind: "workspace"; id: string; workspaceId: string | null; name: string; ranges: Record<string, Range[]> }
   | { kind: "project"; id: string; projectId: string; name: string; compose: boolean; ranges: Record<string, Range[]> }
   | { kind: "action"; id: string; actionId: string; title: string; ranges: Record<string, Range[]> }
+  | { kind: "file"; id: string; path: string; name: string; ranges: Record<string, Range[]> }
+  /** "Show all": the rest of a capped group, in its own scope. */
+  | { kind: "more"; id: string; scope: Exclude<Scope, "all">; label: string }
   | { kind: "compose"; id: "compose"; prompt: string };
 
 export type GroupId =
@@ -268,6 +276,7 @@ export type GroupId =
   | "prs"
   | "places"
   | "actions"
+  | "files"
   | "compose";
 export const GROUP_TITLE: Record<GroupId, string> = {
   needs: "Needs you",
@@ -281,6 +290,7 @@ export const GROUP_TITLE: Record<GroupId, string> = {
   prs: "Pull requests",
   places: "Workspaces & projects",
   actions: "Actions",
+  files: "Files",
   compose: "New thread",
 };
 export type Section = { id: GroupId; title: string; items: PaletteItem[] };
@@ -456,6 +466,15 @@ export function home(input: PaletteInput): Section[] {
 // --- search ------------------------------------------------------------------------
 
 const PRIORITY: GroupId[] = ["threads", "prs", "places", "actions", "messages", "archived"];
+/** Where a capped group's "Show all" row leads. */
+const MORE: Partial<Record<GroupId, { scope: Exclude<Scope, "all">; noun: string }>> = {
+  threads: { scope: "threads", noun: "threads" },
+  messages: { scope: "threads", noun: "message matches" },
+  archived: { scope: "threads", noun: "archived matches" },
+  prs: { scope: "prs", noun: "pull requests" },
+  places: { scope: "places", noun: "workspaces and projects" },
+  actions: { scope: "actions", noun: "actions" },
+};
 
 /**
  * One ranked list across kinds. Groups follow their best hit; a new thread
@@ -473,7 +492,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     groups.set(group, list);
   };
 
-  if (scope === "all") {
+  if (scope === "all" || scope === "threads") {
     const listed = new Map<string, Scored>();
     for (const thread of input.threads) {
       if (!visible(thread) || !passes(thread, filters, input.flow)) continue;
@@ -552,6 +571,17 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     }
   }
 
+  if (scope === "files") {
+    // bb's quick open already ranked these; keep its order and highlight what matches.
+    input.files?.forEach((file, order) => {
+      const match = matchFields(tokens, [
+        { key: "title", text: file.name, weight: 1 },
+        { key: "path", text: file.path, weight: 0.7, strict: true },
+      ]);
+      push("files", { item: { kind: "file", id: `file:${file.path}`, path: file.path, name: file.name, ranges: match?.ranges ?? {} }, score: 1000 - order });
+    });
+  }
+
   if (scope === "actions" || (scope === "all" && !empty && filters.length === 0)) {
     input.actions.forEach((action, order) => {
       const item: PaletteItem = { kind: "action", id: `action:${action.id}`, actionId: action.id, title: action.title, ranges: {} };
@@ -581,12 +611,18 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     prs: 5,
     places: 6,
     actions: 6,
+    files: 50,
     compose: 1,
   };
   const ranked = [...groups.entries()].map(([id, list]) => {
     list.sort((a, b) => b.score - a.score);
     const limit = scope === "all" ? cap[id] : 50;
-    return { id, best: list[0]!.score, items: list.slice(0, limit).map((scored) => scored.item) };
+    const items = list.slice(0, limit).map((scored) => scored.item);
+    const more = scope === "all" ? MORE[id] : undefined;
+    if (more && list.length > limit) {
+      items.push({ kind: "more", id: `more:${id}`, scope: more.scope, label: `Show all ${list.length} ${more.noun}` });
+    }
+    return { id, best: list[0]!.score, items };
   });
   ranked.sort((a, b) => b.best - a.best || PRIORITY.indexOf(a.id) - PRIORITY.indexOf(b.id));
   const sections: Section[] = ranked.map(({ id, items }) => ({ id, title: GROUP_TITLE[id], items }));

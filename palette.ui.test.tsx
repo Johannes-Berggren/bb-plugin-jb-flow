@@ -6,6 +6,7 @@ import type { PluginSidebarThread, PluginThreadActionEntry } from "@get-bb/plugi
 import type { FlowState } from "./server";
 import type { WorkspaceState } from "./workspaces";
 import { selectWorkspace, setWorkspacesEnabled } from "./workspace-client";
+import { forgetPaletteQuery } from "./palette";
 
 const NOW = Date.now();
 
@@ -75,6 +76,9 @@ const threads = [
   thread("a", "Fix billing export", { hasPendingInteraction: true }),
   thread("b", "Deploy the worker", { status: "active", projectId: "p2" }),
   thread("c", "Mail templates"),
+  thread("e", "Worktree thread", {
+    environment: { id: "env1", name: null, branchName: "feat/worktree", path: "/work/acme", isWorktree: true, providerId: null, workspaceDisplayKind: null },
+  }),
 ];
 
 type MountOptions = {
@@ -86,6 +90,10 @@ type MountOptions = {
   threadActions?: RenderSlotOptions["threadActions"];
   rpc?: Record<string, (input: never) => unknown>;
   context?: { threadId?: string | null; projectId?: string | null };
+  threads?: PluginSidebarThread[];
+  files?: (args: { query?: string; environmentId?: string }) => unknown;
+  openFilePreview?: () => boolean;
+  threadOpen?: (args: unknown) => Promise<unknown>;
 };
 
 async function mount(options: MountOptions = {}) {
@@ -106,10 +114,11 @@ async function mount(options: MountOptions = {}) {
         next_needs_me: () => ({ opened: null }),
         ...options.rpc,
       } as never,
-      sidebarThreads: { status: "ready", threads, projects, sections: [] },
+      sidebarThreads: { status: "ready", threads: options.threads ?? threads, projects, sections: [] },
       context: options.context,
       threadActions: options.threadActions,
       openUrl: () => true,
+      openFilePreview: options.openFilePreview ?? (() => true),
       sdk: {
         subscribe: (() => () => {}) as never,
         system: {
@@ -117,6 +126,10 @@ async function mount(options: MountOptions = {}) {
         },
         threads: {
           search: (async (args: { query: string }) => options.search?.(args) ?? { active: { results: [], total: 0 }, archived: { results: [], total: 0 } }) as never,
+          open: (options.threadOpen ?? (async () => ({ delivered: 1 }))) as never,
+        },
+        projects: {
+          files: (async (args: { query?: string; environmentId?: string }) => options.files?.(args) ?? { files: [], truncated: false }) as never,
         },
       },
       realtimeConnectionState: "connected",
@@ -143,6 +156,7 @@ afterEach(() => {
   selectWorkspace(null);
   setWorkspacesEnabled(false);
   sessionStorage.clear();
+  forgetPaletteQuery();
   vi.restoreAllMocks();
 });
 
@@ -315,6 +329,78 @@ describe("palette thread actions", () => {
     fireEvent.change(input, { target: { value: "archive" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(archive).toHaveBeenCalled());
+  });
+});
+
+describe("palette scopes and memory", () => {
+  it("searches the open thread's checkout with / and previews a file", async () => {
+    const files = vi.fn(() => ({ files: [{ name: "palette.tsx", path: "src/palette.tsx" }, { name: "README.md", path: "README.md" }], truncated: false }));
+    const slot = await mount({ context: { threadId: "e", projectId: "p1" }, files });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "/" } });
+    expect(slot.getByRole("button", { name: /Files/ })).toBeTruthy();
+    fireEvent.change(input, { target: { value: "pal" } });
+    await waitFor(() => expect(files).toHaveBeenLastCalledWith(expect.objectContaining({ query: "pal", environmentId: "env1", projectId: "p1" })));
+    await waitFor(() => expect(options(slot)[0]).toContain("palette.tsx"));
+    expect(options(slot)[0]).toContain("src");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({
+        method: "experimental_openFilePreview",
+        options: { target: { kind: "workspace", environmentId: "env1", path: "src/palette.tsx" } },
+      }),
+    );
+  });
+
+  it("opens a file in the thread's panel when the overlay can't preview it", async () => {
+    const open = vi.fn(async () => ({ delivered: 1 }));
+    const slot = await mount({
+      context: { threadId: "e", projectId: "p1" },
+      files: () => ({ files: [{ name: "README.md", path: "README.md" }], truncated: false }),
+      openFilePreview: () => false,
+      threadOpen: open,
+    });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "/" } });
+    await waitFor(() => expect(options(slot)[0]).toContain("README.md"));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(open).toHaveBeenCalledWith({ threadId: "e", file: { source: "workspace", path: "README.md", lineNumber: null } }));
+  });
+
+  it("explains the files scope without an open thread", async () => {
+    const slot = await mount();
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "/" } });
+    expect(slot.getByText("Open a thread to search its checkout's files")).toBeTruthy();
+  });
+
+  it("caps a long group with Show all, which lists the rest", async () => {
+    const many = Array.from({ length: 10 }, (_, index) => thread(`t${index}`, `Task ${index}`));
+    const slot = await mount({ threads: many });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "task" } });
+    expect(options(slot).filter((text) => text.startsWith("Task"))).toHaveLength(8);
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(slot.getByRole("option", { selected: true }).textContent).toContain("Show all 10 threads");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(slot.getByRole("button", { name: /Threads & messages/ })).toBeTruthy();
+    expect(options(slot).filter((text) => text.startsWith("Task"))).toHaveLength(10);
+  });
+
+  it("keeps a closed query for a quick reopen, but not after running something", async () => {
+    const slot = await mount();
+    let input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "deploy" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(slot.queryByRole("combobox")).toBeNull());
+    input = await openPalette(slot);
+    expect((input as HTMLInputElement).value).toBe("deploy");
+    expect(options(slot)[0]).toContain("Deploy the worker");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "b" }));
+    input = await openPalette(slot);
+    expect((input as HTMLInputElement).value).toBe("");
   });
 });
 

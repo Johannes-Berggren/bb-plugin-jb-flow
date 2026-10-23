@@ -272,7 +272,7 @@ function useReplies(threadId: string | null): Reply[] {
 }
 
 /** bb's full-text search over titles and messages, debounced like bb's own. */
-function useServerSearch(text: string, enabled: boolean): ServerHit[] | null {
+function useServerSearch(text: string, enabled: boolean, limit: number): ServerHit[] | null {
   const sdk = useSdk();
   const [result, setResult] = useState<{ query: string; hits: ServerHit[] } | null>(null);
   const query = text.trim();
@@ -282,7 +282,7 @@ function useServerSearch(text: string, enabled: boolean): ServerHit[] | null {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       Promise.resolve()
-        .then(() => sdk.threads.search({ query, limitPerGroup: "20", signal: controller.signal }))
+        .then(() => sdk.threads.search({ query, limitPerGroup: String(limit), signal: controller.signal }))
         .then(
           (response) => {
             if (!controller.signal.aborted) setResult({ query, hits: serverHits(response) });
@@ -294,10 +294,55 @@ function useServerSearch(text: string, enabled: boolean): ServerHit[] | null {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query, sdk, searchable]);
+  }, [limit, query, sdk, searchable]);
   if (!searchable || result === null) return null;
   // Keep the last results while a longer query loads, so rows don't flicker.
   return query.toLowerCase().startsWith(result.query.toLowerCase()) ? result.hits : null;
+}
+
+type FileHit = { name: string; path: string };
+
+/** bb's quick-open file search in one checkout; null while there's nothing to show. */
+function useFileSearch(projectId: string | null, environmentId: string | null, text: string, enabled: boolean): FileHit[] | null {
+  const sdk = useSdk();
+  const [result, setResult] = useState<{ key: string; files: FileHit[] } | null>(null);
+  const query = text.trim();
+  const key = `${environmentId}\n${query}`;
+  const searchable = enabled && projectId !== null && environmentId !== null;
+  useEffect(() => {
+    if (!searchable) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      Promise.resolve()
+        .then(() => sdk.projects.files({ projectId: projectId!, environmentId: environmentId!, query, limit: "50", signal: controller.signal }))
+        .then(
+          (response) => {
+            if (!controller.signal.aborted) setResult({ key, files: response.files });
+          },
+          () => {
+            if (!controller.signal.aborted) setResult({ key, files: [] });
+          },
+        );
+    }, 120);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [environmentId, key, projectId, query, sdk, searchable]);
+  if (!searchable || result === null) return null;
+  // The previous list stays up while the next query loads.
+  return result.files;
+}
+
+/**
+ * A query you close without running anything comes back if you reopen within
+ * this long, so a quick ⌘K, Escape, ⌘K doesn't lose it.
+ */
+const REOPEN_MS = 30_000;
+let reopen: { query: string; scope: Scope; at: number } | null = null;
+/** Forget a kept query (tests, so one test's query doesn't open the next). */
+export function forgetPaletteQuery() {
+  reopen = null;
 }
 
 // --- the palette ---------------------------------------------------------------------
@@ -326,8 +371,13 @@ export function Palette({
   const wide = useMediaQuery("(min-width: 1100px)");
   const mod = platform === "mac" ? "⌘" : "Ctrl+";
 
-  const [query, setQuery] = useState("");
-  const [scope, setScope] = useState<Scope>("all");
+  const [restored] = useState(() => {
+    const kept = reopen !== null && Date.now() - reopen.at < REOPEN_MS ? reopen : null;
+    reopen = null;
+    return kept;
+  });
+  const [query, setQuery] = useState(restored?.query ?? "");
+  const [scope, setScope] = useState<Scope>(restored?.scope ?? "all");
   const [levels, setLevels] = useState<Level[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [frecency, setFrecency] = useState<Frecency>(() => readJson<Frecency>(FRECENCY_KEY, {}));
@@ -335,6 +385,18 @@ export function Palette({
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   const level = levels.at(-1) ?? null;
+  // Closing without running keeps the top-level query for REOPEN_MS.
+  const ran = useRef(false);
+  const latest = useRef({ query, scope, levels });
+  latest.current = { query, scope, levels };
+  useEffect(
+    () => () => {
+      if (ran.current) return;
+      const top = latest.current.levels[0]?.back ?? latest.current;
+      if (top.query.trim() || top.scope !== "all") reopen = { query: top.query, scope: top.scope, at: Date.now() };
+    },
+    [],
+  );
 
   const threadsById = useMemo(() => new Map(threads.map((thread) => [thread.id, thread])), [threads]);
   const projectsById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -346,7 +408,9 @@ export function Palette({
   const lanes = useMemo(() => resolveLanes(threadSections, flow?.laneSections), [threadSections, flow?.laneSections]);
   const current = context.threadId ? (threadsById.get(context.threadId) ?? null) : null;
   const parsed = parseQuery(query);
-  const server = useServerSearch(parsed.text, level === null && scope === "all");
+  const server = useServerSearch(parsed.text, level === null && (scope === "all" || scope === "threads"), scope === "threads" ? 50 : 20);
+  const checkout = current?.environment?.id ?? null;
+  const files = useFileSearch(current?.projectId ?? null, checkout, query, level === null && scope === "files");
   const serverById = useMemo(() => new Map((server ?? []).map((hit) => [hit.threadId, hit])), [server]);
 
   const modeThread = level?.mode.kind === "thread" ? level.mode.thread : null;
@@ -369,6 +433,7 @@ export function Palette({
 
   const done = useCallback(
     (work: () => unknown, success?: string) => {
+      ran.current = true;
       onClose();
       // After the dialog unmounts and focus is back, like bb's own palette.
       window.setTimeout(() => {
@@ -635,6 +700,7 @@ export function Palette({
     frecency,
     actions: appEntries.map((entry): PaletteAction => ({ id: entry.id, title: entry.title, keywords: entry.keywords, thread: entry.thread })),
     server,
+    files,
     now,
   };
   let sections: Section[];
@@ -749,6 +815,27 @@ export function Palette({
         }
         done(() => navigate.toCompose({ ...(composeProject ? { projectId: composeProject } : {}), initialPrompt: item.prompt, focusPrompt: true }));
         return;
+      case "file": {
+        if (checkout === null || current === null) return;
+        const options = { target: { kind: "workspace" as const, environmentId: checkout, path: item.path }, location: null };
+        const threadId = current.id;
+        done(async () => {
+          if (secondary) {
+            if (!navigate.experimental_openFileExternally(options)) throw new Error("No editor is set up to open files from BB.");
+            return;
+          }
+          // An app overlay has no preview panel of its own (bb declines), so the
+          // file opens in the thread's panel the way `bb thread open <path>` does.
+          if (navigate.experimental_openFilePreview(options)) return;
+          const { delivered } = await sdk.threads.open({ threadId, file: { source: "workspace", path: item.path, lineNumber: null } });
+          if (delivered === 0) throw new Error("No BB window took the file; open the thread and try again.");
+        });
+        return;
+      }
+      case "more":
+        setScope(item.scope);
+        setActiveId(null);
+        return;
       case "action": {
         const entry = entriesById.get(item.actionId);
         if (!entry) return;
@@ -835,7 +922,9 @@ export function Palette({
       ? "Snooze tomorrow, move, reply, tag …, archive…"
       : level !== null
         ? "Filter…"
-        : scope === "all"
+        : scope === "files"
+          ? "Search files in this thread's checkout…"
+          : scope === "all"
           ? "Search threads, messages, PRs, workspaces and actions…"
           : `Search ${SCOPE_LABEL[scope].toLowerCase()}…`;
   const hint = rowHint(active, entriesById, mod);
@@ -851,6 +940,8 @@ export function Palette({
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           inputRef.current?.focus();
+          // A query kept from a moment ago: typing replaces it, arrows keep it.
+          if (restored) inputRef.current?.select();
         }}
       >
         <DialogTitle className="sr-only">JB Flow palette</DialogTitle>
@@ -893,7 +984,17 @@ export function Palette({
         <div className={cn("jf-palette-body", wide && "jf-palette-body-split")}>
         <div id={listId} role="listbox" aria-label="Results" className="jf-palette-list">
           {rows.length === 0 ? (
-            <p className="jf-palette-empty">{level !== null ? "No matching actions" : scope === "prs" ? "No tracked pull requests" : "Nothing matches"}</p>
+            <p className="jf-palette-empty">{level !== null
+                ? "No matching actions"
+                : scope === "prs"
+                  ? "No tracked pull requests"
+                  : scope === "files"
+                    ? checkout === null
+                      ? "Open a thread to search its checkout's files"
+                      : files === null
+                        ? "Searching files…"
+                        : "No matching files"
+                    : "Nothing matches"}</p>
           ) : null}
           {(() => {
             let index = -1;
@@ -964,7 +1065,7 @@ export function Palette({
           </span>
           {level === null && scope === "all" ? (
             <span className="jf-palette-scopes">
-              <kbd>&gt;</kbd> actions <kbd>#</kbd> PRs <kbd>@</kbd> places <span title={FILTER_HINTS.join(" ")}>is:needs …</span>
+              <kbd>&gt;</kbd> actions <kbd>#</kbd> PRs <kbd>@</kbd> places <kbd>/</kbd> files <span title={FILTER_HINTS.join(" ")}>is:needs …</span>
             </span>
           ) : null}
         </div>
@@ -982,6 +1083,10 @@ function rowHint(item: PaletteItem | null, entries: ReadonlyMap<string, Entry>, 
       return `↵ open PR  ${mod}↵ thread`;
     case "compose":
       return "↵ start  ⇥ project";
+    case "file":
+      return `↵ preview  ${mod}↵ editor`;
+    case "more":
+      return "↵ show";
     case "action":
       return entries.get(item.actionId)?.open ? "↵ more" : "↵ run";
     default:
@@ -1057,6 +1162,24 @@ function Row(props: RowProps) {
       );
     case "compose":
       return <Simple icon={<Icon name="MessageSquarePlus" />} title={<>New thread: “{item.prompt}”</>} detail={props.composeProject ? `in ${props.composeProject}` : undefined} />;
+    case "file": {
+      const folder = item.path.slice(0, Math.max(0, item.path.length - item.name.length)).replace(/\/$/, "");
+      return (
+        <>
+          <span className="jf-palette-icon">
+            <Icon name="FileText" />
+          </span>
+          <span className="jf-palette-main">
+            <span className="jf-palette-title">
+              <Highlight text={item.name} ranges={item.ranges.title} />
+            </span>
+            {folder ? <span className="jf-palette-meta jf-palette-path">{folder}</span> : null}
+          </span>
+        </>
+      );
+    }
+    case "more":
+      return <Simple icon={<Icon name="ArrowRight" />} title={item.label} />;
     case "action": {
       const entry = props.entry;
       return (
@@ -1213,6 +1336,7 @@ function PaletteTips({ mod }: { mod: string }) {
         <dt><kbd>&gt;</kbd></dt><dd>Actions</dd>
         <dt><kbd>#</kbd></dt><dd>Pull requests, or <code>#123</code> for one</dd>
         <dt><kbd>@</kbd></dt><dd>Workspaces and projects</dd>
+        <dt><kbd>/</kbd></dt><dd>Files in this thread's checkout</dd>
         <dt><code>is:needs</code></dt><dd>Also <code>is:running</code>, <code>is:snoozed</code>, <code>is:unread</code>, <code>is:pinned</code>, <code>is:pr</code></dd>
         <dt><kbd>⇥</kbd></dt><dd>A thread's actions: reply, snooze <code>tomorrow</code>, <code>tag urgent</code>, move</dd>
         <dt><kbd>{mod}↵</kbd></dt><dd>Open a thread in a split</dd>

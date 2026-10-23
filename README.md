@@ -82,7 +82,13 @@ again or Escape to close it.
     pick the project.
 - **Narrow the scope.**
   - Prefixes: `>` for actions, `#` for pull requests (`#123` finds that PR), `@` for
-    workspaces and projects. Backspace on an empty query clears the scope.
+    workspaces and projects, `/` for files in the open thread's checkout (Enter
+    opens one in the thread's panel, like `bb thread open <path>`; ⌘Enter opens it
+    in your editor). Backspace on an empty query
+    clears the scope.
+  - A group with more matches than fit ends in *Show all N …*. For threads, messages
+    and archived matches, that opens *Threads & messages*: every match, up to 50 per
+    group from BB's full-text search.
   - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and
     `is:pr` narrow threads, with or without text.
 - **Act without opening.**
@@ -101,8 +107,12 @@ again or Escape to close it.
 Rows show the same status icon as the Triage list, plus project, workspace, PR state,
 tags, snooze and branch. On wide windows a pane beside the results previews the
 selected thread: its goal, next step or blocker, PRs and details, as in the Triage
-hover card. When the selection isn't a thread, the pane shows the scopes and keys. The command *Open JB Flow palette* (in BB's quick palette,
-rebindable under Settings → Keyboard) opens it even with the setting off.
+hover card. When the selection isn't a thread, the pane shows the scopes and keys.
+
+Close the palette without running anything and reopen it within 30 seconds: your
+query and scope come back, selected, so typing replaces them. Running something
+clears them. The command *Open JB Flow palette* (in BB's quick palette, rebindable
+under Settings → Keyboard) opens the palette even with the setting off.
 
 The setting is off, or the plugin is disabled? Then the key is BB's Search threads
 again. BB's own search also stays reachable through the quick palette → *Search

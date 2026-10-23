@@ -33,7 +33,7 @@ A UI feature, with no CLI. While the **⌘K opens the JB Flow palette** setting 
 is by default), BB's Search threads key opens JB Flow's palette. That key is ⌘K unless
 it was rebound. In the palette:
 - Typing searches threads, messages, PRs, workspaces, projects and actions.
-- `>` narrows to actions, `#` to PRs and `@` to workspaces and projects.
+- `>` narrows to actions, `#` to PRs, `@` to workspaces and projects, and `/` to files in the open thread's checkout.
 - `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and `is:pr` filter threads.
 - Tab on a thread lists its actions, including snooze, reply and move.
 

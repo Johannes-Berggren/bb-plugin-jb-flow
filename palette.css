@@ -181,6 +181,17 @@
   font-size: 10.5px;
   text-overflow: ellipsis;
 }
+.jf-palette-path {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+}
+.jf-palette-row[data-jf-palette-kind="more"] {
+  min-height: 30px;
+  color: var(--muted-foreground);
+}
 .jf-palette-snippet {
   display: -webkit-box;
   overflow: hidden;
