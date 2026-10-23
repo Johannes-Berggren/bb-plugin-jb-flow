@@ -1099,9 +1099,9 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.agents.registerTool({
     name: "wait_for_ci",
     description:
-      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread. End your turn after calling it.",
+      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
     instructions:
-      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result. For a review loop use for: \"both\".",
+      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\".",
     parameters: z.object({
       pr: z.number().int().positive().optional().describe("PR number; defaults to every open PR this thread created (all repos), else this branch's PR"),
       repo: z

@@ -273,6 +273,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **CI and review watcher:** agents call the `wait_for_ci` tool (or `bb jb-flow wait-ci`) and end their turn, instead of polling `gh`.
   - The plugin polls once every 2 minutes for all watches.
   - It messages the thread when checks finish (with the failed log), when reviews or comments arrive, or when the PR merges.
+  - A thread that is still working gets nothing. Once it goes idle, the next check sends one message with the current state of all its PRs.
 
 ### Focus tracking (for Stream Deck and scripts)
 - Every BB window reports which thread is focused, including the focused pane in a split view.
