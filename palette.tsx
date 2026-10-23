@@ -308,7 +308,8 @@ function useFileSearch(projectId: string | null, environmentId: string | null, t
   const [result, setResult] = useState<{ key: string; files: FileHit[] } | null>(null);
   const query = text.trim();
   const key = `${environmentId}\n${query}`;
-  const searchable = enabled && projectId !== null && environmentId !== null;
+  // bb's file search lists nothing for an empty query; the palette asks you to type instead.
+  const searchable = enabled && projectId !== null && environmentId !== null && query !== "";
   useEffect(() => {
     if (!searchable) return;
     const controller = new AbortController();
@@ -991,7 +992,9 @@ export function Palette({
                   : scope === "files"
                     ? checkout === null
                       ? "Open a thread to search its checkout's files"
-                      : files === null
+                      : query.trim() === ""
+                        ? "Type to search this thread's files"
+                        : files === null
                         ? "Searching files…"
                         : "No matching files"
                     : "Nothing matches"}</p>

@@ -339,6 +339,7 @@ describe("palette scopes and memory", () => {
     const input = await openPalette(slot);
     fireEvent.change(input, { target: { value: "/" } });
     expect(slot.getByRole("button", { name: /Files/ })).toBeTruthy();
+    expect(slot.getByText("Type to search this thread's files")).toBeTruthy();
     fireEvent.change(input, { target: { value: "pal" } });
     await waitFor(() => expect(files).toHaveBeenLastCalledWith(expect.objectContaining({ query: "pal", environmentId: "env1", projectId: "p1" })));
     await waitFor(() => expect(options(slot)[0]).toContain("palette.tsx"));
@@ -362,6 +363,7 @@ describe("palette scopes and memory", () => {
     });
     const input = await openPalette(slot);
     fireEvent.change(input, { target: { value: "/" } });
+    fireEvent.change(input, { target: { value: "read" } });
     await waitFor(() => expect(options(slot)[0]).toContain("README.md"));
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(open).toHaveBeenCalledWith({ threadId: "e", file: { source: "workspace", path: "README.md", lineNumber: null } }));
