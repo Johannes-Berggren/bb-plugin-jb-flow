@@ -86,28 +86,25 @@ function Choices({ threadId }: { threadId: string }) {
           >
             <span className="jf-choice-number" aria-hidden="true">
               {sent === option.n ? (
-                <Icon name="Check" className="size-4" />
+                <Icon name="Check" className="size-3" />
               ) : pending === option.n ? (
-                <Icon name="Loader" className="jf-choice-spinner size-4" />
+                <Icon name="Loader" className="jf-choice-spinner size-3" />
               ) : (
                 option.n
               )}
             </span>
-            <span className="jf-choice-copy">
-              <span className="jf-choice-text">{option.text}</span>
-              {(option.recommended ||
-                pending === option.n ||
-                sent === option.n) && (
-                <span className="jf-choice-meta">
-                  {pending === option.n
-                    ? "Sending…"
-                    : sent === option.n
-                      ? "Reply sent"
-                      : "Recommended"}
-                </span>
-              )}
-            </span>
-            <Icon name="ArrowUpRight" className="jf-choice-arrow size-4" />
+            <span className="jf-choice-text">{option.text}</span>
+            {(option.recommended ||
+              pending === option.n ||
+              sent === option.n) && (
+              <span className="jf-choice-meta">
+                {pending === option.n
+                  ? "Sending…"
+                  : sent === option.n
+                    ? "Reply sent"
+                    : "Recommended"}
+              </span>
+            )}
           </button>
         ))}
       </div>
