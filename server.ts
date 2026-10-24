@@ -1,6 +1,6 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
-import { createThreadStatus, parseStatusReport, statusReportSchema, threadStatusSchema } from "./thread-status";
+import { createThreadStatus, threadStatusSchema } from "./thread-status";
 import { countSince } from "./catch-up-model";
 import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
@@ -27,8 +27,6 @@ import { createFocusBoard } from "./focus-board";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
-/** The longest last reply a Catch up card carries; the thread has the rest. */
-const CARD_REPLY_MAX = 16_000;
 const CHANGED = "jb-flow-changed";
 const DAY_MS = 86_400_000;
 
@@ -201,14 +199,6 @@ export const rpcContract = defineRpcContract({
   catch_up_card: {
     input: z.object({ threadId: z.string().min(1).max(200), since: z.number().nullable() }),
     output: z.object({
-      reply: z.string(),
-      truncated: z.boolean(),
-      report: statusReportSchema.nullable(),
-      /** What to answer with, as in Your next move: report steps or a numbered choice. */
-      move: z.object({
-        mode: z.enum(["go", "choice"]),
-        options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
-      }),
       since: z.object({
         turns: z.number(),
         yourPrompts: z.number(),
@@ -978,21 +968,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       };
     },
     catch_up_card: async ({ threadId, since }) => {
-      const [output, timeline] = await Promise.all([
-        bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),
-        bb.sdk.threads
-          .timeline({ threadId, segmentLimit: "8", deferContent: "true", includeNestedRows: "false" })
-          .catch(() => null),
-      ]);
-      const full = output.output ?? "";
-      return {
-        reply: full.slice(0, CARD_REPLY_MAX),
-        truncated: full.length > CARD_REPLY_MAX,
-        // Only this reply's report: an older one carried forward would put a stale Next on the card.
-        report: parseStatusReport(full, Date.now()),
-        move: nextMove(full),
-        since: countSince(timeline?.rows ?? [], since, (timeline?.timelinePage.olderCursor ?? null) !== null),
-      };
+      // The card embeds the thread itself; this adds what happened since you last read it.
+      const timeline = await bb.sdk.threads
+        .timeline({ threadId, segmentLimit: "8", deferContent: "true", includeNestedRows: "false" })
+        .catch(() => null);
+      return { since: countSince(timeline?.rows ?? [], since, (timeline?.timelinePage.olderCursor ?? null) !== null) };
     },
     thread_stop: async ({ threadId }) => {
       await bb.sdk.threads.stop({ threadId });

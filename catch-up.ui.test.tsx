@@ -80,23 +80,8 @@ const threads = [
   thread("r", "Already read", { isUnread: false }),
 ];
 
-const report = {
-  goal: "Templates render in every mail client",
-  done: "Rewrote the layout tables",
-  next: "Merge and deploy",
-  blocked: "",
-  milestones: [],
-  steps: { mode: "go" as const, question: "", items: ["Merge the PR", "Deploy to staging", "Tidy the branch"], recommended: [1] },
-  capturedAt: NOW,
-};
-
-function card(threadId: string) {
-  const since = { turns: 2, yourPrompts: 1, otherPrompts: 0, more: false, firstAt: NOW - 60_000 };
-  if (threadId === "c") {
-    const move = { mode: "go", options: report.steps.items.map((text, index) => ({ n: index + 1, text, recommended: index === 0 })) };
-    return { reply: "Done.\n\n**Goal:** …", truncated: false, report, move, since };
-  }
-  return { reply: `Latest reply for ${threadId}`, truncated: false, report: null, move: { mode: "choice", options: [] }, since };
+function card() {
+  return { since: { turns: 2, yourPrompts: 1, otherPrompts: 0, more: false, firstAt: NOW - 60_000 } };
 }
 
 type MountOptions = {
@@ -123,7 +108,7 @@ async function mount(options: MountOptions = {}) {
       rpc: {
         state_get: () => state,
         workspaces_get: () => options.workspaces ?? { workspaces: [], threadWorkspaces: {} },
-        catch_up_card: (input: { threadId: string }) => card(input.threadId),
+        catch_up_card: () => card(),
         thread_reply: () => ({ ok: true }),
         snooze: (input: { until?: number }) => ({ until: input.until ?? NOW, note: null, fromSectionId: null, snoozedAt: NOW }),
         unsnooze: () => ({ removed: true }),
@@ -205,33 +190,34 @@ describe("Catch up", () => {
     await waitFor(() => expect(marks(slot, "threads.markUnread")).toEqual(["a"]));
   });
 
-  it("shows a status report with next steps and sends the pick with g", async () => {
+  it("embeds the thread with its composer; r focuses it, and showing never marks read", async () => {
     const slot = await mount();
     await openDeck();
+    const chat = () => within(deck()).getByTestId("bb-thread-chat");
+    expect(chat().getAttribute("data-thread-id")).toBe("a");
+    expect(chat().getAttribute("data-variant")).toBe("compact");
+    expect(chat().getAttribute("data-focus-request")).toBe("0");
+    expect(deck().textContent).toContain("Since you looked 2h ago: 2 turns · 1 prompt from you");
+    press("r");
+    await waitFor(() => expect(chat().getAttribute("data-focus-request")).toBe("1"));
     press("u");
-    await waitFor(() => expect(title()).toBe("Mail templates"));
-    await waitFor(() => expect(deck().textContent).toContain("Templates render in every mail client"));
-    expect(deck().textContent).toContain("Merge and deploy");
-    press("1");
-    press("3");
-    await waitFor(() => expect(within(deck()).getByRole("button", { name: /Go with 1, 3/ })).toBeTruthy());
-    press("g");
-    await waitFor(() => expect(slot.rpcCalls.some((call) => call.method === "thread_reply")).toBe(true));
-    const reply = slot.rpcCalls.find((call) => call.method === "thread_reply")!;
-    expect(reply.input).toEqual({ threadId: "c", text: "go 1,3" });
-    await waitFor(() => expect(title()).toBe("Release notes"));
-    expect(marks(slot, "threads.markRead")).toContain("c");
-    press("z");
-    await waitFor(() => expect(deck().textContent).toContain("can't be undone"));
+    await waitFor(() => expect(chat().getAttribute("data-thread-id")).toBe("c"));
+    expect(chat().getAttribute("data-focus-request")).toBe("0");
+    expect(marks(slot, "threads.markRead")).toEqual([]);
   });
 
-  it("renders the last reply as Markdown when there's no report", async () => {
-    await mount();
+  it("lists open PRs and folds away merged ones", async () => {
+    const pr = (number: number, state: string, attention: string) => ({
+      repo: "acme/web-app", number, title: `Change ${number}`, url: `https://github.com/acme/web-app/pull/${number}`,
+      state, attention, base: "main", head: `b${number}`, stackedOn: null, checkedAt: NOW, mergedAt: state === "merged" ? NOW - 1000 : null,
+    });
+    await mount({ state: { threadPrs: { a: [pr(1, "merged", "merged"), pr(2, "merged", "merged"), pr(3, "open", "checks_failed")] } as never } });
     await openDeck();
-    press("u");
-    press("u");
-    await waitFor(() => expect(title()).toBe("Release notes"));
-    await waitFor(() => expect(within(deck()).getByTestId("bb-markdown").textContent).toBe("Latest reply for d"));
+    await waitFor(() => expect(deck().textContent).toContain("#3"));
+    expect(deck().textContent).not.toContain("Change 1");
+    expect(deck().textContent).toContain("#1 merged · #2 merged");
+    fireEvent.click(within(deck()).getByRole("button", { name: "2 merged or closed PRs" }));
+    await waitFor(() => expect(deck().textContent).toContain("Change 1"));
   });
 
   it("holds an archive for undo and commits it on close", async () => {

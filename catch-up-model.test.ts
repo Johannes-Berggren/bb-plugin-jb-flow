@@ -8,7 +8,6 @@ import {
   current,
   eligible,
   freshIds,
-  goText,
   progress,
   pullFresh,
   record,
@@ -17,12 +16,10 @@ import {
   resumable,
   settle,
   startSession,
-  stepsFrom,
   stillWorking,
   summary,
   swipeOutcome,
   tier,
-  togglePick,
   undo,
   undoBlocked,
   upcoming,
@@ -244,23 +241,6 @@ test("countSince falls back to assistant replies without turn ids, and walks chi
     { kind: "turn", createdAt: 30, children: [{ kind: "conversation", role: "user", initiator: "system", createdAt: 30 }] },
   ];
   assert.deepEqual(countSince(rows, 5, false), { turns: 2, yourPrompts: 0, otherPrompts: 1, more: false, firstAt: 10 });
-});
-
-test("steps from the next move, picking and the reply", () => {
-  const go = stepsFrom({ mode: "go", options: [{ n: 1, text: "Merge", recommended: true }, { n: 2, text: "Deploy", recommended: false }, { n: 3, text: "Tidy", recommended: false }] }, "Ready?")!;
-  assert.deepEqual(go.items[0], { n: 1, text: "Merge", recommended: true });
-  assert.equal(go.question, "Ready?");
-  assert.equal(goText(go, []), "go");
-  assert.deepEqual(togglePick(go, [3], 1), [1, 3]);
-  assert.deepEqual(togglePick(go, [1, 3], 3), [1]);
-  assert.equal(goText(go, [3, 1]), "go 1,3");
-  assert.deepEqual(togglePick(go, [], 9), [], "no such step");
-  const choice = stepsFrom({ mode: "choice", options: [{ n: 1, text: "Ship", recommended: false }, { n: 2, text: "Hold", recommended: true }] })!;
-  assert.equal(choice.mode, "choice");
-  assert.equal(goText(choice, []), null, "choose first");
-  assert.deepEqual(togglePick(choice, [1], 2), [2]);
-  assert.equal(goText(choice, [2]), "2");
-  assert.equal(stepsFrom({ mode: "choice", options: [] }), null);
 });
 
 test("swipeOutcome needs distance or speed in the swipe's direction", () => {

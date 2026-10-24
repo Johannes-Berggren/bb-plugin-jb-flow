@@ -1,26 +1,28 @@
-/* Catch up: one unread thread per card, a progress bar, an action bar and an undo line. */
+/* Catch up: one unread thread per card (a summary over the live thread), a progress
+   bar, an action bar and an undo line. */
 .jf-catchup {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: min(46rem, 84dvh);
   font-size: 13px;
   line-height: 1.45;
   color: var(--foreground);
   background: var(--popover, var(--background));
   outline: none;
 }
+.jf-catchup[data-variant="overlay"] {
+  height: min(56rem, 88dvh);
+}
 .jf-catchup[data-variant="page"] {
-  max-height: none;
   height: 100%;
   background: transparent;
 }
 .jf-catchup-page {
   width: 100%;
   height: 100%;
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
-  padding: 16px 20px 24px;
+  padding: 12px 20px 16px;
 }
 .jf-catchup-page > .jf-catchup-empty {
   padding: 48px 0;
@@ -89,8 +91,7 @@
 .jf-catchup-chip,
 .jf-catchup-pill,
 .jf-catchup-action,
-.jf-catchup-primary,
-.jf-catchup-more {
+.jf-catchup-primary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -155,22 +156,27 @@
 
 /* --- stage and card --- */
 .jf-catchup-stage {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 14px;
+  padding: 12px 14px;
 }
 .jf-catchup[data-variant="page"] .jf-catchup-stage {
-  padding: 16px 0;
+  padding: 12px 0;
 }
 .jf-catchup-card {
   position: relative;
-  padding: 14px 16px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card, var(--background));
-  touch-action: pan-y;
   animation: jf-catchup-deal 160ms ease-out;
   transition: transform 160ms ease-out;
 }
@@ -201,6 +207,25 @@
   right: 12px;
   background: var(--muted, var(--accent));
   color: var(--foreground);
+}
+/* The summary over the thread: never more than about half the card. */
+.jf-catchup-summary {
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow-y: auto;
+  padding: 12px 16px 10px;
+  touch-action: pan-y;
+}
+.jf-catchup-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 240px;
+  border-top: 1px solid var(--border);
+}
+.jf-catchup-chat > * {
+  flex: 1;
+  min-height: 0;
 }
 .jf-catchup-card-head {
   display: flex;
@@ -256,157 +281,31 @@
 .jf-catchup-callout-error {
   background: color-mix(in srgb, var(--destructive-text) 12%, transparent);
 }
-.jf-catchup-body {
-  margin-top: 12px;
-}
 .jf-catchup-muted {
   margin: 8px 0 0;
   color: var(--muted-foreground);
   font-size: 12px;
 }
-.jf-catchup-skeleton {
-  height: 72px;
-  border-radius: 8px;
-  background: var(--muted, var(--accent));
-  animation: jf-catchup-pulse 1.2s ease-in-out infinite;
-}
 
-/* The agent's status report, in full. */
-.jf-catchup-report {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-.jf-catchup-report > div {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 8px;
-}
-.jf-catchup-report dt {
-  padding-top: 2px;
-  color: var(--muted-foreground);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.jf-catchup-report dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.jf-catchup-report [data-field="blocked"] dd {
-  color: var(--warning-text, inherit);
-}
 
-/* Next steps: pick with 1–9, send with G. */
-.jf-catchup-steps {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-.jf-catchup-steps-question {
-  margin: 0 0 6px;
-  font-weight: 550;
-}
-.jf-catchup-steps ol {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.jf-catchup-steps li > button {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  width: 100%;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  text-align: left;
-  cursor: pointer;
-}
-.jf-catchup-steps li > button:hover {
-  background: var(--accent);
-}
-.jf-catchup-steps li > button[aria-pressed="true"] {
-  border-color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-}
-.jf-catchup-step-text {
-  flex: 1;
-  min-width: 0;
-}
-.jf-catchup-step-tag {
-  flex-shrink: 0;
-  color: var(--primary);
-  font-size: 10.5px;
-}
-.jf-catchup-steps-send {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
-}
 
-/* The last reply: capped until Show more. */
-.jf-catchup-reply {
-  position: relative;
-  max-height: 16rem;
-  overflow: hidden;
-}
-.jf-catchup-reply-open {
-  max-height: none;
-}
-.jf-catchup-reply:not(.jf-catchup-reply-open)::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 56px;
-  background: linear-gradient(transparent, var(--card, var(--background)));
-  pointer-events: none;
-}
-.jf-catchup-more {
-  position: absolute;
-  bottom: 4px;
-  left: 50%;
-  z-index: 1;
-  height: 24px;
-  border: 1px solid var(--border);
-  background: var(--card, var(--background));
-  color: var(--foreground);
-  transform: translateX(-50%);
-}
-.jf-catchup-full {
-  margin-top: 12px;
-}
-.jf-catchup-full > summary {
-  color: var(--muted-foreground);
-  font-size: 12px;
-  cursor: pointer;
-}
-.jf-catchup-full[open] > summary {
-  margin-bottom: 8px;
-}
-.jf-catchup-markdown {
-  font-size: 13px;
-}
 .jf-catchup-prs {
-  margin-top: 12px;
-  padding-top: 10px;
+  margin-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
 }
-.jf-catchup-next {
-  margin: 12px 0 0;
-  overflow: hidden;
+.jf-catchup-link {
+  margin-top: 4px;
   color: var(--muted-foreground);
   font-size: 11.5px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.jf-catchup-link:hover {
+  color: var(--foreground);
+  text-decoration: underline;
 }
 
-/* --- sheets: reply, snooze, keys, Mark all read --- */
+/* --- sheets: snooze, keys, Mark all read --- */
 .jf-catchup-sheet,
 .jf-catchup-confirm {
   display: flex;
@@ -439,8 +338,7 @@
   gap: 6px;
   margin-left: auto;
 }
-.jf-catchup-custom input,
-.jf-catchup-replybox textarea {
+.jf-catchup-custom input {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -452,24 +350,6 @@
   width: 11rem;
   height: 28px;
   padding: 0 8px;
-}
-.jf-catchup-replybox {
-  flex-direction: column;
-  align-items: stretch;
-}
-.jf-catchup-replybox textarea {
-  width: 100%;
-  padding: 8px 10px;
-  resize: vertical;
-}
-.jf-catchup-replybox-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.jf-catchup-replybox-actions > .jf-catchup-muted {
-  flex: 1;
-  margin: 0;
 }
 .jf-catchup-help dl {
   display: grid;
@@ -614,8 +494,8 @@
 
 /* --- small screens: the dialog is a bottom sheet --- */
 @media (max-width: 640px) {
-  .jf-catchup {
-    max-height: 88dvh;
+  .jf-catchup[data-variant="overlay"] {
+    height: 92dvh;
   }
   .jf-catchup-actions {
     flex-wrap: wrap;
@@ -639,24 +519,11 @@
     transform: translateY(4px);
   }
 }
-@keyframes jf-catchup-pulse {
-  50% {
-    opacity: 0.55;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .jf-catchup-card,
   .jf-catchup-strip,
   .jf-catchup-progress > span {
     animation: none;
     transition: none;
-  }
-  .jf-catchup-skeleton {
-    animation: none;
-  }
-}
-@media (forced-colors: active) {
-  .jf-catchup-steps li > button[aria-pressed="true"] {
-    outline: 2px solid Highlight;
   }
 }
