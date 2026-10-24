@@ -120,6 +120,58 @@ threads…*. A message match opens its thread, but it can't scroll to the messag
 because the plugin SDK has no way to do that. Recent picks and visits are stored in
 this browser only.
 
+### Catch up
+
+On by default (turn off under Settings → JB Flow → **Catch up**). Goes through your
+unread threads one card at a time, so you can clear them without opening each one.
+Open it from the **Catch up** page in the navigation (its badge counts unread threads
+in the current workspace), with ⌥⇧C (*Catch up on unread threads*, rebindable under
+Settings → Keyboard), from ⌘K, or from the *Catch up · N unread* line on the home page.
+
+- **What's in it.** Unread top-level threads (and forks) in the current workspace tab;
+  the chip in the header switches to all workspaces. Snoozed, archived and hidden
+  threads stay out, and so do threads still working, unless they're waiting on you.
+  They join when they finish.
+- **Order.** Threads that need you come first: a prompt or permission, a failure,
+  then an agent that handed the next step to you. Then PRs to act on, then other
+  updates, each group oldest first. The order is fixed when you start, so cards never
+  move under you. New arrivals wait behind an *N new* pill (or `n`).
+- **Each card** shows the thread's status, project and age, and what happened since
+  you last read it: turns, prompts from you and automated prompts (CI results,
+  snooze reminders), and PRs merged since. Then the agent's status report (Goal,
+  Done, Next, Blocked) with the full reply folded below, or the last reply itself.
+  Next steps and numbered choices appear as a list you can pick from, and the open
+  PRs are listed underneath. Showing a card never marks a thread read.
+- **Keys:**
+
+  | Key | Action |
+  | --- | --- |
+  | `→` or `d` | Done: mark read and go on |
+  | `←` or `u` | Keep unread and go on |
+  | `1`–`9`, then `g` | Pick next steps or an option, then send it (`go`, `go 1,3` or the option's number) |
+  | `r` | Reply (Enter sends) |
+  | `s` | Snooze (`1`–`5` for a preset, or type `3d`, `fri`) |
+  | `e` | Archive |
+  | `o` or Enter | Open the thread (`⇧O` or ⌘Enter opens it in a split) |
+  | `z` or ⌘Z | Undo |
+  | `?` | List the keys |
+
+  A reply, Go and Snooze also mark the thread read.
+- **Touch.** Swipe a card right for Done and left to keep it unread; a long press
+  opens Snooze. On small screens the overlay is a bottom sheet.
+- **Undo** reverses the last actions in order: read, snooze and Mark all read are
+  reverted, and an archive waits 8 seconds before it happens (bb removes an archived
+  thread's worktree), so undoing it in time changes nothing. A sent reply can't be
+  undone.
+- **Mark all read** clears the remaining updates and PR cards in one step; threads
+  that need you stay in the deck.
+- **The end** shows what you did, offers the threads you kept unread again, and picks
+  up new arrivals. Reopen within 15 minutes and the deck carries on where you left off.
+
+With the setting off, the command, palette entry, home-page line and badge are gone and
+the page says it's off. bb's own navigation rail still lists the page, because a
+plugin page can't hide itself yet; JB Flow's workspace navigation hides it.
+
 ### App-wide appearance
 
 **Polish the entire BB interface** (Settings → JB Flow, on by default) applies
@@ -300,7 +352,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 ### Decisions and "Your move"
 - **Decision buttons:** when an agent's last message ends with numbered options, they appear under **Your next move** above the composer and the thread monitor. The recommended one is highlighted. A decision sends the option's number in one click. A list of steps to run with go (a status report's **Next steps**, or a list ending "Reply go for all, or go 1,3") lets you tick steps, then **Go** sends `go`, or `go 1,3` with steps ticked.
 - **Leftover worktrees:** bb removes a thread's worktree when it's archived, but extra checkouts an agent adds next to it (cross-repo work) and failed teardowns stay on disk. A weekly scan (Mondays 08:00) lists them under the stale digest with their PR state, uncommitted changes and node_modules, plus a button that deletes the merged, clean ones. Also `bb jb-flow leftovers`.
-- **Your move:** a home-page section lists threads whose agent handed the next step to you, oldest first. Threads waiting 3+ days are flagged, and each has Snooze 3d and Archive. Also `bb jb-flow your-move`.
+- **Your move:** a home-page section lists threads whose agent handed the next step to you, oldest first. With Catch up on, a *Catch up · N unread* line above it opens the deck. Threads waiting 3+ days are flagged, and each has Snooze 3d and Archive. Also `bb jb-flow your-move`.
 - **Unreleased:** a home-page section (above Your move) lists the PRs merged into the selected project's default branch that haven't been released yet, newest first, with author, age and a compare link. If the repo has a `main` branch next to its default branch (`dev`), unreleased means on `dev` but not yet on `main`; otherwise it means merged since the latest release or `v*` tag. Cached for 5 minutes; Refresh reads GitHub again.
 - **`pr_status` agent tool:** all of a thread's PRs in one call, so agents stop running `gh pr view` / `gh pr checks` loops.
 
@@ -367,6 +419,7 @@ Under **Settings → JB Flow**:
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
+- **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
 - **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).

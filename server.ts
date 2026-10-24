@@ -1,6 +1,7 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
-import { createThreadStatus, threadStatusSchema } from "./thread-status";
+import { createThreadStatus, parseStatusReport, statusReportSchema, threadStatusSchema } from "./thread-status";
+import { countSince } from "./catch-up-model";
 import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
@@ -26,6 +27,8 @@ import { createFocusBoard } from "./focus-board";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
+/** The longest last reply a Catch up card carries; the thread has the rest. */
+const CARD_REPLY_MAX = 16_000;
 const CHANGED = "jb-flow-changed";
 const DAY_MS = 86_400_000;
 
@@ -195,6 +198,26 @@ export const rpcContract = defineRpcContract({
       prompts: z.number(),
     }),
   },
+  catch_up_card: {
+    input: z.object({ threadId: z.string().min(1).max(200), since: z.number().nullable() }),
+    output: z.object({
+      reply: z.string(),
+      truncated: z.boolean(),
+      report: statusReportSchema.nullable(),
+      /** What to answer with, as in Your next move: report steps or a numbered choice. */
+      move: z.object({
+        mode: z.enum(["go", "choice"]),
+        options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
+      }),
+      since: z.object({
+        turns: z.number(),
+        yourPrompts: z.number(),
+        otherPrompts: z.number(),
+        more: z.boolean(),
+        firstAt: z.number().nullable(),
+      }),
+    }),
+  },
   thread_stop: { input: z.object({ threadId: z.string() }), output: z.object({ ok: z.boolean() }) },
   thread_watch_ci: {
     input: z.object({ threadId: z.string() }),
@@ -307,6 +330,13 @@ export default async function plugin(bb: BbPluginApi) {
       label: "⌘K opens the JB Flow palette",
       description:
         "BB's Search threads key (⌘K unless you changed it) opens a palette that also finds messages, PRs, workspaces and projects, shows what needs you, and acts on any thread with Tab. BB's own search stays under Open quick palette → Search threads. Off gives the key back to BB.",
+      default: true,
+    },
+    catchUp: {
+      type: "boolean",
+      label: "Catch up",
+      description:
+        "Go through unread threads one card at a time: mark read, keep unread, reply, snooze or archive. Adds a Catch up page with an unread count, a command (⌥⇧C), a palette action and a line on the home page. Off hides them.",
       default: true,
     },
     polishShell: {
@@ -945,6 +975,23 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         blocked: field("Blocked"),
         latest: firstLines.slice(0, 400),
         prompts: userItems.length,
+      };
+    },
+    catch_up_card: async ({ threadId, since }) => {
+      const [output, timeline] = await Promise.all([
+        bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),
+        bb.sdk.threads
+          .timeline({ threadId, segmentLimit: "8", deferContent: "true", includeNestedRows: "false" })
+          .catch(() => null),
+      ]);
+      const full = output.output ?? "";
+      return {
+        reply: full.slice(0, CARD_REPLY_MAX),
+        truncated: full.length > CARD_REPLY_MAX,
+        // Only this reply's report: an older one carried forward would put a stale Next on the card.
+        report: parseStatusReport(full, Date.now()),
+        move: nextMove(full),
+        since: countSince(timeline?.rows ?? [], since, (timeline?.timelinePage.olderCursor ?? null) !== null),
       };
     },
     thread_stop: async ({ threadId }) => {

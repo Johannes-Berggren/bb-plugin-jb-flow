@@ -46,6 +46,14 @@
 }
 .jf-workspace-badge {
   color: var(--attention, var(--brand));
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.jf-workspace-badge[data-tone="neutral"] {
+  color: var(--muted-foreground);
+}
+.jf-workspace-badge[data-tone="critical"] {
+  color: var(--destructive-text, var(--destructive));
 }
 .jf-workspace-footer {
   display: flex;

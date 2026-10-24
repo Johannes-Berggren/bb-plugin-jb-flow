@@ -48,9 +48,10 @@ import {
   type Shortcut,
 } from "./palette-model";
 import { resolveLanes } from "./lanes";
+import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
-import { workspaceForThread } from "./workspaces";
+import { inWorkspace, workspaceForThread } from "./workspaces";
 import { PR_TONE, StatusIcon, ThreadPreviewCard, attentionLabel, prGlyph, rowStatus, runInfo, threadPrs, useNow, useThreadPreview } from "./ui-extras";
 import type { RowStatus } from "./ui-extras";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -367,7 +368,9 @@ export function Palette({
   const context = useBbContext();
   const pluginId = usePluginId();
   const { threads, projects, sections: threadSections } = useSidebarThreads();
-  const workspacesOn = useSettings().values?.workspaces === true;
+  const settings = useSettings().values;
+  const workspacesOn = settings?.workspaces === true;
+  const catchUpOn = settings?.catchUp === true;
   const { state: workspaceState, refresh: refreshWorkspaces } = useWorkspaces();
   const selectedWorkspace = useSelectedWorkspace();
   const now = useNow(30_000);
@@ -671,6 +674,20 @@ export function Palette({
     }
     entries.push(
       { id: "next-needs-me", title: "Open the next thread that needs me", keywords: "triage inbox", icon: <Glyph name="question" />, run: () => rpc.call("next_needs_me", { archiveThreadId: null }) },
+    );
+    if (catchUpOn) {
+      const unread = buildQueue(threads, flow, (thread) => inWorkspace(thread, selectedWorkspace, workspaceState, threads));
+      const need = unread.filter((entry) => needsYou(entry.tier)).length;
+      entries.push({
+        id: "catch-up",
+        title: "Catch up on unread threads",
+        detail: unread.length ? `${unread.length} unread${need ? ` · ${need} need${need === 1 ? "s" : ""} you` : ""}` : "All caught up",
+        keywords: "unread inbox read cards triage swipe",
+        icon: <Icon name="MailOpen" />,
+        run: () => window.dispatchEvent(new CustomEvent(CATCH_UP_EVENT)),
+      });
+    }
+    entries.push(
       {
         id: "new-thread",
         title: composeProject ? `New thread in ${projectName(composeProject)}` : "New thread",
@@ -682,7 +699,7 @@ export function Palette({
     );
     return entries;
     // projectName reads projectsById, a dependency here.
-  }, [currentInfo, currentReplies, flow?.threadPrs, rpc, navigate, composeProject, projectsById]);
+  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState]);
 
   // --- what to list ---
   const levelEntries: readonly Entry[] | null =
