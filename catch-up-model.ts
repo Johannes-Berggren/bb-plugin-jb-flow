@@ -124,8 +124,6 @@ export type CatchUpItem = {
   tier: Tier;
   /** When you last read it (null: never), for "since you looked". */
   since: number | null;
-  /** The thread's latest activity when the card was dealt; newer means unseen output. */
-  seenAt: number;
   outcome: Outcome | null;
   actedAt: number | null;
 };
@@ -147,7 +145,6 @@ const item = (queued: Queued<CatchUpThread>): CatchUpItem => ({
   threadId: queued.thread.id,
   tier: queued.tier,
   since: queued.thread.lastReadAt,
-  seenAt: queued.thread.latestAttentionAt,
   outcome: null,
   actedAt: null,
 });
@@ -217,13 +214,6 @@ export function undo(session: Session, now: number): { session: Session; entry: 
     session: { ...session, items, index: entry.kind === "one" ? entry.index : session.index, undo: session.undo.slice(0, -1), touchedAt: now },
     entry,
   };
-}
-
-/** The card was refreshed after new activity: what's on screen is now what was seen. */
-export function reseen(session: Session, latestAttentionAt: number): Session {
-  const at = session.index;
-  if (session.items[at] === undefined || session.items[at]!.seenAt === latestAttentionAt) return session;
-  return { ...session, items: session.items.map((candidate, index) => (index === at ? { ...candidate, seenAt: latestAttentionAt } : candidate)) };
 }
 
 /**
@@ -368,36 +358,6 @@ export function countSince(rows: readonly SinceRow[], since: number | null, hasO
     more: hasOlder && rows.length > 0 && oldest > after,
     firstAt,
   };
-}
-
-// --- next steps on a card ----------------------------------------------------------
-
-export type Steps = {
-  mode: "go" | "choice";
-  question: string;
-  items: Array<{ n: number; text: string; recommended: boolean }>;
-};
-
-/** A card's steps from the reply's next move (see nextMove in decisions.ts); null when it offers none. */
-export function stepsFrom(
-  move: { mode: "go" | "choice"; options: ReadonlyArray<{ n: number; text: string; recommended: boolean }> },
-  question = "",
-): Steps | null {
-  if (move.options.length === 0) return null;
-  return { mode: move.mode, question, items: move.options.map((option) => ({ ...option })) };
-}
-
-/** Number keys tick steps to go with, or choose one option. */
-export function togglePick(steps: Steps, picked: readonly number[], n: number): number[] {
-  if (!steps.items.some((step) => step.n === n)) return [...picked];
-  if (steps.mode === "choice") return picked[0] === n ? [] : [n];
-  return picked.includes(n) ? picked.filter((value) => value !== n) : [...picked, n].sort((a, b) => a - b);
-}
-
-/** What sending the pick says: "go", "go 1,3", or an option's number. Null: nothing to send yet. */
-export function goText(steps: Steps, picked: readonly number[]): string | null {
-  if (steps.mode === "choice") return picked.length === 1 ? String(picked[0]) : null;
-  return picked.length ? `go ${[...picked].sort((a, b) => a - b).join(",")}` : "go";
 }
 
 // --- touch -------------------------------------------------------------------------

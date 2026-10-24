@@ -123,7 +123,8 @@ this browser only.
 ### Catch up
 
 On by default (turn off under Settings → JB Flow → **Catch up**). Goes through your
-unread threads one card at a time, so you can clear them without opening each one.
+unread threads one card at a time, each with the thread itself, so you can read and
+answer them without opening each one.
 Open it from the **Catch up** page in the navigation (its badge counts unread threads
 in the current workspace), with ⌥⇧C (*Catch up on unread threads*, rebindable under
 Settings → Keyboard), from ⌘K, or from the *Catch up · N unread* line on the home page.
@@ -136,32 +137,32 @@ Settings → Keyboard), from ⌘K, or from the *Catch up · N unread* line on th
   then an agent that handed the next step to you. Then PRs to act on, then other
   updates, each group oldest first. The order is fixed when you start, so cards never
   move under you. New arrivals wait behind an *N new* pill (or `n`).
-- **Each card** shows the thread's status, project and age, and what happened since
-  you last read it: turns, prompts from you and automated prompts (CI results,
-  snooze reminders), and PRs merged since. Then the agent's status report (Goal,
-  Done, Next, Blocked) with the full reply folded below, or the last reply itself.
-  Next steps and numbered choices appear as a list you can pick from, and the open
-  PRs are listed underneath. Showing a card never marks a thread read.
+- **Each card** starts with a short summary: the thread's status, project and age,
+  what happened since you last read it (turns, prompts from you, automated prompts
+  such as CI results and snooze reminders, PRs merged since) and its open PRs, with
+  merged and closed ones folded away. Below it is the thread itself, live, with its
+  composer: read the conversation, answer a prompt or permission, pick from *Your
+  next move*, or write a reply, as in the thread view. Showing a card doesn't mark
+  the thread read; writing in its composer does, as anywhere in bb.
 - **Keys:**
 
   | Key | Action |
   | --- | --- |
   | `→` or `d` | Done: mark read and go on |
   | `←` or `u` | Keep unread and go on |
-  | `1`–`9`, then `g` | Pick next steps or an option, then send it (`go`, `go 1,3` or the option's number) |
-  | `r` | Reply (Enter sends) |
+  | `r` | Write in the thread's composer (Esc comes back to these keys) |
   | `s` | Snooze (`1`–`5` for a preset, or type `3d`, `fri`) |
   | `e` | Archive |
   | `o` or Enter | Open the thread (`⇧O` or ⌘Enter opens it in a split) |
   | `z` or ⌘Z | Undo |
   | `?` | List the keys |
 
-  A reply, Go and Snooze also mark the thread read.
-- **Touch.** Swipe a card right for Done and left to keep it unread; a long press
-  opens Snooze. On small screens the overlay is a bottom sheet.
+  Snooze also marks the thread read. Keep unread puts back a thread you wrote in.
+- **Touch.** Swipe a card's summary right for Done and left to keep it unread; a long
+  press opens Snooze. On small screens the overlay is a bottom sheet.
 - **Undo** reverses the last actions in order: read, snooze and Mark all read are
   reverted, and an archive waits 8 seconds before it happens (bb removes an archived
-  thread's worktree), so undoing it in time changes nothing. A sent reply can't be
+  thread's worktree), so undoing it in time changes nothing. A sent message can't be
   undone.
 - **Mark all read** clears the remaining updates and PR cards in one step; threads
   that need you stay in the deck.

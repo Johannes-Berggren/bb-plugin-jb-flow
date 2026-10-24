@@ -1,14 +1,16 @@
 // Catch up: unread threads one card at a time, like Slack's. The same deck runs
 // in the Catch up page and in an overlay (the command, the palette and the home
 // page open it). Which threads and in what order lives in catch-up-model.ts;
-// this file renders the deck and owns every side effect. Showing a card never
-// marks a thread read: only Done, a reply, Go and Snooze do.
+// this file renders the deck and owns every side effect. Each card embeds the
+// thread itself (bb's ThreadChat, with its composer). Showing it doesn't mark
+// the thread read; Done, Snooze and using the composer do, and Keep unread
+// undoes the composer's.
 import "./catch-up.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import type { z } from "zod";
 import {
-  Markdown,
+  ThreadChat,
   experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
   experimental_useSidebarThreads as useSidebarThreads,
   useBbNavigate,
@@ -26,22 +28,19 @@ import {
   bulkReadable,
   current,
   freshIds,
-  goText,
+  isBusy,
   needsYou,
   progress,
   pullFresh,
   record,
   recordBulk,
   requeueKept,
-  reseen,
   resumable,
   settle,
   startSession,
-  stepsFrom,
   stillWorking,
   summary,
   swipeOutcome,
-  togglePick,
   undo,
   undoBlocked,
   upcoming,
@@ -50,7 +49,6 @@ import {
   type Outcome,
   type Session,
   type Since,
-  type Steps,
 } from "./catch-up-model";
 import { ago } from "./palette-model";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
@@ -64,7 +62,7 @@ import { cn } from "@/lib/utils";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 type CardData = z.infer<(typeof rpcContract)["catch_up_card"]["output"]>;
-type Mode = "card" | "reply" | "snooze" | "help" | "confirm-all";
+type Mode = "card" | "snooze" | "help" | "confirm-all";
 type Strip = { id: number; text: string; undoable: boolean; error?: boolean };
 
 /** How long the undo line stays, and how long an archive waits for an undo before it happens. */
@@ -73,6 +71,9 @@ const UNDO_MS = 8_000;
 const errorText = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const short = (text: string) => (text.length > 40 ? `${text.slice(0, 39)}…` : text);
+/** In the card's embedded thread: its composer, buttons and menus keep their own keys. */
+const inChat = (element: Element | null) => element?.closest(".jf-catchup-chat") != null;
+const CHAT_CONTROLS = "input, textarea, select, button, a, [contenteditable='true'], [role='button'], [role='menuitem'], [role='option'], [role='tab']";
 
 // --- opening -------------------------------------------------------------------------
 
@@ -156,7 +157,7 @@ function loadCard(rpc: Rpc, threadId: string, updatedAt: number, since: number |
   return request;
 }
 
-function useCard(threadId: string | null, updatedAt: number, since: number | null): { card: CardData | null; failed: boolean } {
+function useCard(threadId: string | null, updatedAt: number, since: number | null): { card: CardData | null } {
   const rpc = useRpc<typeof rpcContract>();
   const key = threadId === null ? null : cardKey(threadId, updatedAt, since);
   const [loaded, setLoaded] = useState<{ key: string; card: CardData | null } | null>(null);
@@ -175,12 +176,12 @@ function useCard(threadId: string | null, updatedAt: number, since: number | nul
       live = false;
     };
   }, [key, rpc, since, threadId, updatedAt]);
-  if (threadId === null || key === null) return { card: null, failed: false };
+  if (threadId === null || key === null) return { card: null };
   const cached = cards.get(key);
-  if (cached) return { card: cached, failed: false };
-  if (loaded?.key === key) return { card: loaded.card, failed: loaded.card === null };
+  if (cached) return { card: cached };
+  if (loaded?.key === key) return { card: loaded.card };
   // A newer version is loading: keep the one on screen meanwhile.
-  return { card: latestCards.get(threadId) ?? null, failed: false };
+  return { card: latestCards.get(threadId) ?? null };
 }
 
 // --- scope, queue and badge ---------------------------------------------------------------
@@ -244,8 +245,11 @@ export function CatchUpOverlay({ flow, onClose }: { flow: FlowState | null; onCl
         hideCloseButton
         className="jf-catchup-dialog top-[8%] max-w-[720px] translate-y-0 gap-0 overflow-hidden p-0 sm:rounded-xl"
         onEscapeKeyDown={(event) => {
-          // Escape leaves a reply, snooze or help first; the deck handles that.
-          if (mode.current !== "card") event.preventDefault();
+          // Escape leaves the thread's composer, then snooze or help, before it closes.
+          if (inChat(document.activeElement)) {
+            event.preventDefault();
+            root.current?.focus();
+          } else if (mode.current !== "card") event.preventDefault();
         }}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
@@ -345,8 +349,7 @@ function CatchUpDeck({
 
   const item = active ? current(active) : null;
   const thread = item ? (liveById.get(item.threadId) ?? null) : null;
-  const { card, failed } = useCard(thread?.id ?? null, thread?.updatedAt ?? 0, item?.since ?? null);
-  const steps = useMemo(() => (card ? stepsFrom(card.move, card.report?.steps?.question ?? "") : null), [card]);
+  const { card } = useCard(thread?.id ?? null, thread?.updatedAt ?? 0, item?.since ?? null);
 
   const ahead = active ? upcoming(active, 2) : [];
   const aheadKey = ahead.map((entry) => entry.threadId).join(",");
@@ -371,28 +374,23 @@ function CatchUpDeck({
     },
     [rootRef],
   );
-  const [picked, setPicked] = useState<number[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  // A new card starts clean; a reply or snooze sheet belonged to the last one.
+  // A new card starts clean; a snooze sheet belonged to the last one.
   const itemKey = active ? `${active.index}:${item?.threadId ?? ""}` : "";
+  const [focusComposer, setFocusComposer] = useState(0);
+  // Sending from the card's composer starts the thread: Done then counts it as replied.
+  const [sentHere, setSentHere] = useState(false);
+  const busyAtDeal = useRef(false);
+  const threadBusy = thread !== null && isBusy(thread);
   useEffect(() => {
-    setPicked([]);
-    setNotice(null);
-    if (modeRef.current === "reply" || modeRef.current === "snooze") setMode("card");
+    busyAtDeal.current = threadBusy;
+    setSentHere(false);
+    setFocusComposer(0);
+    if (modeRef.current === "snooze") setMode("card");
+    // Only a new card resets this; threadBusy is read as of that moment.
   }, [itemKey, setMode]);
-  // What's on screen is what you've seen; a refresh while you read says so.
-  const shown = useRef<{ threadId: string; card: CardData } | null>(null);
-  const threadId = thread?.id ?? null;
-  const attentionAt = thread?.latestAttentionAt ?? 0;
   useEffect(() => {
-    if (card === null || threadId === null) return;
-    const before = shown.current;
-    if (before?.threadId === threadId && before.card === card) return;
-    shown.current = { threadId, card };
-    if (before?.threadId === threadId) setNotice("Updated with new activity.");
-    updateSession((current) => reseen(current, attentionAt));
-  }, [attentionAt, card, threadId]);
+    if (threadBusy && !busyAtDeal.current) setSentHere(true);
+  }, [threadBusy]);
 
   useEffect(() => {
     rootRef.current?.focus({ preventScroll: true });
@@ -423,41 +421,16 @@ function CatchUpDeck({
 
   const done = () => {
     if (!item || !thread) return;
-    if (thread.latestAttentionAt > item.seenAt) {
-      updateSession((current) => reseen(current, thread.latestAttentionAt));
-      setNotice("New activity since this card opened. Press → again to mark it read.");
-      return;
-    }
-    act("done");
-    say(`Marked “${short(title)}” read`);
+    act(sentHere ? "replied" : "done");
+    say(`Marked “${short(title)}” read`, !sentHere);
     actions.setRead(thread.id, true).catch(fail);
   };
   const keep = () => {
-    if (!item) return;
+    if (!item || !thread) return;
     act("kept");
-    say(`Kept “${short(title)}” unread`);
-  };
-  const send = async (text: string) => {
-    if (!thread || sending) return;
-    const threadId = thread.id;
-    setSending(true);
-    try {
-      await rpc.call("thread_reply", { threadId, text });
-    } catch (cause) {
-      setSending(false);
-      say(`Couldn't send: ${errorText(cause)}`, false, true);
-      return;
-    }
-    setSending(false);
-    act("replied");
-    say(`Sent “${short(text)}” to “${short(title)}”`, false);
-    actions.setRead(threadId, true).catch(() => undefined);
-  };
-  const sendPick = () => {
-    if (!steps) return;
-    const text = goText(steps, picked);
-    if (text === null) setNotice("Pick an option first (1–9).");
-    else void send(text);
+    say(`Kept “${short(title)}” unread`, false);
+    // bb marks a thread read once you use its composer; keeping it means unread.
+    if (!thread.isUnread) actions.setRead(thread.id, false).catch(fail);
   };
   const snooze = async (when: string) => {
     if (!thread) return;
@@ -559,7 +532,11 @@ function CatchUpDeck({
     if (event.nativeEvent.isComposing) return;
     const target = event.target as HTMLElement;
     if (event.key === "Escape") {
-      if (mode !== "card") {
+      if (inChat(target)) {
+        // Out of the thread's composer, back to the deck's keys.
+        event.preventDefault();
+        rootRef.current?.focus({ preventScroll: true });
+      } else if (mode !== "card") {
         event.preventDefault();
         event.stopPropagation();
         setMode("card");
@@ -567,6 +544,7 @@ function CatchUpDeck({
       return;
     }
     if (target.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (inChat(target) && target.closest(CHAT_CONTROLS)) return;
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -600,10 +578,8 @@ function CatchUpDeck({
       done();
     } else if (key === "ArrowLeft" || key === "u") {
       keep();
-    } else if (key === "g") {
-      sendPick();
     } else if (key === "r") {
-      setMode("reply");
+      setFocusComposer((count) => count + 1);
     } else if (key === "s") {
       setMode("snooze");
     } else if (key === "e") {
@@ -612,8 +588,6 @@ function CatchUpDeck({
       open(false);
     } else if (key === "O") {
       open(true);
-    } else if (/^[1-9]$/.test(key) && steps) {
-      setPicked((previous) => togglePick(steps, previous, Number(key)));
     } else {
       handled = false;
     }
@@ -733,31 +707,17 @@ function CatchUpDeck({
             key={`${active.index}:${thread.id}`}
             thread={thread}
             item={item}
-            card={card}
-            failed={failed}
+            since={card?.since}
             flow={flow}
             now={now}
-            steps={steps}
-            picked={picked}
-            onPick={(n) => setPicked((previous) => (steps ? togglePick(steps, previous, n) : previous))}
-            onSend={sendPick}
-            sending={sending}
             project={projectName(thread.projectId)?.name ?? null}
-            notice={notice}
+            sentHere={sentHere}
+            focusComposer={focusComposer}
             swipe={swipe}
-            next={ahead[0] ? (liveById.get(ahead[0].threadId)?.displayTitle ?? null) : null}
           />
         )}
       </div>
 
-      {item && thread && mode === "reply" ? (
-        <ReplyBox
-          title={title}
-          sending={sending}
-          onCancel={() => setMode("card")}
-          onSend={(text) => void send(text)}
-        />
-      ) : null}
       {item && thread && mode === "snooze" ? (
         <div className="jf-catchup-sheet" role="group" aria-label="Snooze until">
           <span className="jf-catchup-sheet-label">Snooze until</span>
@@ -797,7 +757,7 @@ function CatchUpDeck({
             <button type="button" className="jf-catchup-action" onClick={archive} title="Archive (E)">
               <kbd>E</kbd> Archive
             </button>
-            <button type="button" className="jf-catchup-action" onClick={() => setMode(mode === "reply" ? "card" : "reply")} title="Reply (R)">
+            <button type="button" className="jf-catchup-action" onClick={() => setFocusComposer((count) => count + 1)} title="Write in the thread (R)">
               <kbd>R</kbd> Reply
             </button>
             <button type="button" className="jf-catchup-action" onClick={() => open(false)} title="Open the thread (O; ⇧O in a split)">
@@ -849,220 +809,82 @@ function sinceLine(item: CatchUpItem, since: Since | undefined, now: number): st
 function CardView({
   thread,
   item,
-  card,
-  failed,
+  since,
   flow,
   now,
-  steps,
-  picked,
-  onPick,
-  onSend,
-  sending,
   project,
-  notice,
+  sentHere,
+  focusComposer,
   swipe,
-  next,
 }: {
   thread: PluginSidebarThread;
   item: CatchUpItem;
-  card: CardData | null;
-  failed: boolean;
+  since: Since | undefined;
   flow: FlowState | null;
   now: number;
-  steps: Steps | null;
-  picked: readonly number[];
-  onPick: (n: number) => void;
-  onSend: () => void;
-  sending: boolean;
   project: string | null;
-  notice: string | null;
+  sentHere: boolean;
+  focusComposer: number;
   swipe: Swipe;
-  next: string | null;
 }) {
   const { pullRequest } = useSidebarThreadPullRequest(thread.id);
   const prs = threadPrs(flow?.threadPrs[thread.id], pullRequest);
   const busy = thread.status === "active" || thread.status === "starting";
   const status = rowStatus(thread, busy, flow?.watching[thread.id], prs, runInfo(flow?.running[thread.id], now));
-  const since = item.since;
-  const merged = (flow?.threadPrs[thread.id] ?? []).filter((pr) => since !== null && (pr.mergedAt ?? 0) > since);
-  const [expanded, setExpanded] = useState(false);
-  const report = card?.report ?? null;
-  const reportFields = report
-    ? ([
-        ["Goal", report.goal],
-        ["Done", report.done],
-        ["Next", report.next],
-        ["Blocked", report.blocked],
-      ] as const).filter(([, value]) => value)
-    : [];
-  const sendLabel = steps ? goText(steps, picked) : null;
+  const lastRead = item.since;
+  const merged = (flow?.threadPrs[thread.id] ?? []).filter((pr) => lastRead !== null && (pr.mergedAt ?? 0) > lastRead);
+  // Open PRs first; merged and closed ones fold away (a long-running thread can have dozens).
+  const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
+  const [allPrs, setAllPrs] = useState(false);
+  const shownPrs = allPrs ? prs : open;
   return (
-    <article
-      className="jf-catchup-card"
-      data-tier={item.tier}
-      style={swipe.style}
-      data-swiping={swipe.dx !== 0 || undefined}
-      {...swipe.handlers}
-    >
+    <article className="jf-catchup-card" data-tier={item.tier} style={swipe.style} data-swiping={swipe.dx !== 0 || undefined}>
       {swipe.dx !== 0 ? (
         <span className="jf-catchup-swipe-hint" data-side={swipe.dx > 0 ? "done" : "kept"} aria-hidden="true">
           {swipe.dx > 0 ? "Read" : "Keep unread"}
         </span>
       ) : null}
-      <header className="jf-catchup-card-head">
-        <StatusIcon status={status} />
-        <div className="jf-catchup-titles">
-          <div className="jf-catchup-meta">
-            <span className={cn("jf-catchup-tier", needsYou(item.tier) && "jf-catchup-tier-needs")}>{TIER_LABEL[item.tier]}</span>
-            {project ? <span>{project}</span> : null}
-            <span>{ago(thread.latestAttentionAt, now)}</span>
+      {/* Swipes start on the summary; the thread below scrolls and selects as usual. */}
+      <div className="jf-catchup-summary" {...swipe.handlers}>
+        <header className="jf-catchup-card-head">
+          <StatusIcon status={status} />
+          <div className="jf-catchup-titles">
+            <div className="jf-catchup-meta">
+              <span className={cn("jf-catchup-tier", needsYou(item.tier) && "jf-catchup-tier-needs")}>{TIER_LABEL[item.tier]}</span>
+              {project ? <span>{project}</span> : null}
+              <span>{ago(thread.latestAttentionAt, now)}</span>
+            </div>
+            <h2 className="jf-catchup-title">{thread.displayTitle}</h2>
           </div>
-          <h2 className="jf-catchup-title">{thread.displayTitle}</h2>
-        </div>
-      </header>
-      <p className="jf-catchup-since">
-        {sinceLine(item, card?.since, now)}
-        {merged.length > 0 ? ` · ${merged.map((pr) => `#${pr.number} merged`).join(" · ")}` : ""}
-      </p>
-      {notice ? (
-        <p className="jf-catchup-notice" role="status">
-          {notice}
+        </header>
+        <p className="jf-catchup-since">
+          {sinceLine(item, since, now)}
+          {merged.length > 0 ? ` · ${merged.map((pr) => `#${pr.number} merged`).join(" · ")}` : ""}
         </p>
-      ) : null}
-      {item.tier === 0 ? (
-        <p className="jf-catchup-callout">
-          {thread.indicatorLabel ?? "Waiting for your answer"}. Press <kbd>O</kbd> to answer in the thread.
-        </p>
-      ) : item.tier === 1 ? (
-        <p className="jf-catchup-callout jf-catchup-callout-error">{thread.indicatorLabel ?? "The last turn failed"}. Open the thread to retry.</p>
-      ) : null}
-
-      <div className="jf-catchup-body">
-        {card === null ? (
-          failed ? (
-            <p className="jf-catchup-muted">Couldn't load the latest reply. Open the thread to read it.</p>
-          ) : (
-            <div className="jf-catchup-skeleton" aria-label="Loading" />
-          )
-        ) : (
-          <>
-            {reportFields.length > 0 ? (
-              <dl className="jf-catchup-report">
-                {reportFields.map(([label, value]) => (
-                  <div key={label} data-field={label.toLowerCase()}>
-                    <dt>{label}</dt>
-                    <dd>{value}</dd>
-                  </div>
-                ))}
-              </dl>
+        {sentHere ? (
+          <p className="jf-catchup-notice" role="status">
+            Sent. <kbd>→</kbd> marks it read and moves on; the agent keeps working.
+          </p>
+        ) : item.tier === 0 ? (
+          <p className="jf-catchup-callout">{thread.indicatorLabel ?? "Waiting for your answer"}. Answer in the thread below.</p>
+        ) : item.tier === 1 ? (
+          <p className="jf-catchup-callout jf-catchup-callout-error">{thread.indicatorLabel ?? "The last turn failed"}. Retry from the thread below.</p>
+        ) : null}
+        {prs.length > 0 ? (
+          <div className="jf-catchup-prs">
+            {shownPrs.length > 0 ? <PrList prs={shownPrs} compact /> : null}
+            {prs.length > open.length ? (
+              <button type="button" className="jf-catchup-link" onClick={() => setAllPrs((value) => !value)}>
+                {allPrs ? "Only open PRs" : `${plural(prs.length - open.length, "merged or closed PR")}`}
+              </button>
             ) : null}
-            {report?.doingNow ? <p className="jf-catchup-muted">Doing now: {report.doingNow}</p> : null}
-            {steps ? (
-              <div className="jf-catchup-steps" data-mode={steps.mode}>
-                {steps.question ? <p className="jf-catchup-steps-question">{steps.question}</p> : null}
-                <ol>
-                  {steps.items.map((step) => (
-                    <li key={step.n}>
-                      <button type="button" aria-pressed={picked.includes(step.n)} onClick={() => onPick(step.n)}>
-                        <kbd>{step.n}</kbd>
-                        <span className="jf-catchup-step-text">{step.text}</span>
-                        {step.recommended ? <span className="jf-catchup-step-tag">recommended</span> : null}
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-                <div className="jf-catchup-steps-send">
-                  <button type="button" className="jf-catchup-primary" disabled={sendLabel === null || sending} onClick={onSend}>
-                    {sending
-                      ? "Sending…"
-                      : steps.mode === "go"
-                        ? picked.length
-                          ? `Go with ${picked.join(", ")}`
-                          : "Go"
-                        : picked.length
-                          ? `Send ${picked[0]}`
-                          : "Pick one"}{" "}
-                    <kbd>G</kbd>
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {card.reply.trim() !== "" ? (
-              report ? (
-                <details className="jf-catchup-full" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-                  <summary>Full reply</summary>
-                  <Markdown content={card.reply} className="jf-catchup-markdown" />
-                </details>
-              ) : (
-                <div className={cn("jf-catchup-reply", expanded && "jf-catchup-reply-open")}>
-                  <Markdown content={card.reply} className="jf-catchup-markdown" />
-                  {!expanded ? (
-                    <button type="button" className="jf-catchup-more" onClick={() => setExpanded(true)}>
-                      Show more
-                    </button>
-                  ) : null}
-                </div>
-              )
-            ) : report === null ? (
-              <p className="jf-catchup-muted">No reply yet.</p>
-            ) : null}
-            {card.truncated ? <p className="jf-catchup-muted">The reply is longer; open the thread for the rest.</p> : null}
-          </>
-        )}
+          </div>
+        ) : null}
       </div>
-
-      {prs.length > 0 ? (
-        <div className="jf-catchup-prs">
-          <PrList prs={prs} compact />
-        </div>
-      ) : null}
-      {next ? <p className="jf-catchup-next">Next: {next}</p> : null}
+      <div className="jf-catchup-chat">
+        <ThreadChat threadId={thread.id} variant="compact" layout="contained" focusRequest={focusComposer || undefined} />
+      </div>
     </article>
-  );
-}
-
-function ReplyBox({ title, sending, onCancel, onSend }: { title: string; sending: boolean; onCancel: () => void; onSend: (text: string) => void }) {
-  const [text, setText] = useState("");
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => ref.current?.focus(), []);
-  const submit = () => {
-    if (text.trim() !== "") onSend(text.trim());
-  };
-  return (
-    <form
-      className="jf-catchup-sheet jf-catchup-replybox"
-      onSubmit={(event) => {
-        event.preventDefault();
-        submit();
-      }}
-    >
-      <textarea
-        ref={ref}
-        value={text}
-        maxLength={2000}
-        rows={3}
-        placeholder={`Reply to “${short(title)}”…`}
-        aria-label="Reply"
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            submit();
-          }
-        }}
-      />
-      <div className="jf-catchup-replybox-actions">
-        <span className="jf-catchup-muted">
-          <kbd>↵</kbd> send · <kbd>⇧↵</kbd> new line · <kbd>esc</kbd> cancel
-        </span>
-        <button type="button" className="jf-catchup-tool" onClick={onCancel}>
-          Cancel
-        </button>
-        <button type="submit" className="jf-catchup-primary" disabled={sending || text.trim() === ""}>
-          {sending ? "Sending…" : "Send"}
-        </button>
-      </div>
-    </form>
   );
 }
 
@@ -1123,9 +945,7 @@ function EndScreen({
 const KEYS: ReadonlyArray<[string, string]> = [
   ["→  D", "Done: mark read, next"],
   ["←  U", "Keep unread, next"],
-  ["1–9", "Pick next steps or an option"],
-  ["G", "Send the pick (go, go 1,3, or the option)"],
-  ["R", "Reply"],
+  ["R", "Write in the thread (Esc returns to these keys)"],
   ["S", "Snooze (or long-press a card)"],
   ["E", "Archive"],
   ["O  ↵", "Open the thread (⇧O or ⌘↵ in a split)"],

@@ -46,14 +46,15 @@ A UI feature, with no CLI, on while the **Catch up** setting is (the default). I
 through unread threads one card at a time: the **Catch up** page in the navigation,
 ⌥⇧C (*Catch up on unread threads*), ⌘K → *Catch up on unread threads*, or the line
 above *Your move* on the home page. Threads that need the user come first. Each card
-shows the agent's status report or last reply and what happened since the user last
-read the thread. `→` marks read, `←` keeps it unread, `1`–`9` then `g` answers next
-steps or a numbered choice, and `r`, `s`, `e`, `o` and `z` reply, snooze, archive,
-open and undo.
+shows what happened since the user last read the thread, then the thread itself with
+its composer, so they can read and answer in place. `→` marks read, `←` keeps it
+unread, `r` writes in the thread, and `s`, `e`, `o` and `z` snooze, archive, open and
+undo.
 
 When a user asks "what did I miss?" or wants to clear unread threads, point them here.
 Hand-backs that end with a status report (Goal/Done/Next/Blocked plus Next steps) read
-best in Catch up: the report fills the card and its steps become the choices.
+well in Catch up: the latest reply is at the bottom of the card's thread, and its next
+steps show under *Your next move* in the composer.
 
 ## Snooze
 
