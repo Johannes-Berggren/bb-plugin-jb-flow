@@ -1,6 +1,6 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
-import { createThreadStatus, parseStatusReport, threadStatusSchema } from "./thread-status";
+import { createThreadStatus, threadStatusSchema } from "./thread-status";
 import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
@@ -13,7 +13,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
 import { createAwaiting, waitsOnOthers } from "./awaiting";
-import { parseDecisionOptions } from "./decisions";
+import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
@@ -212,6 +212,7 @@ export const rpcContract = defineRpcContract({
   decision_options: {
     input: z.object({ threadId: z.string() }),
     output: z.object({
+      mode: z.enum(["go", "choice"]),
       options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
     }),
   },
@@ -972,10 +973,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     },
     decision_options: async ({ threadId }) => {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      const text = output.output ?? "";
-      // A status report's next steps are offered in the thread monitor; don't repeat them here.
-      if ((await settings.get()).threadMonitor && parseStatusReport(text, 0)?.steps) return { options: [] };
-      return { options: parseDecisionOptions(text) };
+      return nextMove(output.output ?? "");
     },
     thread_reply: async ({ threadId, text }) => {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });

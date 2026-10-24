@@ -1,6 +1,10 @@
 // Finds the numbered options an agent ends its message with ("1. … 2. …"),
 // so the composer can offer them as one-click replies.
+import { parseStatusReport } from "./thread-status.ts";
+
 export type DecisionOption = { n: number; text: string; recommended: boolean };
+/** "go": steps to run, answered with "go" or "go 1,3". "choice": answered with one number. */
+export type DecisionMode = "go" | "choice";
 
 const plain = (text: string) =>
   text
@@ -12,6 +16,8 @@ const plain = (text: string) =>
 // Words in the line before a list that make it a choice for the user.
 const CHOICE_INTRO =
   /\?\s*\**\s*$|\b(options?|alternatives?|choose|choices?|pick|which|prefer|either|decide|decision|want me to|should (i|we)|shall (i|we)|how (should|do) (i|we)|what (should|do) (i|we)|reply|recommended|your call|ways? (forward|to)|approaches|paths?)\b/i;
+// "Reply go for all, or go 1,3", "Reply `go` for the next slice": the list is answered with go.
+const GO_REPLY = /\b(reply|say|write|type|send)\s+[*_`"“']*go\b|\bgo[*_`]*\s+(for all|\d)/i;
 // Text after a list that asks for one of its numbers.
 const CHOICE_OUTRO =
   /\b(reply|answer|respond|write|type|say|send)\b[^.\n]{0,40}\b(number|option|one of)\b|\bpick (one|a number|an option)\b|\bwhich (one|option)\b|\bgo\**\s+(for all|\d)/i;
@@ -64,4 +70,22 @@ export function parseDecisionOptions(message: string, { strict = true }: { stric
   const outro = lines.slice(end + 1).join("\n");
   if (strict && !recommended && !CHOICE_INTRO.test(intro) && !CHOICE_OUTRO.test(outro)) return [];
   return options;
+}
+
+/**
+ * What "Your next move" offers for a thread's last reply: a status report's
+ * next steps, or else a trailing numbered choice, and whether it's answered
+ * with "go" or with a number.
+ */
+export function nextMove(message: string): { mode: DecisionMode; options: DecisionOption[] } {
+  const steps = parseStatusReport(message, 0)?.steps;
+  if (steps) {
+    return {
+      mode: steps.mode,
+      options: steps.items.map((text, index) => ({ n: index + 1, text, recommended: steps.recommended.includes(index + 1) })),
+    };
+  }
+  const options = parseDecisionOptions(message);
+  const tail = message.trim().split("\n").slice(-30).join("\n");
+  return { mode: options.length > 0 && GO_REPLY.test(tail) ? "go" : "choice", options };
 }

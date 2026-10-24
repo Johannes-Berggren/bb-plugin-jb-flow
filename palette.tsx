@@ -249,7 +249,8 @@ function target(thread: ThreadInfo | null, sidebar: PluginSidebarThread | undefi
   };
 }
 
-type Reply = { n: number; text: string; recommended: boolean };
+/** `answer` is what picking it sends: the number, or "go 2" for a go-list. */
+type Reply = { n: number; text: string; recommended: boolean; answer: string };
 
 /** The numbered choices a thread's last reply offers, for one-key answers. */
 function useReplies(threadId: string | null): Reply[] {
@@ -260,7 +261,10 @@ function useReplies(threadId: string | null): Reply[] {
     let live = true;
     rpc.call("decision_options", { threadId }).then(
       (result) => {
-        if (live) setReplies({ threadId, options: result.options });
+        if (live) {
+          const options = result.options.map((option) => ({ ...option, answer: result.mode === "go" ? `go ${option.n}` : String(option.n) }));
+          setReplies({ threadId, options });
+        }
       },
       () => undefined,
     );
@@ -496,7 +500,7 @@ export function Palette({
         detail: reply.recommended ? "Recommended" : undefined,
         keywords: "reply answer choose option decision",
         icon: <Icon name="CornerDownLeft" />,
-        run: () => rpc.call("thread_reply", { threadId: id, text: String(reply.n) }),
+        run: () => rpc.call("thread_reply", { threadId: id, text: reply.answer }),
       });
     }
     const snoozed = flow?.snoozes[id];
@@ -640,7 +644,7 @@ export function Palette({
           keywords: "reply answer choose option decision",
           icon: <Icon name="CornerDownLeft" />,
           thread: true,
-          run: () => rpc.call("thread_reply", { threadId: here.id, text: String(reply.n) }),
+          run: () => rpc.call("thread_reply", { threadId: here.id, text: reply.answer }),
         });
       }
       entries.push(

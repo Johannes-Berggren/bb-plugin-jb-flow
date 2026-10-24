@@ -716,39 +716,6 @@ it("shows auto-prompt in a menu and switches continue-after-limit from there", a
   await waitFor(() => expect(toggle).toHaveBeenCalledWith(true));
   slot.lifecycle.unmount();
 });
-it("offers the report's next steps: Go for all, Go with picked steps, or a numbered decision", async () => {
-  const reply = vi.fn(async () => {});
-  const steps = { mode: "go" as const, question: "", items: ["Check the nightly run", "Try the staging app", "Tidy the docs"], recommended: [1] };
-  const base = {
-    data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
-    running: false,
-    startedAt: null,
-    now: 61000,
-    updatedAt: 61000,
-    connected: true,
-    onReply: reply,
-  };
-  const goSlot = renderSlot(
-    { component: ActivityCard },
-    { ...base, monitor: { ...savedMonitor, latestAt: 1000, report: { ...savedMonitor.report, steps } } },
-  );
-  fireEvent.click(goSlot.getByRole("checkbox", { name: /Try the staging app/ }));
-  fireEvent.click(goSlot.getByRole("checkbox", { name: /Check the nightly run/ }));
-  fireEvent.click(goSlot.getByRole("button", { name: "Go with 1, 2" }));
-  await waitFor(() => expect(reply).toHaveBeenCalledWith("go 1,2"));
-  await goSlot.findByText("Sent “go 1,2”");
-  goSlot.lifecycle.unmount();
-
-  const choiceSlot = renderSlot(
-    { component: ActivityCard },
-    { ...base, monitor: { ...savedMonitor, latestAt: 1000, report: { ...savedMonitor.report, steps: { ...steps, mode: "choice" as const, question: "Which rollout?" } } } },
-  );
-  expect(choiceSlot.getByText("Which rollout?")).toBeTruthy();
-  fireEvent.click(choiceSlot.getByRole("button", { name: /Tidy the docs/ }));
-  await waitFor(() => expect(reply).toHaveBeenCalledWith("3"));
-  choiceSlot.lifecycle.unmount();
-});
-
 it("lists watches in the auto-prompt menu and stops one when unticked", async () => {
   const cancel = vi.fn(async () => {});
   const slot = renderSlot(

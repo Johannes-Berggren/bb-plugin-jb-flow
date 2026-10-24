@@ -128,3 +128,5 @@ Every PR a thread opens with `gh pr create` is linked to it automatically, in an
 ## Decision buttons
 
 When your message ends with a numbered list of options (one line each), the user sees them as one-click reply buttons above the composer, and an option marked "(recommended)" is highlighted. The reply is just the number.
+
+When the list is steps for you to run and ends with "Reply **go** for all, or **go 1,3**", the user ticks steps and presses Go instead. The reply is `go` for all of them, or `go` followed by the picked numbers.

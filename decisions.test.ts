@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseDecisionOptions } from "./decisions.ts";
+import { nextMove, parseDecisionOptions } from "./decisions.ts";
 
 test("parses a trailing decision list with a recommendation", () => {
   const options = parseDecisionOptions(
@@ -53,4 +53,30 @@ test("a list is a choice when the intro asks, an option is recommended, or the o
 test("next-step lists you pick from with go are choices", () => {
   assert.equal(parseDecisionOptions("> **Recommended:** 1\n> 1. Check the nightly run\n> 2. Try the staging app\n>\n> Reply **go** for all, or **go 1,3**.").length, 2);
   assert.equal(parseDecisionOptions("> **Reply `go` for the next slice:**\n>\n> 1. Slim the reads\n> 2. Run the probe").length, 2);
+});
+
+test("next move: a status report's steps, answered with go or a number", () => {
+  const head = "**Goal:** Ship it\n**Done:** Merged the fix\n\n### Next steps\n> [!TIP]\n";
+  const go = nextMove(
+    head + "> **Path forward:** check it, then tidy\n> 1. Check the nightly run (recommended)\n> 2. Tidy the docs\n>\n> Reply **go** for all, or **go 1,3**.\n\n_2026-10-24 11:30 CEST_",
+  );
+  assert.deepEqual(go, {
+    mode: "go",
+    options: [
+      { n: 1, text: "Check the nightly run", recommended: true },
+      { n: 2, text: "Tidy the docs", recommended: false },
+    ],
+  });
+  const choice = nextMove(head + "> **Decision needed:** which rollout?\n> 1. 10% today (recommended)\n> 2. Everyone on Monday\n>\n> Reply with the number.");
+  assert.equal(choice.mode, "choice");
+  assert.deepEqual(choice.options.map((option) => option.text), ["10% today", "Everyone on Monday"]);
+});
+
+test("next move without a report: a trailing list, go-list when it asks for go", () => {
+  assert.equal(nextMove("> **Reply `go` for the next slice:**\n>\n> 1. Slim the reads\n> 2. Run the probe").mode, "go");
+  assert.equal(nextMove("Two ways forward:\n1. Merge now\n2. Wait for review\n\nReply **go** for all, or **go 2**.").mode, "go");
+  const choice = nextMove("Which should I do?\n1. Merge now\n2. Wait for review");
+  assert.equal(choice.mode, "choice");
+  assert.equal(choice.options.length, 2);
+  assert.deepEqual(nextMove("All done, the PR is merged."), { mode: "choice", options: [] });
 });
