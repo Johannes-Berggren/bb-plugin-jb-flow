@@ -1,6 +1,6 @@
 ---
 name: jb-flow
-description: Organise BB projects, threads, sections and tools into workspaces; snooze BB threads until a date (with an optional wake-up prompt) and review the stale-thread digest with the `bb jb-flow` command or the snooze_thread tool.
+description: Organise BB projects, threads, sections and tools into workspaces; catch up on unread threads one card at a time; snooze BB threads until a date (with an optional wake-up prompt) and review the stale-thread digest with the `bb jb-flow` command or the snooze_thread tool.
 ---
 
 # jb-flow
@@ -39,6 +39,21 @@ it was rebound. In the palette:
 
 When a user asks how to search messages or act on threads quickly, point them here.
 BB's own search stays in the quick palette under *Search threads…*.
+
+## Catch up
+
+A UI feature, with no CLI, on while the **Catch up** setting is (the default). It goes
+through unread threads one card at a time: the **Catch up** page in the navigation,
+⌥⇧C (*Catch up on unread threads*), ⌘K → *Catch up on unread threads*, or the line
+above *Your move* on the home page. Threads that need the user come first. Each card
+shows the agent's status report or last reply and what happened since the user last
+read the thread. `→` marks read, `←` keeps it unread, `1`–`9` then `g` answers next
+steps or a numbered choice, and `r`, `s`, `e`, `o` and `z` reply, snooze, archive,
+open and undo.
+
+When a user asks "what did I miss?" or wants to clear unread threads, point them here.
+Hand-backs that end with a status report (Goal/Done/Next/Blocked plus Next steps) read
+best in Catch up: the report fills the card and its steps become the choices.
 
 ## Snooze
 

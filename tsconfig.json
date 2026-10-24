@@ -62,6 +62,10 @@
     "palette.tsx",
     "palette-model.test.ts",
     "palette.ui.test.tsx",
-    "lanes.ts"
+    "lanes.ts",
+    "catch-up-model.ts",
+    "catch-up-model.test.ts",
+    "catch-up.tsx",
+    "catch-up.ui.test.tsx"
   ]
 }

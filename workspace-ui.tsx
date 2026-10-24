@@ -39,6 +39,9 @@ import {
 import { WORKSPACE_BAR_EVENT } from "./workspace-topbar";
 import "./workspaces.css";
 
+const isCatchUpPanel = (item: ExperimentalSidebarNavigationItem) =>
+  item.action.kind === "open-plugin-panel" && item.action.pluginId === "jb-flow" && item.action.panelId === "catch-up";
+
 function NavItem({
   item,
   projectId,
@@ -77,8 +80,8 @@ function NavItem({
       <SidebarNavigationIcon icon={item.icon} className="size-4" />
       <span>{item.label}</span>
       {item.badge && (
-        <span className="jf-workspace-badge" title={item.badge.label}>
-          ●
+        <span className="jf-workspace-badge" title={item.badge.label} data-tone={item.badge.tone ?? "neutral"}>
+          {item.badge.count !== undefined ? (item.badge.count > 99 ? "99+" : item.badge.count) : (item.badge.text ?? "●")}
         </span>
       )}
     </button>
@@ -268,6 +271,7 @@ function WorkspaceNavigationInner(
   const selected = useSelectedWorkspace();
   const { items, actions } = useSidebarNavigation();
   const { projects } = useSidebarThreads();
+  const catchUpOn = useSettings().values?.catchUp === true;
   const [more, setMore] = useState(false);
   const active = state.workspaces.find(
     (workspace) => workspace.id === selected,
@@ -275,8 +279,11 @@ function WorkspaceNavigationInner(
   const projectId = active?.projectIds.find((id) =>
     projects.some((project) => project.id === id),
   );
-  const scoped = items.filter((item) =>
-    pluginInWorkspace(item.pluginId, selected, state),
+  const scoped = items.filter(
+    (item) =>
+      pluginInWorkspace(item.pluginId, selected, state) &&
+      // bb's own rail still lists the panel (a panel can't hide itself); this list can.
+      (catchUpOn || !isCatchUpPanel(item)),
   );
   return (
     <div className="jf-workspaces">

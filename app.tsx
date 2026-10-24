@@ -92,6 +92,8 @@ import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
+import { CatchUpHomeEntry, CatchUpOverlay, CatchUpPage, useCatchUpBadge, useCatchUpTrigger } from "./catch-up";
+import { CATCH_UP_EVENT } from "./catch-up-model";
 
 const DAY_MS = 86_400_000;
 
@@ -434,6 +436,21 @@ function PaletteHost() {
 function PaletteWithFlow(props: { onClose: () => void; shortcut: Parameters<typeof Palette>[0]["shortcut"] }) {
   const { state } = useFlowState();
   return <Palette {...props} flow={state} />;
+}
+
+/** Catch up's overlay: mounted once per window, rendered only while open. */
+function CatchUpHost() {
+  const enabled = useSettings().values?.catchUp === true;
+  useEffect(() => {
+    catchUpEnabled = enabled;
+  }, [enabled]);
+  const { open, close } = useCatchUpTrigger(enabled);
+  return open ? <CatchUpWithFlow onClose={close} /> : null;
+}
+
+function CatchUpWithFlow({ onClose }: { onClose: () => void }) {
+  const { state } = useFlowState();
+  return <CatchUpOverlay flow={state} onClose={onClose} />;
 }
 
 /** Hosts dialogs that command-palette commands open (they can't render UI themselves). */
@@ -2294,6 +2311,8 @@ function MigrationSettings() {
 
 /** RPC client for command-palette handlers, which run outside React. */
 let commandRpc: ReturnType<typeof useRpc<typeof rpcContract>> | null = null;
+/** The Catch up setting, for the command's availability check (it can't use hooks). */
+let catchUpEnabled = false;
 const SNOOZE_EVENT = "jb-flow:snooze";
 
 function FocusReporter() {
@@ -2526,6 +2545,20 @@ export default definePluginApp((app) => {
       },
     }],
   });
+  app.slots.navPanel({
+    id: "catch-up",
+    title: "Catch up",
+    icon: "MailOpen",
+    path: "catch-up",
+    component: () => {
+      const { state } = useFlowState();
+      return <CatchUpPage flow={state} />;
+    },
+    experimental_useBadge: () => {
+      const { state } = useFlowState();
+      return useCatchUpBadge(state, useSettings().values?.catchUp === true);
+    },
+  });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
   app.slots.experimental_sidebarNavigation({
@@ -2575,12 +2608,22 @@ export default definePluginApp((app) => {
   });
   app.slots.experimental_appOverlay({ id: "command-host", component: CommandHost });
   app.slots.experimental_appOverlay({ id: "palette", component: PaletteHost });
+  app.slots.experimental_appOverlay({ id: "catch-up", component: CatchUpHost });
   const inThread = ({ threadId }: { threadId: string | null }) => threadId !== null;
   app.commands.register({
     id: "palette",
     title: "Open JB Flow palette",
     run: () => {
       window.dispatchEvent(new CustomEvent(PALETTE_EVENT));
+    },
+  });
+  app.commands.register({
+    id: "catch-up",
+    title: "Catch up on unread threads",
+    defaultShortcut: { key: "c", alt: true, shift: true },
+    isAvailable: () => catchUpEnabled,
+    run: () => {
+      window.dispatchEvent(new CustomEvent(CATCH_UP_EVENT));
     },
   });
   app.commands.register({
@@ -2685,7 +2728,10 @@ export default definePluginApp((app) => {
   app.slots.homepageSection({
     id: "your-move",
     title: "Your move",
-    component: YourMoveSection,
+    component: () => {
+      const { state } = useFlowState();
+      return <YourMoveSection lead={<CatchUpHomeEntry flow={state} />} />;
+    },
   });
   app.slots.homepageSection({
     id: "stale-digest",

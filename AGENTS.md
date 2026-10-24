@@ -25,7 +25,7 @@ If a feature needs data like this, add a setting or a JSON config key and leave 
   messages to threads, or runs on a schedule against external services sits **behind a setting** that turns it
   off. With it off, bb must look and behave exactly as without the plugin.
 - Which of those are on by default is the maintainer's product decision. Today: restyle, thread monitor,
-  workspaces, the ⌘K palette and expanded plan reviews are on; auto-continue (spends usage quota) and status report at hand-back
+  workspaces, the ⌘K palette, Catch up and expanded plan reviews are on; auto-continue (spends usage quota) and status report at hand-back
   (changes every thread's replies) are off. Don't flip a default
   without asking. Anything that spends money or quota, or messages a thread unprompted, starts off.
 - Credential handling, native helpers and anything macOS-only belong in a separate plugin, not here.

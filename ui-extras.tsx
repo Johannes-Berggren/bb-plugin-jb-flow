@@ -551,7 +551,8 @@ export { DecisionChips } from "./decision-choices";
 
 // --- Your move (homepage) ---------------------------------------------------------------
 
-export function YourMoveSection() {
+/** `lead` sits above the list (the Catch up line), whatever the list shows. */
+export function YourMoveSection({ lead = null }: { lead?: ReactNode } = {}) {
   const { state: workspaceState } = useWorkspaces();
   const selectedWorkspace = useSelectedWorkspace();
   const { threads: workspaceThreads } = useSidebarThreads();
@@ -565,17 +566,18 @@ export function YourMoveSection() {
   useEffect(load, [load]);
   // Answered threads drop off without leaving the page.
   useRealtime("jb-flow-changed", load);
-  if (items === null) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (items === null) return <>{lead}<p className="text-sm text-muted-foreground">Loading…</p></>;
   const scopedItems = items.filter((item) => {
     const thread = workspaceThreads.find((thread) => thread.id === item.threadId);
     return selectedWorkspace === null || (thread !== undefined && inWorkspace(thread, selectedWorkspace, workspaceState, workspaceThreads));
   });
-  if (scopedItems.length === 0) return <p className="text-sm text-muted-foreground">You’re all caught up.</p>;
+  if (scopedItems.length === 0) return <>{lead}<p className="text-sm text-muted-foreground">No decisions waiting on you.</p></>;
   const now = Date.now();
   const stale = scopedItems.filter((item) => now - item.since > 3 * 86_400_000).length;
   const shown = showAll ? scopedItems : scopedItems.slice(0, 8);
   return (
     <div className="jf-home jf-your-move space-y-2">
+      {lead}
       <p className="text-xs text-muted-foreground">
         {scopedItems.length} thread{scopedItems.length === 1 ? "" : "s"} where the agent handed the next step to you, oldest first
         {stale > 0 ? ` · ${stale} waiting 3+ days` : ""}.

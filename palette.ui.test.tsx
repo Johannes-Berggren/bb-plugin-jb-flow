@@ -7,6 +7,7 @@ import type { FlowState } from "./server";
 import type { WorkspaceState } from "./workspaces";
 import { selectWorkspace, setWorkspacesEnabled } from "./workspace-client";
 import { forgetPaletteQuery } from "./palette";
+import { CATCH_UP_EVENT } from "./catch-up-model";
 
 const NOW = Date.now();
 
@@ -450,5 +451,32 @@ describe("palette preview", () => {
     fireEvent.change(input, { target: { value: ">" } });
     expect(await within(pane).findByText("Tips")).toBeTruthy();
     vi.unstubAllGlobals();
+  });
+
+  it("offers Catch up with the unread count while it's on, and opens it", async () => {
+    const unread = [
+      thread("a", "Fix billing export", { hasPendingInteraction: true, isUnread: true }),
+      thread("c", "Mail templates", { isUnread: true }),
+    ];
+    const off = await mount({ threads: unread });
+    let input = await openPalette(off);
+    fireEvent.change(input, { target: { value: "catch up" } });
+    expect(options(off).some((row) => row.includes("Catch up on unread threads"))).toBe(false);
+    cleanup();
+
+    const slot = await mount({ threads: unread, settings: { catchUp: true } });
+    input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "catch up" } });
+    const row = await waitFor(() => {
+      const found = slot.getAllByRole("option").find((option) => option.textContent?.includes("Catch up on unread threads"));
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    expect(row.textContent).toContain("2 unread · 1 needs you");
+    const opened = vi.fn();
+    window.addEventListener(CATCH_UP_EVENT, opened);
+    fireEvent.click(row);
+    await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+    window.removeEventListener(CATCH_UP_EVENT, opened);
   });
 });
