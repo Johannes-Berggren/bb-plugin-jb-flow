@@ -110,6 +110,38 @@
 .jf-choice-spinner {
   animation: jf-choice-spin 1.2s linear infinite;
 }
+/* Go-list: picked steps keep the selected look; Go sits under the list. */
+.jf-choices-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.jf-choices-go {
+  padding: 4px 14px;
+  border: 1px solid var(--primary);
+  border-radius: 7px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.jf-choices-go:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+}
+.jf-choices-go:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.jf-choices-go:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
 .jf-choices-error {
   margin: 6px 3px 0;
   font-size: 11px;

@@ -2665,16 +2665,17 @@ export default definePluginApp((app) => {
     description: "Per-project buttons for the thread side panel.",
     component: RepoCommandsSettings,
   });
+  // Banners render in registration order: the reply choices sit above the monitor.
+  app.composer.customize({
+    id: "decision-chips",
+    banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
+  });
   app.composer.customize({
     id: "live-activity",
     banners: [{ id: "live-activity", chrome: "bare", component: () => {
       const { state } = useFlowState();
       return <LiveActivityBanner runningSince={state?.running ?? {}} trackedPrs={state?.threadPrs ?? {}} watches={state?.watching ?? {}} />;
     } }],
-  });
-  app.composer.customize({
-    id: "decision-chips",
-    banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
   });
   app.slots.homepageSection({
     id: "unreleased",

@@ -330,6 +330,18 @@ describe("palette thread actions", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(archive).toHaveBeenCalled());
   });
+
+  it("answers a go-list step with go and its number", async () => {
+    const slot = await mount({
+      rpc: { decision_options: () => ({ mode: "go", options: [{ n: 1, text: "Ship it", recommended: true }, { n: 2, text: "Tidy the docs", recommended: false }] }) },
+    });
+    const input = await openPalette(slot);
+    fireEvent.keyDown(input, { key: "Tab" });
+    fireEvent.change(input, { target: { value: "reply" } });
+    await waitFor(() => expect(options(slot)[0]).toContain("Reply 1: Ship it"));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "thread_reply")?.input).toEqual({ threadId: "a", text: "go 1" }));
+  });
 });
 
 describe("palette scopes and memory", () => {

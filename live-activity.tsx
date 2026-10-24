@@ -395,77 +395,6 @@ function Task({ task, now }: { task: ActivityTask; now: number }) {
   );
 }
 
-type ReportSteps = NonNullable<NonNullable<ThreadStatus["report"]>["steps"]>;
-
-/**
- * The report's next steps as actions: tick steps and Go ("go" or "go 1,3"),
- * or, for a decision, one button per option that sends its number.
- */
-function NextSteps({ steps, onReply }: { steps: ReportSteps; onReply: (text: string) => Promise<void> }) {
-  const [picked, setPicked] = useState<number[]>([]);
-  const [sent, setSent] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const send = async (text: string) => {
-    setSending(true);
-    setError(null);
-    try {
-      await onReply(text);
-      setSent(text);
-    } catch {
-      setError("Could not send. Try again.");
-    } finally {
-      setSending(false);
-    }
-  };
-  const goText = picked.length ? `go ${[...picked].sort((a, b) => a - b).join(",")}` : "go";
-  return (
-    <div className="jf-next" data-mode={steps.mode} data-sent={sent !== null}>
-      {steps.question && <p className="jf-next-question">{steps.question}</p>}
-      <ol>
-        {steps.items.map((item, index) => {
-          const n = index + 1;
-          const recommended = steps.recommended.includes(n);
-          return (
-            <li key={n} data-recommended={recommended}>
-              {steps.mode === "go" ? (
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={picked.includes(n)}
-                    disabled={sent !== null || sending}
-                    onChange={(event) =>
-                      setPicked((current) => (event.target.checked ? [...current, n] : current.filter((value) => value !== n)))
-                    }
-                  />
-                  <span className="jf-next-n">{n}</span>
-                  <span className="jf-next-text">{item}</span>
-                  {recommended && <span className="jf-next-tag">recommended</span>}
-                </label>
-              ) : (
-                <button type="button" disabled={sent !== null || sending} onClick={() => void send(String(n))}>
-                  <span className="jf-next-n">{n}</span>
-                  <span className="jf-next-text">{item}</span>
-                  {recommended && <span className="jf-next-tag">recommended</span>}
-                </button>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-      <div className="jf-next-actions">
-        {steps.mode === "go" && sent === null && (
-          <button type="button" className="jf-monitor-update" disabled={sending} onClick={() => void send(goText)}>
-            {sending ? "Sending…" : picked.length ? `Go with ${[...picked].sort((a, b) => a - b).join(", ")}` : "Go"}
-          </button>
-        )}
-        {sent !== null && <span className="jf-next-sent">Sent “{sent}”</span>}
-        {error && <span role="alert">{error}</span>}
-      </div>
-    </div>
-  );
-}
-
 /**
  * Everything that will prompt this thread on its own, behind one quiet
  * "Auto-prompt" control: continue after a usage limit (a switch), and each
@@ -575,13 +504,10 @@ export function ActivityCard({
   onToggleAutoContinue,
   watches = [],
   onCancelWatch,
-  onReply,
 }: {
   /** CI/review watches and release waits that will message this thread. */
   watches?: readonly { kind: "ci" | "release"; key: string; label: string }[];
   onCancelWatch?: (watch: { kind: "ci" | "release"; key: string }) => Promise<void>;
-  /** Sends a reply to the thread ("go", "go 1,3", or an option number). */
-  onReply?: (text: string) => Promise<void>;
   /** Per-thread "continue after a usage-limit reset" (null while loading). */
   autoContinue?: { enabled: boolean; scheduledAt: number | null } | null;
   onToggleAutoContinue?: (enabled: boolean) => Promise<void>;
@@ -788,10 +714,6 @@ export function ActivityCard({
                       </div>
                     ))}
                 </dl>
-                {/* The report is the agent's latest word: offer its next steps. */}
-                {!active && monitor.report.steps && monitor.latestAt <= monitor.report.capturedAt + 60_000 && onReply && (
-                  <NextSteps key={monitor.replyHash} steps={monitor.report.steps} onReply={onReply} />
-                )}
                 {expanded && monitor.report.milestones.length > 0 && (
                   <div className="jf-monitor-milestones">
                     {monitor.report.milestones.map((milestone, index) => (
@@ -1168,9 +1090,6 @@ export function LiveActivityBanner({
       }
       monitor={monitor?.snapshot}
       monitorStale={monitor?.stale}
-      onReply={async (text) => {
-        await rpc.call("thread_reply", { threadId, text });
-      }}
       autoContinue={wakeups.state?.autoContinue ?? null}
       onToggleAutoContinue={wakeups.toggle}
       watches={wakeups.state?.watches ?? []}

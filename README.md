@@ -167,10 +167,9 @@ as a quiet summary of the agent's last status report: **Done**, **Next**, **Goal
 bars and context use under **Details**. When the report is out of date (the agent replied since, it's over 6 hours
 old, or there is none), the header says so and offers **Update status**; otherwise a small **Refresh** does the same.
 
-If the report ends with numbered **Next steps** (the built-in prompt asks for a recommended path forward in a callout), they appear as a checklist with **Go**: Go alone sends `go`, and with
-steps ticked it sends `go 1,3`. A **Decision needed** list shows one button per option, which sends its number, and a
-**Doing now** line shows what the agent is already doing. The separate reply cards above the composer stay hidden for
-that message. **Auto-prompt** in its footer (with a count, or "off") opens a menu of everything that will message the thread on
+If the report ends with numbered **Next steps** (the built-in prompt asks for a recommended path forward in a callout),
+they appear in **Your next move** above the monitor (see Decision buttons), and a **Doing now** line shows what the
+agent is already doing. **Auto-prompt** in its footer (with a count, or "off") opens a menu of everything that will message the thread on
 its own: continuing after a usage limit resets, and each CI/review watch and release wait (see Watchers). Untick one
 to stop it.
 
@@ -299,7 +298,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - Threads whose PRs are all merged or closed go into a **ready to archive** group, with **Archive all**. Threads waiting on a release or CI, or in Priority, are left out.
 
 ### Decisions and "Your move"
-- **Decision buttons:** when an agent's last message ends with numbered options, they appear as one-click replies above the composer. The recommended one is highlighted.
+- **Decision buttons:** when an agent's last message ends with numbered options, they appear under **Your next move** above the composer and the thread monitor. The recommended one is highlighted. A decision sends the option's number in one click. A list of steps to run with go (a status report's **Next steps**, or a list ending "Reply go for all, or go 1,3") lets you tick steps, then **Go** sends `go`, or `go 1,3` with steps ticked.
 - **Leftover worktrees:** bb removes a thread's worktree when it's archived, but extra checkouts an agent adds next to it (cross-repo work) and failed teardowns stay on disk. A weekly scan (Mondays 08:00) lists them under the stale digest with their PR state, uncommitted changes and node_modules, plus a button that deletes the merged, clean ones. Also `bb jb-flow leftovers`.
 - **Your move:** a home-page section lists threads whose agent handed the next step to you, oldest first. Threads waiting 3+ days are flagged, and each has Snooze 3d and Archive. Also `bb jb-flow your-move`.
 - **Unreleased:** a home-page section (above Your move) lists the PRs merged into the selected project's default branch that haven't been released yet, newest first, with author, age and a compare link. If the repo has a `main` branch next to its default branch (`dev`), unreleased means on `dev` but not yet on `main`; otherwise it means merged since the latest release or `v*` tag. Cached for 5 minutes; Refresh reads GitHub again.
