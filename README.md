@@ -324,7 +324,6 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - When it's due, it goes back to its previous section and is marked unread. If a note was set, the note is sent as a prompt.
 - `<when>` accepts `2h`, `3d`, `1w`, `tomorrow`, `mon`…`sun`, `next-week`, or `YYYY-MM-DD[THH:MM]`.
 - Unsnoozing puts the thread back in the section it came from.
-- Works with the [Focus Board](https://github.com/cristoslc/bb-plugin-focus-board) plugin when it's installed. A jb-flow snooze also snoozes the card on the board, and a snooze set on the board moves the thread to Snoozed here within two minutes. Unsnoozing on either side clears both.
 
 ### Stale-thread digest
 - A home page section listing unsectioned threads idle for more than N days (default 7), each with a one-line summary.
