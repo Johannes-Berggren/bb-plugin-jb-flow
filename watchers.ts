@@ -17,6 +17,7 @@ import { z } from "zod";
 import { parseLimitHit } from "./limits";
 import { GH_MISSING, ghError } from "./prs";
 import { RELEASE_WAIT } from "./release-wait";
+import { deliveryReached, readField } from "./release-delivery";
 
 export const releaseWatchSchema = z.object({
   /** owner/name; defaults to the project's GitHub remote. */
@@ -26,6 +27,11 @@ export const releaseWatchSchema = z.object({
   base: z.string().default("main"),
   /** Regex a merged PR title must match to count as a release. */
   titlePattern: z.string().default("^Release\\b"),
+  /**
+   * For "release" mode: hold the "released" message until this public JSON's field shows the release's
+   * version. Publishing a release is not always delivering it; a later step may still fail.
+   */
+  deliveredWhen: z.object({ url: z.string().url(), field: z.string().min(1) }).optional(),
 });
 export type ReleaseWatchConfig = z.infer<typeof releaseWatchSchema>;
 
@@ -273,6 +279,16 @@ export function createWatchers(
       .sort((a, b) => b.at - a.at);
   }
 
+  async function readLiveField(check: { url: string; field: string }): Promise<unknown> {
+    try {
+      const response = await fetch(check.url, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
+      return response.ok ? readField(await response.json(), check.field) : null;
+    } catch (error) {
+      bb.log.warn(`release delivery check ${check.url}: ${String(error)}`);
+      return null;
+    }
+  }
+
   async function latestRelease(projectName: string): Promise<Release | null> {
     return (await recentReleases(projectName))[0] ?? null;
   }
@@ -329,14 +345,19 @@ export function createWatchers(
       const running = runs.filter((run) => run.status !== "completed");
       const stale = Date.now() - release.mergedAt > 2 * 3_600_000;
       if (running.length > 0 && !stale) continue;
+      const deliveredWhen = releaseConfig[release.projectName]?.deliveredWhen;
+      const live = deliveredWhen ? await readLiveField(deliveredWhen) : undefined;
+      const undelivered = deliveredWhen !== undefined && !deliveryReached(live, key.slice(key.lastIndexOf("@") + 1));
+      if (undelivered && !stale) continue;
       const failed = runs.filter((run) => run.conclusion && !["success", "skipped", "neutral"].includes(run.conclusion));
       const allWaiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
       const targets = Object.entries(allWaiters).filter(
         ([, waiter]) => waiter.projectName === release.projectName && waiter.since < release.mergedAt + 60_000,
       );
       const headline = `${release.title}${release.prNumber !== null ? ` (#${release.prNumber})` : ""}, ${new Date(release.mergedAt).toLocaleString("en-GB")}`;
-      const message =
-        failed.length === 0
+      const message = undelivered
+        ? `The release was published (${headline}), but it still hasn't been delivered: ${deliveredWhen!.url} shows ${String(live ?? "nothing readable")} for ${deliveredWhen!.field}. Check before relying on it.`
+        : failed.length === 0
           ? releasedMessage(release.projectName, { title: release.title, prNumber: release.prNumber, at: release.mergedAt }, runs)
           : `The release merged (${headline}), but ${failed.length} workflow run(s) failed: ${failed
               .map((run) => `${run.name} (${run.url})`)

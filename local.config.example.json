@@ -48,7 +48,11 @@
       "titlePattern": "^Release\\b"
     },
     "my-desktop-app": {
-      "mode": "release"
+      "mode": "release",
+      "deliveredWhen": {
+        "url": "https://example.com/releases/latest.json",
+        "field": "version"
+      }
     }
   }
 }

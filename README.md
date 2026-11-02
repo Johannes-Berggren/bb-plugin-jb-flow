@@ -435,7 +435,7 @@ Release watches and sidebar chip names are set in JSON in the **Advanced config*
 - `repoCommands`: pinned side-panel commands, keyed by bb project name. A command has `id`, `label`, and `slots[]`. Each slot has a `command`, a `url` (or `null`), and the `ports` it binds. These can also be edited per project under **Settings → JB Flow → Repo commands**, which overrides the JSON.
 - `projectShortNames`: the label shown on a project's sidebar chip.
 - `stripProjectPrefixes`: prefixes removed from project names on chips.
-- `releaseWatch`: per project, either `{ "base": "main", "titlePattern": "^Release\\b" }` (a merged release PR counts, after its workflows finish) or `{ "mode": "release" }` (a published GitHub release counts). Both take an optional `"repo": "owner/name"`.
+- `releaseWatch`: per project, either `{ "base": "main", "titlePattern": "^Release\\b" }` (a merged release PR counts, after its workflows finish) or `{ "mode": "release" }` (a published GitHub release counts). Both take an optional `"repo": "owner/name"`. In release mode, an optional `"deliveredWhen": { "url": "https://example.com/version.json", "field": "version" }` holds the message until that public JSON shows the release's version or a newer one, for releases that still have steps after publishing. If it never does, threads are told after two hours that the release was published but not delivered.
 
 ## CLI
 
