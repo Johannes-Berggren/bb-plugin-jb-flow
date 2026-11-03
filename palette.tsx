@@ -695,7 +695,6 @@ export function Palette({
         icon: <Icon name="MessageSquarePlus" />,
         run: () => navigate.toCompose({ ...(composeProject ? { projectId: composeProject } : {}), focusPrompt: true }),
       },
-      { id: "studio", title: "Open Studio", keywords: "overview board", icon: <Icon name="Layers" />, run: () => navigate.toPluginPanel("studio") },
     );
     return entries;
     // projectName reads projectsById, a dependency here.

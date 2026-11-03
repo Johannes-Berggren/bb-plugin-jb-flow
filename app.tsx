@@ -62,7 +62,7 @@ import type { RunInfo, ThreadPr } from "./ui-extras";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { groupBySection, sortRows } from "./sidebar-groups";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
-import { needsMe } from "./studio-model";
+import { needsMe } from "./needs-me";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -89,7 +89,6 @@ import type { GlyphName } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
@@ -2556,23 +2555,6 @@ export default definePluginApp((app) => {
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
   app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
-  app.slots.navPanel({
-    id: "studio",
-    title: "Studio",
-    icon: "Columns",
-    path: "studio",
-    component: ({ subPath }) => {
-      const { state } = useFlowState();
-      return <Studio subPath={subPath} state={state} />;
-    },
-    fixedTabs: [{
-      ...STUDIO_REVIEW_TAB,
-      component: ({ subPath }) => {
-        const { state } = useFlowState();
-        return <StudioReview subPath={subPath} state={state} />;
-      },
-    }],
-  });
   app.slots.navPanel({
     id: "catch-up",
     title: "Catch up",

@@ -8,7 +8,6 @@ export default defineConfig({
     include: [
       "workspaces.test.ts",
       "workspaces.ui.test.tsx",
-      "studio.ui.test.tsx",
       "shell-appearance.ui.test.tsx",
       "live-activity.ui.test.tsx",
       "timeline-activity.ui.test.tsx",

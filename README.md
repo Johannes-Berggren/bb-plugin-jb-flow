@@ -15,8 +15,8 @@ A [bb](https://getbb.app) plugin for people who run a lot of agent threads at on
 On by default (turn off under Settings → JB Flow → **Workspaces**). Choose **JB Flow workspaces** under Settings → Appearance → Sidebar navigation
 if another navigation provider is pinned. A new install has no workspaces yet: the bar shows **Create your first workspace**, which
 opens a form to name it and pick its projects. After that your workspaces, plus **All** and
-**No workspace**, appear as tabs (**+** adds another, the gear manages them) across the top of the BB window and filter its threads, sections,
-Studio and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention.
+**No workspace**, appear as tabs (**+** adds another, the gear manages them) across the top of the BB window and filter its threads, sections
+and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention.
 Hover a tab for both counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
 uses its first available project. Opening a thread from another workspace
@@ -181,8 +181,10 @@ headings and rail controls, layered page surfaces, elevated composers, panel tab
 menus, dialogs, and the command palette. It works with any palette; Graphite adds
 coordinated sidebar, card, popover, and recessed colors in light and dark mode.
 
-Turn the setting off to restore standard shell styling while keeping Studio and
-the palette. The content script removes its root class and event listeners on
+**Graphite**, under **Settings → Appearance**, is an optional app-wide palette:
+charcoal in dark mode, warm ivory in light mode, and a soft violet accent.
+
+Turn the setting off to restore standard shell styling while keeping the palette. The content script removes its root class and event listeners on
 reload or disable. Reduced motion and forced colors are respected. BB continues
 to own navigation, panel resizing, conversations, touch targets, and scrolling.
 This setting changes shell styling; Workspaces separately uses BB's navigation
@@ -257,35 +259,6 @@ list scrolls inside a capped box instead of pushing the composer. Choosing
 one sends only its number, with visible sending/sent feedback. Duplicate clicks
 are blocked; failed sends show an error and allow retry. Choices reset when the
 thread or source reply changes. Motion respects reduced-motion preferences.
-
-### Studio
-
-Open **Studio** in the navigation rail for an attention-first overview and a
-thread workspace. Filter by project, working/needs-you/ready status, or title;
-press `/` inside Studio to focus search. Switch between comfortable and compact
-rows, and load more threads as needed.
-
-Opening a row keeps the conversation inside Studio using BB's native chat,
-including streaming, drafts, permissions, and pending interactions. **Review**
-opens the host's resizable side panel with linked PRs and checks; **Open thread**
-opens the regular thread page for the full thread-specific tools. Deep links and
-browser back/forward work between the overview and thread workspaces.
-
-Status counts apply to the selected project, independently of title search.
-Needs-you includes pending input, failed threads, unread requests for a decision,
-and linked PRs with failed checks, conflicts, or requested changes. Ready-to-merge
-and PR-settled states use the PRs tracked by JB Flow; idle threads are not assumed
-complete. Hidden and archived threads are excluded. The review panel additionally
-includes BB's branch PR lookup. Workflow state resyncs after reconnecting.
-
-**Graphite**, under **Settings → Appearance**, is an optional app-wide palette:
-charcoal in dark mode, warm ivory in light mode, and a soft violet accent. Studio
-also follows other BB palettes. Its responsive layout, keyboard focus, and reduced
-motion styles are scoped to the Studio page.
-
-The Studio branch is an initial working prototype. Its SDK integration is covered
-by `npm run test:ui`; classification and filtering run with the existing unit
-tests in `npm test`.
 
 ### Triage sidebar
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
