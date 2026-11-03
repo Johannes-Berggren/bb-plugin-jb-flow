@@ -436,7 +436,7 @@ export function Palette({
     [modeThread, threadsById, fallback],
   );
   const modeHostActions = useThreadActions(modeTarget);
-  const currentReplies = useReplies(current && flow?.awaiting[current.id] !== undefined ? current.id : null);
+  const currentReplies = useReplies(current && (flow?.awaiting[current.id] !== undefined || flow?.readyToGo?.[current.id] !== undefined) ? current.id : null);
   const modeReplies = useReplies(modeThread?.id ?? null);
 
   const done = useCallback(

@@ -6,6 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { parseDecisionOptions } from "./decisions.ts";
 import { laneSections } from "./lanes.ts";
 import { listLiveThreads } from "./thread-list.ts";
+import { parseStatusReport } from "./thread-status.ts";
 
 // Phrases that hand the next step to the user. Kept specific: status reports
 // mention "decision" or "blocked" without waiting on anyone.
@@ -36,23 +37,73 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 11;
+const AWAITING_VERSION = 12;
 
-/** True when the tail of the message hands the next step to the user. */
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
 
-export function asksUser(text: string): boolean {
+/** "No decision needed from you", "Nothing required from you": says the opposite of asking. */
+const NOTHING_ASKED =
+  /\b(?:no|not|without)\b[^.!?\n]{0,30}\b(?:decisions?|action|input|answer|reply|approval)\b[^.!?\n]{0,20}\b(?:needed|required|from you|for you)\b[^.!?\n]*[.!?]?|\bnothing\b[^.!?\n]{0,20}\b(?:needed|required)\b[^.!?\n]*[.!?]?/gi;
+
+/** True when the tail of free text hands the next step to the user. */
+function keywordAsks(text: string): boolean {
   text = straight(text);
   // Conditional fallbacks ("If it still breaks, tell me what you did") aren't
   // asks; conditions addressed to you ("If you want, I can…") still are.
   const tail = text
     .trim()
     .slice(-900)
+    .replace(NOTHING_ASKED, "")
     .replace(/(^|[.!?\n]\s*)if (?!you\b)(?:[^.!?\n]|[.!?](?=\S))*[.!?]?/gi, "$1");
   // Trailing numbered options are a choice for you, whatever the wording.
   // Any trailing numbered list counts here: a to-do list for you is an ask too.
   return ASKS.test(tail) || parseDecisionOptions(text, { strict: false }).length > 0;
+}
+
+/**
+ * Who has the next move after a reply. "ready": the agent offers steps it can
+ * do itself and only needs a go, so nothing is stuck on you.
+ */
+export type HandBack = "asks" | "ready" | "waiting" | "none";
+
+const NOT_BLOCKED = /^(?:nothing|no\b|none\b|not blocked|n\/a)/i;
+const BLOCKED_ON_YOU = /\b(?:on|for|from) you\b|\byour\b|\bneeds? you\b|\byou (?:need|must|have to|decide|choose|approve)\b/i;
+const NOTHING_PENDING = /^nothing (?:is )?(?:pending|left|else)\b/i;
+/** The reply before a status report's first field: the agent's own words. */
+const REPORT_START = /^\s*(?:[-*]\s+)?\*\*(?:Goal|Done|Next|Blocked):\*\*/im;
+
+/**
+ * A status report says what's going on in its own fields, so read those. Keywords
+ * over its text mislead: its Stack and Progress lines aren't addressed to anyone.
+ * Null when the reply isn't a report.
+ */
+function reportHandBack(text: string): HandBack | null {
+  const report = parseStatusReport(text, 0);
+  if (report === null) return null;
+  const prose = text.slice(0, Math.max(0, text.search(REPORT_START)));
+  if (prose.trim() !== "" && keywordAsks(prose)) return "asks";
+  if (/\*\*Decision needed:?\*\*/i.test(text) || /\breply with (?:the|a|one) number\b/i.test(text)) return "asks";
+  const blocked = straight(report.blocked);
+  if (blocked !== "" && !NOT_BLOCKED.test(blocked)) return BLOCKED_ON_YOU.test(blocked) ? "asks" : "waiting";
+  if ((report.steps?.items.length ?? 0) > 0 || /\breply \*{0,2}go\b/i.test(text)) return "ready";
+  if (!NOTHING_PENDING.test(report.next) && keywordAsks(report.next)) return "asks";
+  return "none";
+}
+
+/** Who has the next move after this reply. */
+export function handBack(text: string): HandBack {
+  const fromReport = reportHandBack(text);
+  if (fromReport !== null) return fromReport;
+  if (relaysOthers(text)) return "waiting";
+  if (keywordAsks(text)) return "asks";
+  return WAITS.test(straight(text).trim().slice(-700)) ? "waiting" : "none";
+}
+
+/** True when the message hands the next step to the user. */
+export function asksUser(text: string): boolean {
+  const fromReport = reportHandBack(text);
+  return fromReport !== null ? fromReport === "asks" : keywordAsks(text);
 }
 
 // The agent said it would come back on its own ("I'll report when it finishes",
@@ -112,6 +163,8 @@ export function relaysOthers(text: string): boolean {
 
 /** True when the message hands the next step to someone other than you. */
 export function waitsOnOthers(text: string): boolean {
+  const fromReport = reportHandBack(text);
+  if (fromReport !== null) return fromReport === "waiting";
   text = straight(text);
   if (relaysOthers(text)) return true;
   return WAITS.test(text.trim().slice(-700)) && !asksUser(text);
@@ -122,7 +175,7 @@ export const STALLED_AFTER_MS = 60 * 60_000;
 
 export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
-  // Threads go idle together; one queue for all three maps so a write never
+  // Threads go idle together; one queue for all the maps so a write never
   // replaces another thread's result with a stale copy.
   let lock: Promise<unknown> = Promise.resolve();
   const flag = (key: string) => async (threadId: string, value: boolean) => {
@@ -143,10 +196,14 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   const setPromised = flag("promised");
   const getWaiting = async () => (await kv.get<Record<string, number>>("waitingOthers")) ?? {};
   const setWaiting = flag("waitingOthers");
+  const getReady = async () => (await kv.get<Record<string, number>>("readyToGo")) ?? {};
+  const setReady = flag("readyToGo");
   const classify = async (threadId: string, text: string) => {
-    await set(threadId, asksUser(text) && !relaysOthers(text));
+    const hand = handBack(text);
+    await set(threadId, hand === "asks");
+    await setReady(threadId, hand === "ready");
     await setPromised(threadId, promisesFollowUp(text));
-    await setWaiting(threadId, waitsOnOthers(text));
+    await setWaiting(threadId, hand === "waiting");
   };
 
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
@@ -164,6 +221,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     await set(thread.id, false);
     await setPromised(thread.id, false);
     await setWaiting(thread.id, false);
+    await setReady(thread.id, false);
   };
   bb.events.on("thread.active", clear);
   bb.events.on("thread.archived", clear);
@@ -188,7 +246,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
 
   /** Drops every thread that isn't live any more (archived ones are cleared on archive; this catches deletes). */
   async function prune(isLive: (threadId: string) => boolean) {
-    for (const key of ["awaiting", "promised", "waitingOthers"]) {
+    for (const key of ["awaiting", "promised", "waitingOthers", "readyToGo"]) {
       const run = lock.then(async () => {
         const all = (await kv.get<Record<string, number>>(key)) ?? {};
         const gone = Object.keys(all).filter((threadId) => !isLive(threadId));
@@ -202,5 +260,5 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     }
   }
 
-  return { all: get, promised: getPromised, waitingOthers: getWaiting, prune };
+  return { all: get, promised: getPromised, waitingOthers: getWaiting, readyToGo: getReady, prune };
 }
