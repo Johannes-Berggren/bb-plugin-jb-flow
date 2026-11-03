@@ -101,6 +101,8 @@ const stateSchema = z.object({
   promised: z.record(z.string(), z.number()),
   /** Idle threads whose next step is someone else's (thread id → since). */
   waitingOthers: z.record(z.string(), z.number()),
+  /** Idle threads whose agent offers steps and only needs a go (thread id → since). */
+  readyToGo: z.record(z.string(), z.number()),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Lane → section id, pinned so renaming a lane's section keeps its role. */
@@ -816,6 +818,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       awaiting: await awaiting.all(),
       promised: await awaiting.promised(),
       waitingOthers: await awaiting.waitingOthers(),
+      readyToGo: await awaiting.readyToGo(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
       laneSections: await laneSections(bb),
@@ -1396,7 +1399,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             const snoozedSection = await findSnoozedSection();
             // Debug view: where each open thread lands in the triage sidebar, with
             // the tail of its last agent message to check the call against.
-            const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers] = await Promise.all([
+            const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers, readyToGo] = await Promise.all([
               listLiveThreads(bb),
               awaiting.all(),
               prTracker.byThread(),
@@ -1404,6 +1407,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               bb.sdk.threadSections.list(),
               awaiting.promised(),
               awaiting.waitingOthers(),
+              awaiting.readyToGo(),
             ]);
             const sectionName = new Map(sections.map((section) => [section.id, section.name]));
             const rows = [];
@@ -1427,6 +1431,8 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                       ? "stalled"
                       : awaitingAll[thread.id] !== undefined
                       ? "your-move"
+                      : readyToGo[thread.id] !== undefined
+                      ? "ready"
                       : thread.sectionId === null &&
                           (waitingOthers[thread.id] !== undefined ||
                             (open.length > 0 && open.every((pr) => pr.attention === "review_requested")))

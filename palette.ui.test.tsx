@@ -17,6 +17,7 @@ const baseState: FlowState = {
   awaiting: {},
   promised: {},
   waitingOthers: {},
+  readyToGo: {},
   sectionOrder: [],
   machines: { hosts: [], threadHosts: {}, environmentHosts: {}, localHostId: null },
   laneSections: {},

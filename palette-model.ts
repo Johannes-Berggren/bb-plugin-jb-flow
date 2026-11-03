@@ -208,7 +208,7 @@ export type PaletteThread = Pick<
   | "latestAttentionAt"
 > & { environment: { branchName: string | null } | null };
 export type PalettePr = Pick<PrStatus, "repo" | "number" | "title" | "url" | "state" | "attention">;
-export type PaletteFlow = Pick<FlowState, "awaiting" | "running" | "watching" | "snoozes" | "tags"> & {
+export type PaletteFlow = Pick<FlowState, "awaiting" | "readyToGo" | "running" | "watching" | "snoozes" | "tags"> & {
   threadPrs: Record<string, readonly PalettePr[]>;
 };
 /** An action the palette can rank; palette.tsx keeps what it runs, by id. */

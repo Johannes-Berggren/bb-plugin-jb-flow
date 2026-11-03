@@ -59,7 +59,7 @@ const input = (changes: Partial<PaletteInput> = {}): PaletteInput => ({
   workspaces: [],
   workspaceOf: {},
   selectedWorkspace: null,
-  flow: { awaiting: {}, running: {}, watching: {}, snoozes: {}, tags: {}, threadPrs: {} },
+  flow: { awaiting: {}, readyToGo: {}, running: {}, watching: {}, snoozes: {}, tags: {}, threadPrs: {} },
   currentThreadId: null,
   recent: [],
   frecency: {},

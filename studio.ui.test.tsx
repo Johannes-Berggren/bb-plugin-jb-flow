@@ -12,6 +12,7 @@ const state: FlowState = {
   awaiting: {},
   promised: {},
   waitingOthers: {},
+  readyToGo: {},
   sectionOrder: [],
   machines: {
     hosts: [],
