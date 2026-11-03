@@ -5,6 +5,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { parseDecisionOptions } from "./decisions.ts";
 import { laneSections } from "./lanes.ts";
+import { listLiveThreads } from "./thread-list.ts";
 
 // Phrases that hand the next step to the user. Kept specific: status reports
 // mention "decision" or "blocked" without waiting on anyone.
@@ -172,10 +173,10 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     async start(signal) {
       // Bump when the rules change, so open threads are re-classified once.
       if ((await kv.get<number>("awaitingVersion")) !== AWAITING_VERSION) {
-        const threads = await bb.sdk.threads.list({ limit: 500 });
+        const threads = await listLiveThreads(bb, { signal });
         for (const thread of threads) {
           if (signal.aborted) return;
-          if (thread.archivedAt !== null || thread.status !== "idle" || thread.parentThreadId !== null) continue;
+          if (thread.status !== "idle" || thread.parentThreadId !== null) continue;
           const output = await bb.sdk.threads.output({ threadId: thread.id, signal }).catch(() => null);
           if (output?.output) await classify(thread.id, output.output);
         }

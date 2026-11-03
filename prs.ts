@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { listLiveThreads } from "./thread-list.ts";
 
 export const prAttention = z.enum([
   "merged",
@@ -80,6 +81,28 @@ export function createdPrs(item: CompletedItem | undefined): PrRef[] {
     return [...String(item.text ?? "").matchAll(OPENED_PR)].flatMap((match) => refsIn(match[0]));
   }
   return [];
+}
+
+/**
+ * PRs to re-check once a thread's turn ends: the ones it just created, plus
+ * every linked PR that was still open, draft or never fetched. A turn can
+ * merge, close or push to a PR the thread already had, and the sidebar must
+ * show that as soon as the turn ends, not at the next scheduled refresh.
+ * Settled PRs (merged, closed) are left to the hourly re-check.
+ */
+export function refsToRefreshAfterTurn(
+  linked: readonly PrRef[],
+  status: Readonly<Record<string, Pick<PrStatus, "state">>>,
+  created: readonly PrRef[],
+): PrRef[] {
+  const out = new Map<string, PrRef>();
+  for (const ref of created) out.set(key(ref), ref);
+  for (const ref of linked) {
+    const state = status[key(ref)]?.state;
+    if (state === "merged" || state === "closed") continue;
+    out.set(key(ref), ref);
+  }
+  return [...out.values()];
 }
 
 export const GH_MISSING = "The GitHub CLI (gh) isn't installed or isn't on PATH. Install it and run `gh auth login`.";
@@ -272,12 +295,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
 
   /** Ids of threads that are neither archived nor deleted. */
   async function liveThreadIds(): Promise<Set<string>> {
-    const ids = new Set<string>();
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      for (const thread of page) if (thread.archivedAt === null && thread.deletedAt === null) ids.add(thread.id);
-      if (page.length < 500) return ids;
-    }
+    const threads = await listLiveThreads(bb);
+    return new Set(threads.filter((thread) => thread.deletedAt === null).map((thread) => thread.id));
   }
 
   /**
@@ -408,10 +427,13 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     return prs.filter((pr) => pr.state === "open" || pr.state === "draft").map(({ repo, number }) => ({ repo, number }));
   }
 
-  // New PRs show up right after the turn that created them.
+  // When a turn ends, its new PRs appear and its linked PRs show what the
+  // turn did to them (merged, closed, new checks) right away.
   bb.events.on("thread.idle", async ({ thread }) => {
     const found = await scan(thread.id).catch(() => []);
-    if (found.length > 0) await refresh(found);
+    const linked = (await getThreads())[thread.id]?.refs ?? [];
+    const refs = refsToRefreshAfterTurn(linked, await getStatus(), found);
+    if (refs.length > 0) await refresh(refs);
   });
 
   bb.background.schedule("pr-refresh", "*/3 * * * *", () => refresh());
@@ -423,10 +445,10 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         await exclusive(() => setThreads({}));
         await kv.set("threadPrsVersion", 2);
       }
-      const threads = await bb.sdk.threads.list({ limit: 500 });
+      const threads = await listLiveThreads(bb, { signal });
       for (const thread of threads) {
         if (signal.aborted) return;
-        if (thread.archivedAt !== null || thread.parentThreadId !== null) continue;
+        if (thread.parentThreadId !== null) continue;
         await scan(thread.id, signal).catch((error) => {
           if (!signal.aborted) bb.log.warn(`pr scan ${thread.id}: ${String(error)}`);
         });

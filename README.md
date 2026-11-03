@@ -380,11 +380,14 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **Release watcher:** threads that go idle "waiting for release" are woken with a "released: …" message.
   - This happens once a PR matching `titlePattern` merges into `base` and its workflow runs finish.
   - If the release workflow fails, the message names the failed runs instead.
+  - A thread that later gives a status report no longer mentioning a release stops waiting. A reply without a report leaves the wait alone.
   - Configure it per project with `releaseWatch` (see [Configuration](#configuration)).
 - **CI and review watcher:** agents call the `wait_for_ci` tool (or `bb jb-flow wait-ci`) and end their turn, instead of polling `gh`.
-  - The plugin polls once every 2 minutes for all watches.
+  - The plugin polls once every 2 minutes for all watches. Once a watch is only waiting for reviews, it reads GitHub every 10 minutes.
   - It messages the thread when checks finish (with the failed log), when reviews or comments arrive, or when the PR merges.
   - A thread that is still working gets nothing. Once it goes idle, the next check sends one message with the current state of all its PRs.
+  - Checks are waited for up to 3 hours and reviews up to 7 days. The thread is told when a watch runs out.
+- **Wake-ups aren't lost.** A CI or release watch ends only after its message has been sent. A failed send is tried again on the next check, for about an hour, unless the thread is gone.
 
 ### Focus tracking (for Stream Deck and scripts)
 - Every BB window reports which thread is focused, including the focused pane in a split view.

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { listLiveThreads } from "./thread-list";
 
 export const machinesSchema = z.object({
   /** Machines that run at least one live thread. */
@@ -38,7 +39,7 @@ export function createMachines(bb: BbPluginApi) {
   }
   async function load(): Promise<Machines> {
     const [threads, environments, hosts] = await Promise.all([
-      bb.sdk.threads.list({ limit: 500 }),
+      listLiveThreads(bb),
       bb.sdk.environments.list(),
       bb.sdk.hosts.list(),
     ]);
