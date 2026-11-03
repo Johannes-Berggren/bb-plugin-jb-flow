@@ -37,7 +37,7 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 12;
+const AWAITING_VERSION = 13;
 
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
@@ -69,7 +69,12 @@ export type HandBack = "asks" | "ready" | "waiting" | "none";
 
 const NOT_BLOCKED = /^(?:nothing|no\b|none\b|not blocked|n\/a)/i;
 const BLOCKED_ON_YOU = /\b(?:on|for|from) you\b|\byour\b|\bneeds? you\b|\byou (?:need|must|have to|decide|choose|approve)\b/i;
-const NOTHING_PENDING = /^nothing (?:is )?(?:pending|left|else)\b/i;
+/** "You send the draft; I turn on…": the next step is addressed to you. */
+const NEXT_IS_YOURS = /^you\b/i;
+/** "Reply go once you've sent it", "step 2 is yours": a go-list that still has your own work in it. */
+const YOUR_PART = /\breply \*{0,2}go\*{0,2} once you\b|\b(?:is|are) yours\b/i;
+/** "Nothing pending on my side; only the check above remains": the agent is done, you aren't. */
+const LEFT_TO_YOU = /\b(?:on my side|on my end|from me)\b[^.\n]*\b(?:remains?|left|yours?|you)\b/i;
 /** The reply before a status report's first field: the agent's own words. */
 const REPORT_START = /^\s*(?:[-*]\s+)?\*\*(?:Goal|Done|Next|Blocked):\*\*/im;
 
@@ -84,11 +89,12 @@ function reportHandBack(text: string): HandBack | null {
   const prose = text.slice(0, Math.max(0, text.search(REPORT_START)));
   if (prose.trim() !== "" && keywordAsks(prose)) return "asks";
   if (/\*\*Decision needed:?\*\*/i.test(text) || /\breply with (?:the|a|one) number\b/i.test(text)) return "asks";
+  const next = straight(report.next);
+  if (NEXT_IS_YOURS.test(next) || YOUR_PART.test(straight(text).slice(-900))) return "asks";
   const blocked = straight(report.blocked);
   if (blocked !== "" && !NOT_BLOCKED.test(blocked)) return BLOCKED_ON_YOU.test(blocked) ? "asks" : "waiting";
   if ((report.steps?.items.length ?? 0) > 0 || /\breply \*{0,2}go\b/i.test(text)) return "ready";
-  if (!NOTHING_PENDING.test(report.next) && keywordAsks(report.next)) return "asks";
-  return "none";
+  return LEFT_TO_YOU.test(next) || keywordAsks(next) ? "asks" : "none";
 }
 
 /** Who has the next move after this reply. */

@@ -168,3 +168,19 @@ test("replies without a report keep the keyword rules", () => {
   assert.equal(handBack('Once Chris replies, tell me and I\'ll switch the setup.'), "waiting");
   assert.equal(handBack("No decision needed from you. Everything is merged."), "none");
 });
+
+test("work left to you stays your move, even with a go-list or a blocker", () => {
+  const sendFirst = "> [!TIP]\n> **Path forward:** Turn on SSO.\n> 1. Turn it on · ready\n> 2. Test sign-in · confirm\n>\n> Reply **go** once you've sent it.";
+  assert.equal(handBack(report({ next: "You send the draft; I turn on SSO after that.", blocked: "SSO waits on the test sign-ins.", after: sendFirst })), "asks");
+  assert.equal(handBack(report({ next: "Run the dry run.", blocked: "It needs the production connector.", after: goList.replace("Reply **go** for all, or **go 1,3**.", "Reply **go** for step 1; step 2 is yours.") })), "asks");
+});
+
+test("nothing left for the agent doesn't mean nothing left for you", () => {
+  assert.equal(handBack(report({ next: "Nothing is left on the cron move; two small follow-ups remain and they're your call." })), "asks");
+  assert.equal(handBack(report({ next: "Nothing pending on my side; only the look at the archive view above remains." })), "asks");
+  assert.equal(handBack(report({ next: "Nothing pending on my side." })), "none");
+});
+
+test("your call on an offered go-list is still ready", () => {
+  assert.equal(handBack(report({ next: "Your call on the follow-up analysis below.", after: goList })), "ready");
+});
