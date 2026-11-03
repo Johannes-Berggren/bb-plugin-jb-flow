@@ -14,10 +14,12 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { applyCiChanges, isThreadGone, MAX_SEND_FAILURES, runCiCycle, type CiWatch, type PrState } from "./ci-watch";
 import { parseLimitHit } from "./limits";
 import { GH_MISSING, ghError } from "./prs";
-import { RELEASE_WAIT } from "./release-wait";
-import { deliveryReached, readField } from "./release-delivery";
+import { RELEASE_WAIT, releaseWaitEnded, releaseWaitStated } from "./release-wait";
+import { deliverToWaiters, deliveryReached, readField } from "./release-delivery";
+import { listLiveThreads } from "./thread-list";
 
 export const releaseWatchSchema = z.object({
   /** owner/name; defaults to the project's GitHub remote. */
@@ -41,35 +43,23 @@ type ThreadRef = Pick<Thread, "id" | "projectId" | "updatedAt">;
 
 const CONTINUE_DELAY_MS = 90_000;
 const RELEASE_BACKFILL_VERSION = 1;
-const CI_TIMEOUT_MS = 3 * 3_600_000;
-const NO_CHECKS_AFTER_MS = 10 * 60_000;
-const OK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 /** Thread states where CI news would only pile up in the queue. */
 const BUSY_STATUSES = new Set(["active", "starting", "stopping", "pending"]);
-/** Deploy-preview and housekeeping bots: their comments are not review feedback. */
-const BOT_LOGINS = new Set(["vercel", "github-actions", "dependabot", "linear", "changeset-bot", "codecov", "netlify", "sonarcloud"]);
-const isBot = (login: string | undefined, body: string) =>
-  login === undefined || login.endsWith("[bot]") || BOT_LOGINS.has(login) || /^\[vc\]:/.test(body);
 
 type AutoContinue = { resetsAt: number; queuedMessageId: string | null };
 export type ThreadPrRef = { repo: string; state: string; mergedAt?: number | null };
 type ReleaseWaiter = { threadId: string; projectName: string; since: number };
 /** A release seen but not yet announced. `sha` is null for GitHub releases (nothing to wait for). */
-type Pending = { prNumber: number | null; title: string; sha: string | null; mergedAt: number; projectName: string };
-type Release = { key: string; prNumber: number | null; title: string; sha: string | null; at: number };
-type CiWatch = {
-  threadId: string;
-  repo: string;
-  pr: number;
-  watchFor: "checks" | "reviews" | "both";
-  since: number;
-  /** Reviews/comments newer than this are reported; advances after each report. */
-  reviewsSince?: number;
-  headSha: string | null;
-  /** "both" after its checks were reported: keep listening for reviews, end silently. */
-  quiet?: boolean;
+type Pending = {
+  prNumber: number | null;
+  title: string;
+  sha: string | null;
+  mergedAt: number;
+  projectName: string;
+  /** Cycles where a waiter couldn't be told; the release stays pending to try again. */
+  sendFailures?: number;
 };
-
+type Release = { key: string; prNumber: number | null; title: string; sha: string | null; at: number };
 function ghPath(): string {
   return ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
 }
@@ -157,7 +147,19 @@ export function createWatchers(
       bb.log.info(`auto-continue ${thread.id} at ${new Date(sendAt).toISOString()}`);
       return;
     }
-    if (RELEASE_WAIT.test(text.slice(-1500))) await registerReleaseWaiter(thread);
+    if (releaseWaitStated(text)) await registerReleaseWaiter(thread);
+    else if (releaseWaitEnded(text)) await clearReleaseWaits(thread.id);
+  }
+
+  /** The thread reported in without waiting for a release any more, so don't wake it for one. */
+  async function clearReleaseWaits(threadId: string) {
+    const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
+    if (!Object.values(waiters).some((waiter) => waiter.threadId === threadId)) return;
+    await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
+      for (const key of Object.keys(all)) if (all[key]!.threadId === threadId) delete all[key];
+    });
+    bb.log.info(`release waiter cleared: ${threadId}`);
+    changed();
   }
 
   /** The user resumed the thread before the reset: drop our scheduled "continue". */
@@ -232,9 +234,18 @@ export function createWatchers(
       const since = Math.min(Date.now(), thread.updatedAt);
       const latest = await latestRelease(name).catch(() => null);
       if (latest && latest.at > since + 60_000 && Date.now() - latest.at > 30 * 60_000) {
-        await tell(thread.id, releasedMessage(name, latest, [])).catch(() => undefined);
-        bb.log.info(`release ${latest.key}: caught up ${thread.id}`);
-        continue;
+        const told = await tell(thread.id, releasedMessage(name, latest, [])).then(
+          () => true,
+          (error) => {
+            bb.log.warn(`release catch-up ${thread.id}: ${String(error)}`);
+            return false;
+          },
+        );
+        if (told) {
+          bb.log.info(`release ${latest.key}: caught up ${thread.id}`);
+          continue;
+        }
+        // Couldn't tell it: keep it waiting, so at least the next release reaches it.
       }
       added[key] = { threadId: thread.id, projectName: name, since };
       bb.log.info(`release waiter: ${thread.id} (${name})`);
@@ -362,18 +373,29 @@ export function createWatchers(
           : `The release merged (${headline}), but ${failed.length} workflow run(s) failed: ${failed
               .map((run) => `${run.name} (${run.url})`)
               .join(", ")}. Check whether that affects you before continuing.`;
-      for (const [waiterId, waiter] of targets) {
-        const thread = await bb.sdk.threads.get({ threadId: waiter.threadId }).catch(() => null);
-        if (thread && thread.archivedAt === null) {
-          await tell(waiter.threadId, message).catch((error) => bb.log.warn(`release notify: ${String(error)}`));
-        }
-      }
-      await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
-        for (const [waiterId] of targets) delete all[waiterId];
+      const delivery = await deliverToWaiters(targets, {
+        send: (threadId) => tell(threadId, message),
+        threadGone: (threadId) => isThreadGone(() => bb.sdk.threads.get({ threadId })),
+        settle: async (waiterId) => {
+          await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
+            delete all[waiterId];
+          });
+        },
+        warn: (text) => bb.log.warn(text),
       });
+      // Anyone not told stays registered; the release stays pending to try again.
+      if (delivery.failed > 0) {
+        const sendFailures = (release.sendFailures ?? 0) + 1;
+        if (sendFailures < MAX_SEND_FAILURES) {
+          pending[key] = { ...release, sendFailures };
+          bb.log.info(`release ${key}: notified ${delivery.notified}, ${delivery.failed} to retry`);
+          continue;
+        }
+        bb.log.warn(`release ${key}: gave up on ${delivery.failed} thread(s) after ${sendFailures} attempts`);
+      }
       seen[key] = release.mergedAt;
       delete pending[key];
-      bb.log.info(`release ${key}: notified ${targets.length} thread(s)`);
+      bb.log.info(`release ${key}: notified ${delivery.notified} thread(s)`);
     }
     await kv.set("pendingReleases", pending);
     await kv.set("seenReleases", seen);
@@ -421,24 +443,6 @@ export function createWatchers(
     return watch;
   }
 
-  type PrState = {
-    state: string;
-    headRefOid: string;
-    url: string;
-    statusCheckRollup: Array<{
-      __typename: string;
-      name?: string;
-      context?: string;
-      status?: string;
-      conclusion?: string | null;
-      state?: string;
-      detailsUrl?: string;
-      targetUrl?: string;
-    }>;
-    reviews: Array<{ author: { login: string } | null; state: string; body: string; submittedAt: string }>;
-    comments: Array<{ author: { login: string } | null; body: string; createdAt: string }>;
-  };
-
   async function failedLog(detailsUrl: string | undefined, repo: string): Promise<string> {
     const runId = detailsUrl ? /\/actions\/runs\/(\d+)/.exec(detailsUrl)?.[1] : undefined;
     if (!runId) return "";
@@ -447,145 +451,29 @@ export function createWatchers(
     return lines.length > 1 ? `\n\`\`\`\n${truncate(lines.join("\n"), 4000)}\n\`\`\`` : "";
   }
 
-  async function checkCiNow() {
+  async function checkCiNow(force: boolean) {
     const watches = await get<Record<string, CiWatch>>("ciWatches", {});
-    // One message per thread per cycle, however many of its PRs have news.
-    const outbox = new Map<string, { notes: string[]; stillWatching: boolean }>();
-    // Applied to a fresh read at the end, so watches added during the check survive.
-    const removed = new Set<string>();
-    // A working agent checks its PRs itself (pr_status). Its watches stay as
-    // they are until it goes idle; the first idle cycle then reports the
-    // current checks and every review since the last report, in one message.
-    const busy = new Map<string, boolean>();
     let me: string | null = null;
-    for (const [key, watch] of Object.entries(watches)) {
-      if (!busy.has(watch.threadId)) {
-        const thread = await bb.sdk.threads.get({ threadId: watch.threadId }).catch(() => null);
-        busy.set(watch.threadId, thread !== null && BUSY_STATUSES.has(thread.status));
-      }
-      if (busy.get(watch.threadId)) continue;
-      let pr: PrState;
-      try {
-        pr = JSON.parse(
+    const changes = await runCiCycle({
+      watches,
+      force,
+      now: () => Date.now(),
+      isBusy: async (threadId) => {
+        const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
+        return thread !== null && BUSY_STATUSES.has(thread.status);
+      },
+      readPr: async (watch) =>
+        JSON.parse(
           await gh(["pr", "view", String(watch.pr), "-R", watch.repo, "--json", "state,headRefOid,url,statusCheckRollup,reviews,comments"]),
-        ) as PrState;
-      } catch (error) {
-        // gh missing, logged out or the PR gone: give up after the usual timeout
-        // instead of warning every cycle forever.
-        if (Date.now() - watch.since > CI_TIMEOUT_MS) {
-          delete watches[key];
-          removed.add(key);
-          bb.log.warn(`ci ${key}: dropped after repeated errors: ${String(error)}`);
-        } else {
-          bb.log.warn(`ci ${key}: ${String(error)}`);
-        }
-        continue;
-      }
-      me ??= (await gh(["api", "user", "-q", ".login"]).catch(() => "")).trim();
-      const notes: string[] = [];
-      let done = false;
-      let checksReported = false;
-
-      if (pr.state !== "OPEN") {
-        notes.push(`PR ${watch.repo.split("/")[1]}#${watch.pr} is now ${pr.state.toLowerCase()}.`);
-        done = true;
-      }
-      // A new push restarts the checks; keep waiting on the new head.
-      if (watch.headSha !== null && watch.headSha !== pr.headRefOid) watch.since = Date.now();
-      watch.headSha = pr.headRefOid;
-
-      if (!done && watch.watchFor !== "reviews") {
-        const checks = pr.statusCheckRollup.map((check) => ({
-          name: check.name ?? check.context ?? "check",
-          pending: check.__typename === "CheckRun" ? check.status !== "COMPLETED" : check.state === "PENDING" || check.state === "EXPECTED",
-          ok: check.__typename === "CheckRun" ? OK_CONCLUSIONS.has(check.conclusion ?? "") : check.state === "SUCCESS",
-          url: check.detailsUrl ?? check.targetUrl,
-        }));
-        if (checks.length > 0 && checks.every((check) => !check.pending)) {
-          const failed = checks.filter((check) => !check.ok);
-          if (failed.length === 0) {
-            notes.push(`✅ CI is green on ${watch.repo.split("/")[1]}#${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${checks.length} checks passed.`);
-          } else {
-            const log = await failedLog(failed[0]!.url, watch.repo);
-            notes.push(
-              `❌ CI failed on ${watch.repo.split("/")[1]}#${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${failed.map((check) => check.name).join(", ")}.${log}`,
-            );
-          }
-          // "both" keeps listening for reviews (review bots often answer after CI).
-          if (watch.watchFor === "both") {
-            watch.watchFor = "reviews";
-            watch.quiet = true;
-            checksReported = true;
-          } else done = true;
-        } else if (checks.length === 0 && Date.now() - watch.since > NO_CHECKS_AFTER_MS) {
-          notes.push(`${watch.repo.split("/")[1]}#${watch.pr} has no CI checks after 10 minutes; nothing to wait for.`);
-          if (watch.watchFor === "both") {
-            watch.watchFor = "reviews";
-            watch.quiet = true;
-            checksReported = true;
-          } else done = true;
-        }
-      }
-
-      let reviewNews = false;
-      if (watch.watchFor !== "checks") {
-        const cutoff = watch.reviewsSince ?? watch.since;
-        const human = (author: { login: string } | null, body: string) => author?.login !== me && !isBot(author?.login, body);
-        const reviews = pr.reviews.filter((review) => Date.parse(review.submittedAt) > cutoff && human(review.author, review.body));
-        const comments = pr.comments.filter((comment) => Date.parse(comment.createdAt) > cutoff && human(comment.author, comment.body));
-        for (const review of reviews) {
-          notes.push(`Review from ${review.author?.login ?? "someone"}: ${review.state}${review.body ? ` — ${truncate(review.body, 800)}` : ""}`);
-        }
-        for (const comment of comments) {
-          notes.push(`Comment from ${comment.author?.login ?? "someone"}: ${truncate(comment.body, 800)}`);
-        }
-        if (reviews.length + comments.length > 0) {
-          reviewNews = true;
-          notes.push(`Full comments: \`gh pr view ${watch.pr} -R ${watch.repo} --comments\`; inline: \`gh api repos/${watch.repo}/pulls/${watch.pr}/comments\``);
-          // Reviews only: done. Both: report now, keep watching the checks.
-          if (watch.watchFor === "reviews") done = true;
-        }
-      }
-
-      if (!done && Date.now() - watch.since > CI_TIMEOUT_MS) {
-        // A quiet review watch already told the agent about its checks.
-        if (!watch.quiet) notes.push(`Still waiting on ${watch.repo.split("/")[1]}#${watch.pr} after 3 hours; stopped watching. ${pr.url}`);
-        done = true;
-      }
-
-      if (done || reviewNews || checksReported) {
-        const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
-        entry.notes.push(...notes);
-        if (!done) entry.stillWatching = true;
-        if (notes.length === 0) {
-          delete watches[key];
-          removed.add(key);
-          continue;
-        }
-        outbox.set(watch.threadId, entry);
-        if (done) {
-          delete watches[key];
-          removed.add(key);
-        } else watch.reviewsSince = Date.now();
-      }
-    }
-    for (const [threadId, entry] of outbox) {
-      const others = Object.values(watches).filter((watch) => watch.threadId === threadId).length;
-      const suffix =
-        entry.stillWatching || others > 0
-          ? `\n\n(Still watching ${others} PR${others === 1 ? "" : "s"}; you'll get another message when there's news.)`
-          : "";
-      await tell(threadId, `[ci watcher] ${entry.notes.join("\n\n")}${suffix}`).catch((error) =>
-        bb.log.warn(`ci notify: ${String(error)}`),
-      );
-    }
-    await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
-      for (const key of removed) delete all[key];
-      for (const [key, watch] of Object.entries(watches)) {
-        const current = all[key];
-        if (current) Object.assign(current, { since: watch.since, headSha: watch.headSha, reviewsSince: watch.reviewsSince, watchFor: watch.watchFor, quiet: watch.quiet });
-      }
+        ) as PrState,
+      me: async () => (me ??= (await gh(["api", "user", "-q", ".login"]).catch(() => "")).trim()),
+      failedLog,
+      send: (threadId, text) => tell(threadId, text),
+      threadGone: (threadId) => isThreadGone(() => bb.sdk.threads.get({ threadId })),
+      warn: (message) => bb.log.warn(message),
     });
+    // Applied to a fresh read, so watches added during the check survive.
+    await update<Record<string, CiWatch>>("ciWatches", {}, (all) => applyCiChanges(all, watches, changes));
     changed();
   }
 
@@ -623,13 +511,12 @@ export function createWatchers(
         await kv.set("releaseWaiters", stored);
       }
       if ((await get<number>("releaseBackfill", 0)) !== RELEASE_BACKFILL_VERSION) {
-        const threads = await bb.sdk.threads.list({ limit: 500 });
+        const threads = await listLiveThreads(bb, { signal });
         for (const thread of threads) {
           if (signal.aborted) return;
-          if (thread.archivedAt !== null || thread.status !== "idle" || thread.parentThreadId !== null) continue;
+          if (thread.status !== "idle" || thread.parentThreadId !== null) continue;
           const output = await bb.sdk.threads.output({ threadId: thread.id, signal }).catch(() => null);
-          const tail = (output?.output ?? "").slice(-1500);
-          if (RELEASE_WAIT.test(tail)) await registerReleaseWaiter(thread).catch((error) => bb.log.warn(`release backfill ${thread.id}: ${String(error)}`));
+          if (releaseWaitStated(output?.output ?? "")) await registerReleaseWaiter(thread).catch((error) => bb.log.warn(`release backfill ${thread.id}: ${String(error)}`));
         }
         if (!signal.aborted) await kv.set("releaseBackfill", RELEASE_BACKFILL_VERSION);
       }
@@ -642,7 +529,7 @@ export function createWatchers(
   let releaseRun: Promise<void> | null = null;
   const checkReleases = () => (releaseRun ??= checkReleasesNow().finally(() => (releaseRun = null)));
   let ciRun: Promise<void> | null = null;
-  const checkCi = () => (ciRun ??= checkCiNow().finally(() => (ciRun = null)));
+  const checkCi = (force = false) => (ciRun ??= checkCiNow(force).finally(() => (ciRun = null)));
 
   bb.background.schedule("release-watch", "*/3 * * * *", async () => {
     if (releaseRun !== null || Object.keys(releaseConfig).length === 0) return;

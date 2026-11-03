@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { listLiveThreads } from "./thread-list.ts";
 
 export const prAttention = z.enum([
   "merged",
@@ -294,12 +295,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
 
   /** Ids of threads that are neither archived nor deleted. */
   async function liveThreadIds(): Promise<Set<string>> {
-    const ids = new Set<string>();
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      for (const thread of page) if (thread.archivedAt === null && thread.deletedAt === null) ids.add(thread.id);
-      if (page.length < 500) return ids;
-    }
+    const threads = await listLiveThreads(bb);
+    return new Set(threads.filter((thread) => thread.deletedAt === null).map((thread) => thread.id));
   }
 
   /**
@@ -448,10 +445,10 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         await exclusive(() => setThreads({}));
         await kv.set("threadPrsVersion", 2);
       }
-      const threads = await bb.sdk.threads.list({ limit: 500 });
+      const threads = await listLiveThreads(bb, { signal });
       for (const thread of threads) {
         if (signal.aborted) return;
-        if (thread.archivedAt !== null || thread.parentThreadId !== null) continue;
+        if (thread.parentThreadId !== null) continue;
         await scan(thread.id, signal).catch((error) => {
           if (!signal.aborted) bb.log.warn(`pr scan ${thread.id}: ${String(error)}`);
         });

@@ -23,6 +23,7 @@ import { laneSections } from "./lanes";
 import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
+import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
@@ -490,17 +491,11 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function listAllActiveThreads(): Promise<Thread[]> {
-    const threads: Thread[] = [];
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      // Filter as well: archived/hidden rows must never reach the digest.
-      threads.push(
-        ...page.filter(
-          (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible",
-        ),
-      );
-      if (page.length < 500) return threads;
-    }
+    const threads = await listLiveThreads(bb);
+    // Filter as well: archived/hidden rows must never reach the digest.
+    return threads.filter(
+      (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible",
+    );
   }
 
   // --- snooze ---------------------------------------------------------------
@@ -1002,8 +997,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         const section = sections.find((candidate) => candidate.id === sectionId);
         if (section === undefined) continue;
         const tag = section.name.replace(/^[^\p{L}\p{N}]+/u, "").trim();
-        const inSection = await bb.sdk.threads.list({ sectionId, limit: 500 });
-        for (const thread of inSection.filter((candidate) => candidate.archivedAt === null)) {
+        for (const thread of await listLiveThreads(bb, { sectionId })) {
           tags[thread.id] = [...new Set([...(tags[thread.id] ?? []), tag])];
           await bb.sdk.threads.update({ threadId: thread.id, sectionId: moveToSectionId });
           tagged += 1;
@@ -1183,7 +1177,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   let threadListCache: { at: number; threads: Promise<ListedThread[]> } | null = null;
   function listThreadsCached(): Promise<ListedThread[]> {
     if (threadListCache === null || Date.now() - threadListCache.at > 10_000) {
-      const threads = bb.sdk.threads.list({ limit: 500 });
+      const threads = listLiveThreads(bb);
       threadListCache = { at: Date.now(), threads };
       threads.catch(() => {
         threadListCache = null;
@@ -1396,7 +1390,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             // Debug view: where each open thread lands in the triage sidebar, with
             // the tail of its last agent message to check the call against.
             const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers] = await Promise.all([
-              bb.sdk.threads.list({ limit: 500 }),
+              listLiveThreads(bb),
               awaiting.all(),
               prTracker.byThread(),
               watchingByThread(),
@@ -1516,7 +1510,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
           }
           case "check-now":
             await watchers.checkReleases();
-            await watchers.checkCi();
+            await watchers.checkCi(true);
             return { exitCode: 0, stdout: "Checked releases and CI watches." };
           case "your-move": {
             const { items } = await yourMove({ withAsk: !argv.includes("--open") });

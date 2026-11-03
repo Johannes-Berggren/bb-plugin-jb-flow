@@ -5,6 +5,7 @@
 // BB open on two Macs, both windows can have OS focus on their own machine.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { listLiveThreads } from "./thread-list";
 
 export const focusReportSchema = z.object({
   clientId: z.string().min(1).max(64),
@@ -91,12 +92,7 @@ export function createFocus(
 
   /** Threads that need the user, oldest attention first (inbox order). */
   async function needsMe() {
-    const threads: Thread[] = [];
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      threads.push(...page);
-      if (page.length < 500) break;
-    }
+    const threads = await listLiveThreads(bb);
     const awaiting = await getAwaiting();
     // Snoozed threads stay hidden until they wake, as in the sidebar.
     const snoozedSectionId = await getSnoozedSectionId();
