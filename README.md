@@ -323,7 +323,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 ### Snooze
 - A clock button in the thread header, `bb jb-flow snooze <thread|--self> <when> [--note …]`, and a `snooze_thread` agent tool.
 - A snoozed thread moves to a "😴 Snoozed" section, which the Triage list keeps collapsed at the bottom.
-- When it's due, it goes back to its previous section and is marked unread. If a note was set, the note is sent as a prompt.
+- When it's due, it goes back to its previous section and is marked unread. If a note was set, the note is sent as a prompt. A note that fails to send is tried again every minute, for about half an hour.
 - `<when>` accepts `2h`, `3d`, `1w`, `tomorrow`, `mon`…`sun`, `next-week`, or `YYYY-MM-DD[THH:MM]`.
 - Unsnoozing puts the thread back in the section it came from.
 
