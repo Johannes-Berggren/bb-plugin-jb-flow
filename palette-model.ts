@@ -5,7 +5,7 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState } from "./server";
-import { needsMe } from "./studio-model.ts";
+import { needsMe } from "./needs-me.ts";
 
 export type Range = [start: number, end: number];
 
