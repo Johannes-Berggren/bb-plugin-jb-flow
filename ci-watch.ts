@@ -293,7 +293,13 @@ function httpStatus(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** Whether a thread is known to be gone. A failed lookup isn't proof: only a 404 or 410 counts. */
+/** A failed lookup that proves the thread is gone. Anything else (a timeout, a 503) proves nothing. */
+export function isGoneError(error: unknown): boolean {
+  const status = httpStatus(error);
+  return status === 404 || status === 410;
+}
+
+/** Whether a thread is known to be gone. */
 export async function isThreadGone(
   getThread: () => Promise<{ archivedAt: number | null; deletedAt: number | null }>,
 ): Promise<boolean> {
@@ -301,7 +307,6 @@ export async function isThreadGone(
     const thread = await getThread();
     return thread.archivedAt !== null || thread.deletedAt !== null;
   } catch (error) {
-    const status = httpStatus(error);
-    return status === 404 || status === 410;
+    return isGoneError(error);
   }
 }

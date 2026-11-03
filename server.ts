@@ -23,6 +23,8 @@ import { laneSections } from "./lanes";
 import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatWhen, parseWhen } from "./when";
+import { isGoneError } from "./ci-watch";
+import { wakeDueSnoozes } from "./snooze-wake";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
@@ -35,6 +37,10 @@ const snoozeSchema = z.object({
   note: z.string().nullable(),
   fromSectionId: z.string().nullable(),
   snoozedAt: z.number(),
+  /** The wake has begun: the thread may have left Snoozed, and its note may still be unsent. */
+  wakeStarted: z.boolean().optional(),
+  /** Failed attempts to send the note. */
+  noteFailures: z.number().optional(),
 });
 export type Snooze = z.infer<typeof snoozeSchema>;
 
@@ -568,16 +574,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (waitsOnOthers(output.output ?? "")) restoreTo = waiting;
     }
     await bb.sdk.threads.update({ threadId, sectionId: restoreTo });
-    if (reason === "due") {
-      await bb.sdk.threads.markUnread({ threadId });
-      if (record.note !== null) {
-        await bb.sdk.threads.send({
-          threadId,
-          mode: "queue-if-active",
-          input: [{ type: "text", text: `⏰ Snooze reminder: ${record.note}`, mentions: [] }],
-        });
-      }
-    }
+    if (reason === "due") await bb.sdk.threads.markUnread({ threadId });
   }
 
   async function unsnooze(threadId: string): Promise<boolean> {
@@ -596,37 +593,34 @@ export default async function plugin(bb: BbPluginApi) {
   async function wakeDue(): Promise<number> {
     const snoozes = await getSnoozes();
     if (Object.keys(snoozes).length === 0) return 0;
-    // No section (never created, or deleted): every record below is stale.
-    const sectionId = await findSnoozedSection();
-    let woken = 0;
-    // Removed at the end against a fresh read, keyed by the record we saw, so
-    // a snooze set meanwhile (or a re-snooze) survives.
-    const done = new Map<string, number>();
-    for (const [threadId, record] of Object.entries(snoozes)) {
-      let thread: { sectionId: string | null; archivedAt: number | null };
-      try {
-        thread = await bb.sdk.threads.get({ threadId });
-      } catch {
-        done.set(threadId, record.snoozedAt);
-        continue;
-      }
-      // Moved out of Snoozed by hand, or archived: the snooze no longer applies.
-      if (sectionId === null || thread.sectionId !== sectionId || thread.archivedAt !== null) {
-        done.set(threadId, record.snoozedAt);
-        continue;
-      }
-      if (record.until > Date.now()) continue;
-      try {
-        await wake(threadId, record, "due");
-        done.set(threadId, record.snoozedAt);
-        woken += 1;
-      } catch (error) {
-        bb.log.warn(`wake ${threadId} failed: ${String(error)}`);
-      }
-    }
-    if (done.size > 0) {
+    const { done, noteFailures, woken } = await wakeDueSnoozes(snoozes, {
+      now: () => Date.now(),
+      // No section (never created, or deleted): nothing can be in it.
+      snoozedSectionId: await findSnoozedSection(),
+      getThread: (threadId) => bb.sdk.threads.get({ threadId }),
+      isGoneError,
+      markStarted: (threadId, record) =>
+        updateSnoozes((all) => {
+          if (all[threadId]?.snoozedAt === record.snoozedAt) all[threadId] = { ...all[threadId]!, wakeStarted: true };
+        }),
+      restore: (threadId, record) => wake(threadId, record, "due"),
+      sendNote: async (threadId, note) => {
+        await bb.sdk.threads.send({
+          threadId,
+          mode: "queue-if-active",
+          input: [{ type: "text", text: `⏰ Snooze reminder: ${note}`, mentions: [] }],
+        });
+      },
+      warn: (message) => bb.log.warn(message),
+    });
+    // Against a fresh read, keyed by the record we saw, so a snooze set meanwhile
+    // (or a re-snooze) survives.
+    if (done.size > 0 || noteFailures.size > 0) {
       await updateSnoozes((all) => {
         for (const [threadId, snoozedAt] of done) if (all[threadId]?.snoozedAt === snoozedAt) delete all[threadId];
+        for (const [threadId, { snoozedAt, failures }] of noteFailures) {
+          if (all[threadId]?.snoozedAt === snoozedAt) all[threadId] = { ...all[threadId]!, noteFailures: failures };
+        }
       });
       changed();
     }
