@@ -328,6 +328,12 @@ export default async function plugin(bb: BbPluginApi) {
         "Go through unread threads one card at a time: mark read, keep unread, reply, snooze or archive. Adds a Catch up page with an unread count, a command (⌥⇧C), a palette action and a line on the home page. Off hides them.",
       default: true,
     },
+    createdRowOrder: {
+      type: "boolean",
+      label: "Keep threads in creation order",
+      description: "Triage list rows stay put, newest thread first, instead of moving to the top on new activity.",
+      default: false,
+    },
     polishShell: {
       type: "boolean",
       label: "Polish the entire BB interface",

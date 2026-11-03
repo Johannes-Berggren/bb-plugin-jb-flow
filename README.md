@@ -299,6 +299,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - Any other sections, collapsed.
   - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here.
   - Snoozed threads, collapsed.
+- **Filters** above the list (Needs me, Your move, Running and so on) narrow it while keeping your sections, each expanded. Done stays one list, with Archive all.
 - **Machines**: once threads run on more than one machine, each machine gets a filter chip with its thread count (e.g. *Mac Studio 48*, *MacBook Air 2*); click one to see that machine's threads across all sections. Rows on a machine other than the one BB runs on carry a short tag (*Air*, *MBP*), and the hover preview always names the machine.
 - **Rows** show a project chip with a stable colour per project, tags, and an age fade for idle threads.
 - **Keyboard**, on a focused row:
@@ -425,6 +426,7 @@ Under **Settings → JB Flow**:
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).
+- **Keep threads in creation order**: Triage list rows stay put, newest thread first, instead of moving to the top on new activity (off by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
 - **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
