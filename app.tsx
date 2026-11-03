@@ -60,6 +60,7 @@ import {
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
+import { groupBySection, sortRows } from "./sidebar-groups";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
 import { needsMe } from "./studio-model";
 import { Button } from "@/components/ui/button";
@@ -1451,13 +1452,14 @@ function TriageThreadList({
     );
   };
 
+  const createdOrder = useSettings().values?.createdRowOrder === true;
   const { groups, smartCounts, machineCounts } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
     const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
-    const visible = threads
+    const matching = threads
       .filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId)))
-      .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter))
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter));
+    const visible = sortRows(matching, createdOrder);
     // No Snoozed section until the first snooze: then nothing is snoozed (a null
     // sectionId is "unsectioned", not "in a missing section").
     const isSnoozed = (thread: PluginSidebarThread) => snoozedSectionId !== null && thread.sectionId === snoozedSectionId;
@@ -1525,7 +1527,30 @@ function TriageThreadList({
       };
     }
 
-    // A smart filter replaces the list with that one computed set.
+    // A smart filter narrows the list to that computed set, keeping your sections.
+    // Done stays one flat list, so Archive all has one place to act on.
+    if (smart !== null && smart !== "done") {
+      const entry = SMART.find((candidate) => candidate.id === smart)!;
+      const { sections: bySection, loose } = groupBySection(awake.filter(sets[smart as SmartId]), sectionKeys, (thread) =>
+        sectionKey(thread.sectionId),
+      );
+      const filtered: Group[] = loose.length > 0
+        ? [{ id: `smart:${smart}`, title: entry.label, threads: loose, dynamic: { glyph: entry.glyph, tone: entry.tone } }]
+        : [];
+      for (const { key, threads: matches } of bySection) {
+        const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
+        const section = lane ? null : otherSections.find((candidate) => candidate.id === key);
+        // "smart:" ids stay expanded: a filter's matches can't hide in a collapsed section.
+        if (lane) {
+          filtered.push({ id: `smart:${smart}:${key}`, title: lane.title, threads: matches, section: { id: lane.sectionId, name: lane.title, isLane: true } });
+        } else if (section) {
+          filtered.push({ id: `smart:${smart}:${key}`, title: section.name, threads: matches, section: { id: section.id, name: section.name, isLane: false } });
+        } else {
+          filtered.push({ id: `smart:${smart}:${key}`, title: entry.label, threads: matches, dynamic: { glyph: entry.glyph, tone: entry.tone } });
+        }
+      }
+      return { smartCounts, machineCounts, groups: filtered };
+    }
     if (smart !== null) {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
       const smartId = smart as SmartId;
@@ -1630,7 +1655,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts, machineCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines]);
+  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder]);
 
   const defaults = useMemo(
     () =>
