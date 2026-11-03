@@ -1229,14 +1229,21 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
 
   /** Everything the deck shows, in one call. */
   async function deckSnapshot() {
-    const [threads, waiting, radar, focused] = await Promise.all([
+    const [threads, waiting, radar, focused, snoozedSection] = await Promise.all([
       listThreadsCached(),
       awaiting.all(),
       prRadar(),
       decisionsFor(focus.focusedThreadId()),
+      findSnoozedSection(),
     ]);
+    // Snoozed threads stay hidden until they wake, as in the sidebar and `needs-me`.
     const open = threads.filter(
-      (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && thread.parentThreadId === null,
+      (thread) =>
+        thread.archivedAt === null &&
+        thread.deletedAt === null &&
+        thread.visibility === "visible" &&
+        thread.parentThreadId === null &&
+        (snoozedSection === null || thread.sectionId !== snoozedSection),
     );
     const needs = open.filter((thread) => needsAttention(thread, waiting));
     const needIds = new Set(needs.map((thread) => thread.id));
