@@ -59,11 +59,11 @@ import {
   worstPr,
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
-import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
+import { DUE_PRESETS, SNOOZE_PRESETS, formatDue, formatWhen, parseDue, parseWhen } from "./when";
 import { groupBySection, quietFor, sortRows } from "./sidebar-groups";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
 import { needsMe } from "./needs-me";
-import { nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
+import { DUE_NOW_MS, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -544,6 +544,8 @@ function ThreadRow({
   focused,
   onToggleFocus,
   reason,
+  due,
+  onSetDue,
 }: {
   thread: PluginSidebarThread;
   /** Marked as Focus. */
@@ -552,6 +554,10 @@ function ThreadRow({
   onToggleFocus: (() => void) | undefined;
   /** On a Now or Moving row: who holds the thread, and for how long. */
   reason: { text: string; urgent: boolean } | undefined;
+  /** This thread's deadline, if it has one. */
+  due: FlowState["due"][string] | undefined;
+  /** Missing when Now and Focus is turned off. */
+  onSetDue: (() => void) | undefined;
   workspaceState: WorkspaceState;
   onWorkspace: (workspaceId: string | null, automatic: boolean) => void;
   project: PluginSidebarProject | undefined;
@@ -619,6 +625,9 @@ function ThreadRow({
     } else if (event.key === "f" && onToggleFocus) {
       event.preventDefault();
       onToggleFocus();
+    } else if (event.key === "d" && onSetDue) {
+      event.preventDefault();
+      onSetDue();
     } else if (event.key === "u") {
       event.preventDefault();
       void actions.setRead(thread.id, thread.isUnread);
@@ -645,6 +654,7 @@ function ThreadRow({
           prs={prs}
           watching={watching}
           snoozeUntil={snoozeUntil}
+          dueDetail={due ? `${formatDue(due.at)}${due.reason ? `: ${due.reason}` : ""}${due.source === "agent" ? " (set by the agent)" : ""}` : null}
         >
         <a
           href={thread.href}
@@ -712,6 +722,11 @@ function ThreadRow({
               {run.stuck ? `stuck ${duration(run.silent)}` : duration(run.elapsed)}
             </span>
           ) : null}
+          {due && !reasonChip ? (
+            <span className={cn("shrink-0 text-[10px] tabular-nums", due.at - now <= DUE_NOW_MS ? "font-medium text-amber-600" : "text-muted-foreground")}>
+              {formatDue(due.at, new Date(now))}
+            </span>
+          ) : null}
           {reasonChip ? (
             <span className={cn("shrink-0 text-[10px] tabular-nums", reasonChip.urgent ? "font-medium text-amber-600" : "text-muted-foreground")}>
               {reasonChip.text}
@@ -777,6 +792,12 @@ function ThreadRow({
           <ContextMenuItem onSelect={onToggleFocus}>
             <Glyph name="star" className="size-4" />
             {focused ? "Remove from Focus" : "Add to Focus"}
+          </ContextMenuItem>
+        ) : null}
+        {onSetDue ? (
+          <ContextMenuItem onSelect={onSetDue}>
+            <Glyph name="alarm" className="size-4" />
+            {due ? "Change due date…" : "Set due date…"}
           </ContextMenuItem>
         ) : null}
         <ContextMenuItem
@@ -1057,6 +1078,76 @@ function ConfirmDialog({
             {confirmLabel}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DueDialog({ threadId, onClose }: { threadId: string; onClose: () => void }) {
+  const { rpc, state } = useFlowState();
+  const current = state?.due[threadId];
+  const [custom, setCustom] = useState("");
+  const [reason, setReason] = useState(current?.reason ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const save = async (at: () => number | null) => {
+    setPending(true);
+    setError(null);
+    try {
+      const value = at();
+      await rpc.call("due_set", { threadId, at: value, reason: value === null || reason.trim() === "" ? null : reason.trim() });
+      onClose();
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Due date</DialogTitle>
+          <DialogDescription>
+            {current
+              ? `${formatDue(current.at)}, ${formatWhen(current.at)}. ${current.source === "agent" ? "Set by the agent." : "Set by you."}`
+              : "A thread rises to Now as its date gets close."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-2">
+          {DUE_PRESETS.map((preset) => (
+            <Button key={preset.when} variant="outline" size="sm" disabled={pending} onClick={() => void save(() => parseDue(preset.when))}>
+              {preset.label}
+            </Button>
+          ))}
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (custom.trim() !== "") void save(() => parseDue(custom));
+          }}
+        >
+          <Input value={custom} onChange={(event) => setCustom(event.target.value)} placeholder="fri, 2026-10-12…" aria-label="Custom due date" />
+          <Button type="submit" size="sm" disabled={pending || custom.trim() === ""}>
+            Set
+          </Button>
+        </form>
+        <Input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Optional: what falls due" aria-label="What falls due" />
+        {error === null ? null : (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {current ? (
+          <DialogFooter>
+            <Button variant="ghost" size="sm" disabled={pending} onClick={() => void save(() => null)}>
+              Clear date
+            </Button>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -1567,11 +1658,15 @@ function TriageThreadList({
     entry && state
       ? {
           text: reasonLabel(entry, state, now),
-          urgent: entry.state === "blocked" || (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
+          urgent:
+            entry.state === "blocked" ||
+            (entry.dueAt !== null && entry.dueAt - now <= DUE_NOW_MS) ||
+            (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
         }
       : undefined;
 
   const [focusFull, setFocusFull] = useState<string | null>(null);
+  const [dueTarget, setDueTarget] = useState<string | null>(null);
   const setFocus = (threadId: string, focused: boolean) =>
     rpc.call("focus_set", { threadId, focused }).catch((cause) => toast.error(errorText(cause)));
   // Threads in Focus across every workspace: the limit is on you, not on a tab.
@@ -1720,7 +1815,7 @@ function TriageThreadList({
     const result: Group[] = [];
     if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
     if (queue) {
-      const rows = (entries: readonly NowEntry[]) => entries.flatMap((entry) => awake.find((thread) => thread.id === entry.thread.id) ?? []);
+      const rows = (entries: readonly NowEntry[]) => entries.flatMap((entry) => visible.find((thread) => thread.id === entry.thread.id) ?? []);
       result.push({ id: "now", title: "Now", threads: rows(queue.now), limit: NOW_ROWS, dynamic: { glyph: "star", tone: "text-amber-500" } });
       result.push({ id: "moving", title: "Moving", threads: rows(queue.moving), defaultCollapsed: true, dynamic: { glyph: "hourglass", tone: "text-violet-500" } });
     } else {
@@ -1785,7 +1880,7 @@ function TriageThreadList({
     result.push({
       id: "snoozed",
       title: "Snoozed",
-      threads: snoozed.sort((a, b) => (state?.snoozes[a.id]?.until ?? 0) - (state?.snoozes[b.id]?.until ?? 0)),
+      threads: snoozed.filter((thread) => !nowEntries.has(thread.id)).sort((a, b) => (state?.snoozes[a.id]?.until ?? 0) - (state?.snoozes[b.id]?.until ?? 0)),
       defaultCollapsed: true,
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
@@ -1817,7 +1912,7 @@ function TriageThreadList({
     >
       <div className="jf-triage-heading"><span>Threads</span>
         {smart !== null && <button type="button" onClick={() => setSmart(null)}>Clear filter</button>}
-        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus" : ""} · e archive · u unread · j/k move`}><Icon name="Info" className="size-3" /></span>
+        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus · d due date" : ""} · e archive · u unread · j/k move`}><Icon name="Info" className="size-3" /></span>
       </div>
       <div className="jf-triage-filters">
         {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
@@ -1965,6 +2060,8 @@ function TriageThreadList({
                     machine={rowMachine(thread)}
                     focused={nowEnabled && state?.focused[thread.id] !== undefined}
                     onToggleFocus={nowEnabled ? () => toggleFocus(thread.id) : undefined}
+                    due={nowEnabled ? state?.due[thread.id] : undefined}
+                    onSetDue={nowEnabled ? () => setDueTarget(thread.id) : undefined}
                     reason={rowReason(group.id === "now" || group.id === "moving" ? nowEntries.get(thread.id) : undefined)}
                   />
                 ))}
@@ -1987,6 +2084,7 @@ function TriageThreadList({
           </section>
         );
       })}
+      {dueTarget === null ? null : <DueDialog threadId={dueTarget} onClose={() => setDueTarget(null)} />}
       {focusFull === null ? null : (
         <FocusLimitDialog
           limit={focusLimit}

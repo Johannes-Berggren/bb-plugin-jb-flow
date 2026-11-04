@@ -103,3 +103,67 @@ export function formatWhen(timestamp: number, now: Date = new Date()): string {
   if (days > 1 && days < 7) return `${date.toLocaleDateString("en-GB", { weekday: "short" })} ${time}`;
   return `${date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${time}`;
 }
+
+// --- due dates -----------------------------------------------------------------------
+
+/** The due choices offered before free text. */
+export const DUE_PRESETS = [
+  { label: "Today", when: "today" },
+  { label: "Tomorrow", when: "tomorrow" },
+  { label: "Friday", when: "fri" },
+  { label: "In 1 week", when: "1w" },
+] as const;
+
+function endOfDay(date: Date): number {
+  const end = new Date(date);
+  end.setHours(23, 59, 59, 999);
+  return end.getTime();
+}
+
+/**
+ * Like parseWhen, for a deadline: a day means the end of that day, not 08:00, and
+ * a date may be in the past, because a deadline can already have been missed.
+ */
+export function parseDue(input: string, now: Date = new Date()): number {
+  const value = input.trim().toLowerCase();
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (isoDate !== null) {
+    const [year, month, day] = [Number(isoDate[1]), Number(isoDate[2]), Number(isoDate[3])];
+    const date = new Date(year, month - 1, day);
+    // new Date rolls 2026-02-31 over into March.
+    if (date.getMonth() !== month - 1 || date.getDate() !== day) throw new Error(`"${input}" isn't a date.`);
+    return endOfDay(date);
+  }
+  if (/^\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2}/.test(value)) {
+    const parsed = new Date(input.trim().replace(" ", "T"));
+    if (Number.isNaN(parsed.getTime())) throw new Error(`Cannot parse "${input}".`);
+    return parsed.getTime();
+  }
+  if (value === "today" || value === "tonight") return endOfDay(now);
+  // Hours and minutes are exact; anything longer means that day.
+  if (/^\d+\s*(?:m|min|h)$/.test(value)) return parseWhen(value, now);
+  return endOfDay(new Date(parseWhen(value, now)));
+}
+
+/** A status report's "**Due:** 2026-11-05 · invoices fall due". Dates only: agents write exact ones, and anything else is ignored. */
+export function parseDueLine(line: string): { at: number; reason: string | null } | null {
+  const match = /^(\d{4}-\d{2}-\d{2}(?:[tT ]\d{2}:\d{2})?)\s*(?:[·:–—-]\s*(.*))?$/.exec(line.trim());
+  if (match === null) return null;
+  try {
+    return { at: parseDue(match[1]!), reason: match[2]?.trim() || null };
+  } catch {
+    return null;
+  }
+}
+
+/** "due tomorrow", "due Fri", "due 12 Nov", "overdue", "2d overdue". */
+export function formatDue(at: number, now: Date = new Date()): string {
+  const date = new Date(at);
+  const days = Math.round((atHour(date, 0).getTime() - atHour(now, 0).getTime()) / 86_400_000);
+  if (days < 0) return `${-days}d overdue`;
+  if (at < now.getTime()) return "overdue";
+  if (days === 0) return "due today";
+  if (days === 1) return "due tomorrow";
+  if (days < 7) return `due ${date.toLocaleDateString("en-GB", { weekday: "short" })}`;
+  return `due ${date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
+}

@@ -29,7 +29,9 @@ removes an override; `workspaceId: null, automatic: false` forces No workspace.
 
 ## Now and Focus
 
-A UI feature of the Triage list, on by default (**Now and Focus** in the plugin settings). The **Now** group at the top ranks what to do next: threads blocked on you, unread asks, and threads marked as **Focus** that want something from you. Reading a thread doesn't clear it from Now. **Moving** holds Focus threads that don't need you right now. Press `f` on a row to add or remove Focus. A thread keeps its section while it's in Focus.
+A UI feature of the Triage list, on by default (**Now and Focus** in the plugin settings). The **Now** group at the top ranks what to do next: threads blocked on you, unread asks, threads marked as **Focus** that want something from you, and threads with a deadline coming up. Reading a thread doesn't clear it from Now. **Moving** holds Focus threads that don't need you right now. Press `f` on a row to add or remove Focus. A thread keeps its section while it's in Focus.
+
+Due dates: press `d` on a row, or run `bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]`. Agents use the `set_thread_due` tool for real outside deadlines only. A date the user set can't be changed by an agent.
 
 When a user asks how to keep track of what matters most, point them here.
 
