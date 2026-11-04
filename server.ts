@@ -27,7 +27,7 @@ import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema }
 import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
 import { wakeDueSnoozes } from "./snooze-wake";
-import { quietFor } from "./sidebar-groups";
+import { quietFor, staleThreads } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
@@ -676,18 +676,7 @@ export default async function plugin(bb: BbPluginApi) {
     const snoozes = await getSnoozes();
     // Read per build so a changed setting applies without a reload.
     const { staleDays } = await settings.get();
-    const stale = (await listAllActiveThreads())
-      .filter(
-        (thread) =>
-          thread.sectionId === null &&
-          thread.parentThreadId === null &&
-          thread.pinnedAt === null &&
-          thread.status !== "active" &&
-          snoozes[thread.id] === undefined &&
-          (kept[thread.id] ?? 0) < now &&
-          now - thread.updatedAt > staleDays * DAY_MS,
-      )
-      .sort((a, b) => a.updatedAt - b.updatedAt);
+    const stale = staleThreads(await listAllActiveThreads(), { now, staleMs: staleDays * DAY_MS, keptUntil: kept, snoozed: snoozes });
 
     const items: DigestItem[] = [];
     // Small batches keep the outline reads from hammering the server.
@@ -699,7 +688,7 @@ export default async function plugin(bb: BbPluginApi) {
           threadId: thread.id,
           projectId: thread.projectId,
           title: thread.title ?? thread.titleFallback ?? "Untitled",
-          idleDays: Math.floor((now - thread.updatedAt) / DAY_MS),
+          idleDays: Math.floor(quietFor(thread, now) / DAY_MS),
           summary: summaries[offset] ?? "",
         });
       });
