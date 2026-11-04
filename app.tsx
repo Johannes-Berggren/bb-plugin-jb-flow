@@ -63,6 +63,7 @@ import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { groupBySection, sortRows } from "./sidebar-groups";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
 import { needsMe } from "./needs-me";
+import { nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -540,8 +541,17 @@ function ThreadRow({
   onNewSection,
   machine,
   workspaceState, onWorkspace,
+  focused,
+  onToggleFocus,
+  reason,
 }: {
   thread: PluginSidebarThread;
+  /** Marked as Focus. */
+  focused: boolean;
+  /** Missing when Now and Focus is turned off. */
+  onToggleFocus: (() => void) | undefined;
+  /** On a Now or Moving row: who holds the thread, and for how long. */
+  reason: { text: string; urgent: boolean } | undefined;
   workspaceState: WorkspaceState;
   onWorkspace: (workspaceId: string | null, automatic: boolean) => void;
   project: PluginSidebarProject | undefined;
@@ -583,6 +593,8 @@ function ThreadRow({
   const worst = worstPr(prs);
   const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
   const rpc = useRpc<typeof rpcContract>();
+  // A running thread already shows its run time.
+  const reasonChip = run ? undefined : reason;
 
   const onKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -604,6 +616,9 @@ function ThreadRow({
     } else if (event.key === "t") {
       event.preventDefault();
       onTag();
+    } else if (event.key === "f" && onToggleFocus) {
+      event.preventDefault();
+      onToggleFocus();
     } else if (event.key === "u") {
       event.preventDefault();
       void actions.setRead(thread.id, thread.isUnread);
@@ -665,6 +680,11 @@ function ThreadRow({
           }}
         >
           <StatusIcon status={status} />
+          {focused ? (
+            <span role="img" aria-label="In Focus" title="In Focus" className="shrink-0">
+              <Glyph name="star" className="size-3 text-amber-500" />
+            </span>
+          ) : null}
           <span
             className={cn(
               "min-w-0 flex-1 truncate",
@@ -692,7 +712,12 @@ function ThreadRow({
               {run.stuck ? `stuck ${duration(run.silent)}` : duration(run.elapsed)}
             </span>
           ) : null}
-          {worst ? (
+          {reasonChip ? (
+            <span className={cn("shrink-0 text-[10px] tabular-nums", reasonChip.urgent ? "font-medium text-amber-600" : "text-muted-foreground")}>
+              {reasonChip.text}
+            </span>
+          ) : null}
+          {worst && !reasonChip ? (
             <button
               type="button"
               tabIndex={-1}
@@ -748,6 +773,12 @@ function ThreadRow({
           </ContextMenuItem>
         ) : null}
         <ContextMenuSeparator />
+        {onToggleFocus ? (
+          <ContextMenuItem onSelect={onToggleFocus}>
+            <Glyph name="star" className="size-4" />
+            {focused ? "Remove from Focus" : "Add to Focus"}
+          </ContextMenuItem>
+        ) : null}
         <ContextMenuItem
           onSelect={() => void actions.setPinned(thread.id, !thread.isPinned)}
         >
@@ -1031,6 +1062,54 @@ function ConfirmDialog({
   );
 }
 
+/** Focus is full: drop one to make room, or keep them all. */
+function FocusLimitDialog({
+  limit,
+  focusedIds,
+  onReplace,
+  onKeepAll,
+  onClose,
+}: {
+  limit: number;
+  focusedIds: readonly string[];
+  onReplace: (threadId: string) => void;
+  onKeepAll: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Focus is full</DialogTitle>
+          <DialogDescription>
+            You have {focusedIds.length} threads in Focus, and your limit is {limit}. Pick one to drop, or keep them all.
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+          {focusedIds.map((threadId) => (
+            <li key={threadId} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">
+                <ThreadTitle threadId={threadId} />
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => onReplace(threadId)}>
+                Drop
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={onKeepAll}>
+            Keep all
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // --- drag threads between sections ---------------------------------------------------
 // Pointer-based (not HTML5 drag) so bb's own drag-to-split keeps working: a
 // drop inside the sidebar moves the thread; leaving the sidebar cancels ours
@@ -1256,6 +1335,12 @@ function FilterChip({ hint, active, onClick, glyph, tone, label, count }: {
   );
 }
 
+/** How many Now rows show before "Show N more". The list only helps while it's short. */
+const NOW_ROWS = 7;
+const DEFAULT_FOCUS_LIMIT = 7;
+/** Waiting this long on you turns the row's chip amber. */
+const OVERDUE_WAIT_MS = 24 * 3_600_000;
+
 function TriageThreadList({
   activeThreadId,
   onNavigate,
@@ -1451,13 +1536,54 @@ function TriageThreadList({
     );
   };
 
-  const createdOrder = useSettings().values?.createdRowOrder === true;
+  const settingValues = useSettings().values;
+  const createdOrder = settingValues?.createdRowOrder === true;
+  const nowEnabled = settingValues?.nowQueue === true;
+  const focusLimit = Math.max(1, Number(settingValues?.focusLimit) || DEFAULT_FOCUS_LIMIT);
+  const liveRows = useMemo(
+    () => threads.filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId))),
+    [threads],
+  );
+  // Waits and "no next step" depend on the clock, so the queue is rebuilt each minute.
+  const nowMinute = Math.floor(now / 60_000);
+  const lastNowOrder = useRef<readonly string[]>([]);
+  const queue = useMemo(() => {
+    if (!nowEnabled || !state) return null;
+    const candidates = liveRows
+      .filter((thread) => !thread.isPinned)
+      .map((thread) => sidebarNowThread(thread, state.snoozedSectionId !== null && thread.sectionId === state.snoozedSectionId));
+    const result = nowQueue(candidates, state, { now: Date.now(), openThreadId: activeThreadId ?? null, previous: lastNowOrder.current });
+    lastNowOrder.current = result.now.map((entry) => entry.thread.id);
+    return result;
+  }, [nowEnabled, state, liveRows, activeThreadId, nowMinute]);
+  const nowEntries = useMemo(
+    () => new Map<string, NowEntry>([...(queue?.now ?? []), ...(queue?.moving ?? [])].map((entry) => [entry.thread.id, entry])),
+    [queue],
+  );
+
+  const rowReason = (entry: NowEntry | undefined) =>
+    entry && state
+      ? {
+          text: reasonLabel(entry, state, now),
+          urgent: entry.state === "blocked" || (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
+        }
+      : undefined;
+
+  const [focusFull, setFocusFull] = useState<string | null>(null);
+  const setFocus = (threadId: string, focused: boolean) =>
+    rpc.call("focus_set", { threadId, focused }).catch((cause) => toast.error(errorText(cause)));
+  // Threads in Focus across every workspace: the limit is on you, not on a tab.
+  const focusedIds = allThreads.filter((thread) => !thread.isArchived && state?.focused[thread.id] !== undefined).map((thread) => thread.id);
+  const toggleFocus = (threadId: string) => {
+    if (state?.focused[threadId] !== undefined) void setFocus(threadId, false);
+    else if (focusedIds.length >= focusLimit) setFocusFull(threadId);
+    else void setFocus(threadId, true);
+  };
+
   const { groups, smartCounts, machineCounts } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
     const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
-    const matching = threads
-      .filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId)))
-      .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter));
+    const matching = liveRows.filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter));
     const visible = sortRows(matching, createdOrder);
     // No Snoozed section until the first snooze: then nothing is snoozed (a null
     // sectionId is "unsectioned", not "in a missing section").
@@ -1582,19 +1708,27 @@ function TriageThreadList({
       return open.length > 0 && open.every((pr) => pr.attention === "review_requested");
     };
     const waitingLane = lanes.find((lane) => lane.id === "waiting");
-    const stalled = awake.filter((thread) => !thread.isPinned && !needs(thread) && isStalled(thread));
+    // With Now on, its groups claim their rows; with it off, Needs me does.
+    const claimed = (thread: PluginSidebarThread) => (queue ? nowEntries.has(thread.id) : needs(thread));
+    const stalled = awake.filter((thread) => !thread.isPinned && !claimed(thread) && isStalled(thread));
     const pinned = awake.filter((thread) => thread.isPinned);
     const attention = awake.filter((thread) => !thread.isPinned && needs(thread));
-    const rest = awake.filter((thread) => !thread.isPinned && !needs(thread) && !isStalled(thread) && !sets.done(thread));
+    const rest = awake.filter((thread) => !thread.isPinned && !claimed(thread) && !isStalled(thread) && !sets.done(thread));
 
     const result: Group[] = [];
     if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
-    result.push({
-      id: "needs-me",
-      title: "Needs me",
-      threads: attention,
-      dynamic: { glyph: "question", tone: "text-amber-500" },
-    });
+    if (queue) {
+      const rows = (entries: readonly NowEntry[]) => entries.flatMap((entry) => awake.find((thread) => thread.id === entry.thread.id) ?? []);
+      result.push({ id: "now", title: "Now", threads: rows(queue.now), limit: NOW_ROWS, dynamic: { glyph: "star", tone: "text-amber-500" } });
+      result.push({ id: "moving", title: "Moving", threads: rows(queue.moving), defaultCollapsed: true, dynamic: { glyph: "hourglass", tone: "text-violet-500" } });
+    } else {
+      result.push({
+        id: "needs-me",
+        title: "Needs me",
+        threads: attention,
+        dynamic: { glyph: "question", tone: "text-amber-500" },
+      });
+    }
     if (stalled.length > 0) {
       result.push({
         id: "stalled",
@@ -1637,7 +1771,7 @@ function TriageThreadList({
     }
     const firstUser = result.find((group) => group.section !== undefined);
     if (firstUser) firstUser.firstUserGroup = true;
-    const done = awake.filter((thread) => !thread.isPinned && !needs(thread) && sets.done(thread));
+    const done = awake.filter((thread) => !thread.isPinned && !claimed(thread) && sets.done(thread));
     result.push({
       id: "done",
       title: "Done",
@@ -1654,7 +1788,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts, machineCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder]);
+  }, [threads, liveRows, queue, nowEntries, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder]);
 
   const defaults = useMemo(
     () =>
@@ -1681,7 +1815,7 @@ function TriageThreadList({
     >
       <div className="jf-triage-heading"><span>Threads</span>
         {smart !== null && <button type="button" onClick={() => setSmart(null)}>Clear filter</button>}
-        <span className="jf-triage-keyboard" title="Keys on a focused row: 1–5 move to lane · s snooze · t tag · e archive · u unread · j/k move"><Icon name="Info" className="size-3" /></span>
+        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus" : ""} · e archive · u unread · j/k move`}><Icon name="Info" className="size-3" /></span>
       </div>
       <div className="jf-triage-filters">
         {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
@@ -1747,7 +1881,7 @@ function TriageThreadList({
       <MissingLanesHint sections={sections} pinned={state?.laneSections ?? {}} />
       {groups.map((group) => {
         const keepEmpty =
-          group.id === "needs-me" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
+          group.id === "needs-me" || group.id === "now" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
         if (group.threads.length === 0 && !keepEmpty) return null;
         const collapsed = group.id.startsWith("smart:") ? false : isCollapsed(group.id);
         const limit = expanded[group.id] ? Infinity : (group.limit ?? Infinity);
@@ -1798,7 +1932,7 @@ function TriageThreadList({
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="py-1 pl-6 pr-2 text-xs text-muted-foreground">
-                {group.id === "needs-me" ? "You’re all caught up." : "No threads yet."}
+                {group.id === "needs-me" || group.id === "now" ? "You’re all caught up." : "No threads yet."}
               </p>
             ) : (
               <>
@@ -1827,6 +1961,9 @@ function TriageThreadList({
                     onRename={() => setRenameTarget(thread)}
                     onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
                     machine={rowMachine(thread)}
+                    focused={nowEnabled && state?.focused[thread.id] !== undefined}
+                    onToggleFocus={nowEnabled ? () => toggleFocus(thread.id) : undefined}
+                    reason={rowReason(group.id === "now" || group.id === "moving" ? nowEntries.get(thread.id) : undefined)}
                   />
                 ))}
                 {group.threads.length > limit ? (
@@ -1848,6 +1985,21 @@ function TriageThreadList({
           </section>
         );
       })}
+      {focusFull === null ? null : (
+        <FocusLimitDialog
+          limit={focusLimit}
+          focusedIds={focusedIds}
+          onReplace={(dropped) => {
+            void setFocus(dropped, false).then(() => setFocus(focusFull, true));
+            setFocusFull(null);
+          }}
+          onKeepAll={() => {
+            void setFocus(focusFull, true);
+            setFocusFull(null);
+          }}
+          onClose={() => setFocusFull(null)}
+        />
+      )}
       {snoozeTarget === null ? null : (
         <SnoozeDialog
           threadId={snoozeTarget}
@@ -2599,7 +2751,7 @@ export default definePluginApp((app) => {
     id: "triage",
     title: "Triage",
     description:
-      "Needs me on top, then lanes, project chips, tags, snooze and keyboard triage.",
+      "What to do next on top, then lanes, project chips, tags, snooze and keyboard triage.",
     component: TriageThreadList,
   });
   app.slots.experimental_threadHeaderAction({

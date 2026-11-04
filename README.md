@@ -264,7 +264,12 @@ thread or source reply changes. Motion respects reduced-motion preferences.
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 
 - **Groups**, top to bottom:
-  - **Needs me**: threads blocked on a prompt or permission, failed threads, and unread threads whose last message asks you something. Unread status updates stay in their section, in bold.
+  - **Now** (with **Now and Focus** on, the default; otherwise **Needs me** sits here, without the ranking): one ranked list of what to do next. It holds threads blocked on a prompt, a permission or a failure, unread threads whose last message asks you something, and threads you marked as **Focus** that want something from you. Unread status updates stay in their section, in bold.
+    - **Focus** is a mark on the thread, separate from its section: press `f` on a row, or use the right-click menu. A star shows on the row. Marking more than the **Focus limit** (default 7) asks you to drop one, or keep them all. The first time, threads in your Priority lane start in Focus.
+    - **Order:** Focus threads that are blocked, then Focus threads waiting on you (longest wait first), then Focus threads with no next step, then everything else, oldest first. Seven rows show before *Show N more*.
+    - **Reading doesn't clear it.** A Focus thread stays until the agent is moving again. Each row says who holds the thread and for how long: *you · 18h*, *no next step · 44h*, *checks failed*. The wait is counted from when the thread asked, so opening it doesn't reset it.
+    - The thread you have open keeps its row until you open another.
+  - **Moving** (collapsed, only when there are some): Focus threads that don't need you right now: an agent is running, a watch is active, someone else has the next step, or the agent has only just finished.
   - A status report is read by its fields, not its wording: a **Decision needed** callout or a **Blocked** line naming you counts as waiting on you, and a **Blocked** line naming anything else goes to Waiting for others. Keywords only apply to replies without a report.
   - **Stalled** (only when there are some): the agent said it would report back ("I'll report when it finishes", "I'm checking every 30 seconds") but the thread has been idle for over an hour with nothing watching it. **Nudge all** asks each one to check and continue.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. Each is matched to one of your sections by name the first time, then remembered by id, so you can rename a lane's section (right-click → Rename…) and it keeps its number key and behaviour. Active is the unsectioned bucket and can't be renamed.
@@ -279,6 +284,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `1`–`5` move it to a lane
   - `s` snooze
   - `t` tag
+  - `f` add to or remove from Focus
   - `e` archive
   - `u` toggle unread
   - `j`/`k` move up and down
@@ -399,6 +405,8 @@ Under **Settings → JB Flow**:
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).
+- **Now and Focus**: the ranked Now group and the Focus mark in the Triage list (on by default). Off restores Needs me.
+- **Focus limit**: how many threads can be in Focus before marking another one asks you to drop one (default 7).
 - **Keep threads in creation order**: Triage list rows stay put, newest thread first, instead of moving to the top on new activity (off by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
 - **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
