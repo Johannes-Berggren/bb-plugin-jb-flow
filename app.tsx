@@ -2,7 +2,7 @@ import "./flow-ui.css";
 import { mountWorkspaceTopBar } from "./workspace-topbar";
 import { toast } from "sonner";
 import type { WorkspaceState } from "./workspaces";
-import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSettings } from "./workspace-ui";
+import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSettings, useWorkspaceSwipe } from "./workspace-ui";
 import { useWorkspaces, useSelectedWorkspace, selectWorkspace } from "./workspace-client";
 import { inWorkspace } from "./workspaces";
 import { mountTimelineActivity } from "./timeline-activity";
@@ -1328,6 +1328,7 @@ function TriageThreadList({
     [sdk],
   );
   const drag = useThreadDrag(onDrop);
+  const onSwipe = useWorkspaceSwipe();
 
   // Lanes and your own sections share one order, so any section can sit anywhere.
   const sectionKeys = useMemo(
@@ -1722,6 +1723,7 @@ function TriageThreadList({
     <DragContext.Provider value={drag}>
     <nav
       aria-label="Triage"
+      onWheel={onSwipe}
       className="jf-triage flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >
       <div className="jf-triage-heading"><span>Threads</span>

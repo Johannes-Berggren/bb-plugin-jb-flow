@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from "react";
 import {
   experimental_useSidebarNavigation as useSidebarNavigation,
   experimental_SidebarNavigationIcon as SidebarNavigationIcon,
@@ -37,6 +37,7 @@ import {
   DialogDescription,
 } from "./components/ui/dialog";
 import { WORKSPACE_BAR_EVENT } from "./workspace-topbar";
+import { createSwipeTracker, swipeTarget } from "./workspace-swipe";
 import "./workspaces.css";
 
 const isCatchUpPanel = (item: ExperimentalSidebarNavigationItem) =>
@@ -251,6 +252,37 @@ function WorkspaceTopBarInner() {
         </button>
       )}
     </header>
+  );
+}
+
+/**
+ * A wheel handler for the sidebar: a two-finger swipe left or right moves to
+ * the next or previous workspace tab, like Spaces in Arc.
+ */
+export function useWorkspaceSwipe() {
+  const { values } = useSettings();
+  const { state, ready } = useWorkspaces();
+  const selected = useSelectedWorkspace();
+  const { threads, projects } = useSidebarThreads();
+  const context = useBbContext();
+  const navigate = useBbNavigate();
+  const track = useMemo(() => createSwipeTracker(), []);
+  return useCallback(
+    (event: ReactWheelEvent<HTMLElement>) => {
+      if (values?.workspaces !== true || !ready || state.workspaces.length === 0) return;
+      const direction = track(event);
+      if (direction === 0) return;
+      const order = [...state.workspaces.map((workspace) => workspace.id as string | null), null, "unassigned"];
+      const target = swipeTarget(order, selected, direction);
+      if (target === undefined) return;
+      switchWorkspace(target, { state, threads, projects, currentThreadId: context.threadId, navigate });
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+        event.currentTarget.animate?.(
+          [{ transform: `translateX(${direction * 24}px)`, opacity: 0.4 }, { transform: "none", opacity: 1 }],
+          { duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+        );
+    },
+    [values?.workspaces, ready, state, selected, threads, projects, context.threadId, navigate, track],
   );
 }
 
