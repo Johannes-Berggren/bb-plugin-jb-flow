@@ -15,6 +15,7 @@ export default defineConfig({
       "decision-choices.ui.test.tsx",
       "palette.ui.test.tsx",
       "catch-up.ui.test.tsx",
+      "now.ui.test.tsx",
     ],
   },
 });

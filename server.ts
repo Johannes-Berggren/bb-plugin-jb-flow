@@ -16,6 +16,7 @@ import { createActivity } from "./activity";
 import { createAwaiting, waitsOnOthers } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
+import { createNowStore } from "./now-store";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createUnreleased, unreleasedSchema } from "./unreleased";
@@ -126,6 +127,8 @@ const stateSchema = z.object({
   snoozedSectionId: z.string().nullable(),
   snoozes: z.record(z.string(), snoozeSchema),
   tags: z.record(z.string(), z.array(z.string())),
+  /** Threads you marked as Focus (thread id → when). They keep their section. */
+  focused: z.record(z.string(), z.number()),
 });
 export type FlowState = z.infer<typeof stateSchema>;
 
@@ -174,6 +177,10 @@ export const rpcContract = defineRpcContract({
       tags: z.array(z.string().trim().min(1).max(40)).max(10),
     }),
     output: z.object({ tags: z.array(z.string()) }),
+  },
+  focus_set: {
+    input: z.object({ threadId: z.string().min(1).max(200), focused: z.boolean() }),
+    output: z.object({ focused: z.boolean() }),
   },
   digest_list: {
     input: z.object({ refresh: z.boolean() }),
@@ -339,6 +346,19 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Keep threads in creation order",
       description: "Triage list rows stay put, newest thread first, instead of moving to the top on new activity.",
       default: false,
+    },
+    nowQueue: {
+      type: "boolean",
+      label: "Now and Focus",
+      description:
+        "A ranked Now group at the top of the Triage list replaces Needs me: what's blocked on you, plus threads you mark as Focus (press f on a row) that are waiting on you. Off restores Needs me.",
+      default: true,
+    },
+    focusLimit: {
+      type: "number",
+      label: "Focus limit",
+      description: "Focus only works while it's short. Marking more than this many threads asks you to drop one first, or keep them all.",
+      default: 7,
     },
     polishShell: {
       type: "boolean",
@@ -725,6 +745,7 @@ export default async function plugin(bb: BbPluginApi) {
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
   const awaiting = createAwaiting(bb, changed);
+  const nowStore = createNowStore(bb, changed);
 
   /** Watch every open PR the thread created; fall back to its branch PR. */
   async function watchThreadCi(
@@ -831,6 +852,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       snoozedSectionId: await findSnoozedSection(),
       snoozes: await getSnoozes(),
       tags: await getTags(),
+      focused: await nowStore.all(),
     };
   }
 
@@ -877,6 +899,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       changed();
       return { tags: unique };
     },
+    focus_set: async ({ threadId, focused }) => ({ focused: await nowStore.set(threadId, focused) }),
     digest_list: ({ refresh }) => readDigest(refresh),
     digest_keep: async ({ threadIds, days }) => {
       const kept = await getKept();
@@ -1053,6 +1076,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const live = new Set((await listAllActiveThreads()).map((thread) => thread.id));
     await forgetThreads((threadId) => !live.has(threadId));
     await awaiting.prune((threadId) => live.has(threadId));
+    await nowStore.prune((threadId) => live.has(threadId));
   }
   bb.events.on("thread.archived", ({ thread }) => forgetThreads((threadId) => threadId === thread.id));
 

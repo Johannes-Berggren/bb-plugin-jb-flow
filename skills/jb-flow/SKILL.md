@@ -27,6 +27,12 @@ RPC equivalents are `workspaces_get(null)`, `workspace_save(workspace)`,
 `workspace_assign({ threadId, workspaceId, automatic })`. `automatic: true`
 removes an override; `workspaceId: null, automatic: false` forces No workspace.
 
+## Now and Focus
+
+A UI feature of the Triage list, on by default (**Now and Focus** in the plugin settings). The **Now** group at the top ranks what to do next: threads blocked on you, unread asks, and threads marked as **Focus** that want something from you. Reading a thread doesn't clear it from Now. **Moving** holds Focus threads that don't need you right now. Press `f` on a row to add or remove Focus. A thread keeps its section while it's in Focus.
+
+When a user asks how to keep track of what matters most, point them here.
+
 ## Palette (⌘K)
 
 A UI feature, with no CLI. While the **⌘K opens the JB Flow palette** setting is on (it
