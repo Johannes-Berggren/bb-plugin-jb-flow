@@ -389,4 +389,26 @@ describe("Now and Focus", () => {
     expect(tab.querySelector(".jf-workspace-needs-you")).toBeNull();
     expect(tab.getAttribute("aria-description")).not.toContain("waiting on you");
   });
+
+  it("a Now row keeps its title readable: its chip truncates and its tags move to the hover card", async () => {
+    const slot = await mount({
+      threads: [thread("asked", { latestAttentionAt: NOW - 18 * HOUR }), thread("lane")],
+      state: {
+        awaiting: { asked: NOW - 18 * HOUR },
+        focused: { asked: NOW },
+        due: { asked: { at: NOW + 10 * HOUR, reason: null, source: "agent", setAt: NOW } },
+        tags: { asked: ["payments"], lane: ["perf"] },
+      },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["asked"]));
+    const row = slot.container.querySelector('[data-jb-flow-row="asked"]')!;
+    expect(row.querySelector("[data-jb-flow-row-title]")?.className).toContain("min-w-[5.5rem]");
+    const chip = row.querySelector("[data-jb-flow-reason]")!;
+    expect(chip.className).toContain("truncate");
+    expect(chip.className).not.toContain("shrink-0");
+    expect(chip.getAttribute("title")).toBe(chip.textContent);
+    expect(row.textContent).not.toContain("#payments");
+    expect(slot.container.querySelector('[data-jb-flow-row="lane"]')?.textContent).toContain("#perf");
+  });
 });
+
