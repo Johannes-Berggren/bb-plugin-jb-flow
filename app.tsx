@@ -3,7 +3,7 @@ import { mountWorkspaceTopBar } from "./workspace-topbar";
 import { toast } from "sonner";
 import type { WorkspaceState } from "./workspaces";
 import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSettings, useWorkspaceSwipe, sidebarBlock, slideIn, tabDirection } from "./workspace-ui";
-import { useWorkspaces, useSelectedWorkspace, selectWorkspace } from "./workspace-client";
+import { useWorkspaces, useSelectedWorkspace, switchWorkspace } from "./workspace-client";
 import { inWorkspace } from "./workspaces";
 import { mountTimelineActivity } from "./timeline-activity";
 // jb-flow frontend: the Triage thread list, a snooze control in the thread
@@ -1328,6 +1328,7 @@ function TriageThreadList({
     [sdk],
   );
   const drag = useThreadDrag(onDrop);
+  const navigate = useBbNavigate();
   const onSwipe = useWorkspaceSwipe();
   // Whatever switched the workspace (a swipe or a tab click), slide the new one in.
   const listRef = useRef<HTMLElement>(null);
@@ -1335,7 +1336,9 @@ function TriageThreadList({
   useLayoutEffect(() => {
     const before = shownWorkspace.current;
     shownWorkspace.current = selectedWorkspace;
-    if (before === selectedWorkspace || !listRef.current) return;
+    if (!listRef.current) return;
+    // A list that remounts mid-swipe never sees the change: don't leave the sidebar hidden.
+    if (before === selectedWorkspace) return void sidebarBlock(listRef.current).getAnimations?.().forEach((animation) => animation.cancel());
     slideIn(sidebarBlock(listRef.current), tabDirection(workspaceState.workspaces, before, selectedWorkspace));
   }, [selectedWorkspace]);
 
@@ -1463,30 +1466,50 @@ function TriageThreadList({
     );
   };
 
+  // Only a project this workspace owns, and not its last one, can move out. A
+  // thread can be here through a section or by hand while its project lives elsewhere.
+  const canMakeWorkspace = (projectId: string) =>
+    workspace !== undefined && workspace.projectIds.length > 1 && workspace.projectIds.includes(projectId) && projectById.has(projectId);
+
   // Moves a project out of this workspace into a new one of its own, then shows it.
   // Saving a project into one workspace removes it from every other.
-  const makeWorkspace = (project: { id: string; name: string }) =>
+  const makeWorkspace = (project: { id: string; name: string }) => {
+    // Workspace names are unique, and one is often named after its main project.
+    const taken = new Set(workspaceState.workspaces.map((item) => item.name.toLowerCase()));
+    let name = project.name;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${project.name} ${n}`;
     void workspaceRpc
-      .call("workspace_save", { id: null, name: project.name, projectIds: [project.id], sectionIds: [], pluginIds: [], sectionOrder: [] })
+      .call("workspace_save", { id: null, name, projectIds: [project.id], sectionIds: [], pluginIds: [], sectionOrder: [] })
       .then(async (saved) => {
         await refreshWorkspaces();
-        selectWorkspace(saved.id);
+        const next = {
+          ...workspaceState,
+          workspaces: [
+            ...workspaceState.workspaces.map((item) => ({ ...item, projectIds: item.projectIds.filter((id) => id !== project.id) })),
+            saved,
+          ],
+        };
+        switchWorkspace(saved.id, { state: next, threads: allThreads, projects, currentThreadId: activeThreadId ?? null, navigate });
         toast.success(`${project.name} is now its own workspace`);
       })
       .catch((cause) => toast.error(errorText(cause)));
+  };
 
-  const projectMenu = (project: { id: string; name: string }) => (
-    <>
-      <ContextMenuItem onSelect={() => actions.openNewThread({ projectId: project.id, focusPrompt: true })}>
-        <Icon name="Plus" className="size-4" />
-        <span className="truncate">New thread in {project.name}</span>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => makeWorkspace(project)}>
-        <Icon name="Layers" className="size-4" />
-        <span className="truncate">Make {project.name} its own workspace</span>
-      </ContextMenuItem>
-    </>
-  );
+  const projectMenu = (project: { id: string; name: string }) =>
+    projectById.has(project.id) ? (
+      <>
+        <ContextMenuItem onSelect={() => actions.openNewThread({ projectId: project.id, focusPrompt: true })}>
+          <Icon name="Plus" className="size-4" />
+          <span className="truncate">New thread in {project.name}</span>
+        </ContextMenuItem>
+        {canMakeWorkspace(project.id) ? (
+          <ContextMenuItem onSelect={() => makeWorkspace(project)}>
+            <Icon name="Layers" className="size-4" />
+            <span className="truncate">Make {project.name} its own workspace</span>
+          </ContextMenuItem>
+        ) : null}
+      </>
+    ) : null;
 
   const createdOrder = useSettings().values?.createdRowOrder === true;
   const { groups, smartCounts, machineCounts } = useMemo(() => {
@@ -1619,6 +1642,7 @@ function TriageThreadList({
       return open.length > 0 && open.every((pr) => pr.attention === "review_requested");
     };
     const waitingLane = lanes.find((lane) => lane.id === "waiting");
+    const inActive = (thread: PluginSidebarThread) => thread.sectionId === null && !(waitingLane && waitsOnOthers(thread));
     const stalled = awake.filter((thread) => !thread.isPinned && !needs(thread) && isStalled(thread));
     const pinned = awake.filter((thread) => thread.isPinned);
     const attention = awake.filter((thread) => !thread.isPinned && needs(thread));
@@ -1644,8 +1668,9 @@ function TriageThreadList({
     for (const key of sectionKeys) {
       const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
       // A workspace grouped by project shows its unfiled threads one project at a time.
-      if (lane?.id === "active" && workspace?.groupByProject) {
-        const unfiled = rest.filter((thread) => thread.sectionId === null && !(waitingLane && waitsOnOthers(thread)));
+      // With none, the plain Active lane stays, so there's still somewhere to drop.
+      const unfiled = lane?.id === "active" && workspace?.groupByProject ? rest.filter(inActive) : [];
+      if (unfiled.length > 0) {
         for (const { projectId, threads: members } of groupByProject(unfiled)) {
           const project = { id: projectId, name: projectById.get(projectId)?.name ?? "Other" };
           result.push({
@@ -1654,7 +1679,7 @@ function TriageThreadList({
             threads: members,
             limit: 15,
             project,
-            action: workspace.projectIds.length > 1 && projectById.has(projectId)
+            action: canMakeWorkspace(projectId)
               ? { label: "Make workspace", run: () => makeWorkspace(project) }
               : undefined,
           });
@@ -1670,7 +1695,7 @@ function TriageThreadList({
             lane.id === "waiting"
               ? thread.sectionId === lane.sectionId || waitsOnOthers(thread)
               : lane.id === "active"
-                ? thread.sectionId === null && !(waitingLane && waitsOnOthers(thread))
+                ? inActive(thread)
                 : thread.sectionId === lane.sectionId,
           ),
           ...(lane.id === "waiting" ? { auto: true } : {}),
@@ -1709,7 +1734,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts, machineCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById]);
+  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById, workspaceState, allThreads, projects, navigate]);
 
   const defaults = useMemo(
     () =>
@@ -1814,7 +1839,7 @@ function TriageThreadList({
             {...(group.section ? { [DROP_ATTR]: sectionKey(group.section.id), [SECTION_ATTR]: sectionKey(group.section.id) } : group.project ? { [DROP_ATTR]: ACTIVE_DROP } : {})}
             className={cn(
               "relative rounded-md transition-colors",
-              group.section && drag.dragging && drag.dragging.over === sectionKey(group.section.id) && "bg-accent/70 ring-1 ring-ring/40",
+              drag.dragging && drag.dragging.over === (group.section ? sectionKey(group.section.id) : group.project ? ACTIVE_DROP : undefined) && "bg-accent/70 ring-1 ring-ring/40",
               group.section && sectionDrag.dragging?.key === sectionKey(group.section.id) && "opacity-40",
             )}
           >
