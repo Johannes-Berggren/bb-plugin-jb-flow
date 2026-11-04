@@ -22,3 +22,11 @@ export function groupBySection<T>(
   });
   return { sections, loose: members.filter((thread) => !known.has(keyOf(thread))) };
 }
+
+/**
+ * How long since a thread last wanted attention. Reading a thread moves
+ * `updatedAt`, so that says nothing about how long it has really been quiet.
+ */
+export function quietFor(thread: { latestAttentionAt: number | null; updatedAt: number }, now: number): number {
+  return now - (thread.latestAttentionAt ?? thread.updatedAt);
+}

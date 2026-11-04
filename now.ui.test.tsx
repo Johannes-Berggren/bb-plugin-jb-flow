@@ -74,6 +74,7 @@ async function mount(options: {
   settings?: Record<string, unknown>;
   activeThreadId?: string | null;
   focusSet?: (input: { threadId: string; focused: boolean }) => unknown;
+  stateGet?: () => unknown;
 }) {
   const app = await loadPluginApp(() => import("./app"));
   const list = app.threadLists.find((item) => item.id === "triage")!;
@@ -84,7 +85,7 @@ async function mount(options: {
     {
       settings: { nowQueue: true, focusLimit: 7, ...options.settings },
       rpc: {
-        state_get: () => state,
+        state_get: options.stateGet ?? (() => state),
         workspaces_get: () => ({ workspaces: [], threadWorkspaces: {} }),
         focus_set: options.focusSet ?? ((input: { focused: boolean }) => ({ focused: input.focused })),
       } as never,
@@ -111,6 +112,44 @@ describe("Now and Focus", () => {
     cleanup();
     vi.restoreAllMocks();
     localStorage.clear();
+  });
+
+  // First in the file: flow state is cached between mounts, so only this mount starts without it.
+  it("before state loads, it shows Now loading, never Needs me", async () => {
+    let loaded = (_state: FlowState) => {};
+    const slot = await mount({ threads: [thread("a")], stateGet: () => new Promise((resolve) => (loaded = resolve)) });
+    await waitFor(() => expect(heading(slot.container, "Now")).toBeDefined());
+    expect(heading(slot.container, "Needs me")).toBeUndefined();
+    expect(slot.container.textContent).toContain("Loading…");
+    expect(slot.container.textContent).not.toContain("You’re all caught up.");
+    // The fetch is shared between mounts: finish it, or every later test waits on it.
+    loaded(baseState);
+    await waitFor(() => expect(slot.container.textContent).toContain("You’re all caught up."));
+  });
+
+  it("reading a thread doesn't reset Stalled or Done", async () => {
+    const justRead = { updatedAt: NOW, lastReadAt: NOW, latestAttentionAt: NOW - 3 * HOUR };
+    const mergedPr: FlowState["threadPrs"][string][number] = {
+      repo: "acme/web-app",
+      number: 1,
+      title: "Merged",
+      url: "https://github.com/acme/web-app/pull/1",
+      state: "merged",
+      attention: "merged",
+      base: "main",
+      head: "feature",
+      stackedOn: null,
+      checkedAt: NOW,
+    };
+    const slot = await mount({
+      threads: [thread("promised", justRead), thread("finished", justRead), thread("fresh", { latestAttentionAt: NOW - 60_000, updatedAt: NOW })],
+      state: { promised: { promised: NOW - 3 * HOUR }, threadPrs: { finished: [mergedPr], fresh: [mergedPr] } },
+      settings: { nowQueue: false },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Stalled")).toEqual(["promised"]));
+    fireEvent.click(heading(slot.container, "Done")!);
+    await waitFor(() => expect(rowsUnder(slot.container, "Done")).toEqual(["finished"]));
+    expect(rowsUnder(slot.container, "Done")).not.toContain("fresh");
   });
 
   it("with the setting off, Needs me stays, and there's no Now, no star and no f key", async () => {

@@ -60,7 +60,7 @@ import {
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
-import { groupBySection, sortRows } from "./sidebar-groups";
+import { groupBySection, quietFor, sortRows } from "./sidebar-groups";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
 import { needsMe } from "./needs-me";
 import { nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
@@ -1548,7 +1548,9 @@ function TriageThreadList({
   const nowMinute = Math.floor(now / 60_000);
   const lastNowOrder = useRef<readonly string[]>([]);
   const queue = useMemo(() => {
-    if (!nowEnabled || !state) return null;
+    if (!nowEnabled) return null;
+    // Before state arrives: an empty Now, so the list doesn't show Needs me and then swap it.
+    if (!state) return { now: [], moving: [] };
     const candidates = liveRows
       .filter((thread) => !thread.isPinned)
       .map((thread) => sidebarNowThread(thread, state.snoozedSectionId !== null && thread.sectionId === state.snoozedSectionId));
@@ -1598,7 +1600,7 @@ function TriageThreadList({
       !busy(thread) &&
       state?.promised[thread.id] !== undefined &&
       state?.watching[thread.id] === undefined &&
-      Date.now() - thread.updatedAt > STALLED_AFTER_MS;
+      quietFor(thread, Date.now()) > STALLED_AFTER_MS;
     const openPrs = (thread: PluginSidebarThread) =>
       threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
@@ -1616,7 +1618,7 @@ function TriageThreadList({
       done: (thread) =>
         thread.sectionId === null &&
         thread.id !== activeThreadId &&
-        Date.now() - thread.updatedAt > DONE_AFTER_MS &&
+        quietFor(thread, Date.now()) > DONE_AFTER_MS &&
         !busy(thread) &&
         !needs(thread) &&
         state?.watching[thread.id] === undefined &&
@@ -1932,7 +1934,7 @@ function TriageThreadList({
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="py-1 pl-6 pr-2 text-xs text-muted-foreground">
-                {group.id === "needs-me" || group.id === "now" ? "You’re all caught up." : "No threads yet."}
+                {group.id === "now" && !state ? "Loading…" : group.id === "needs-me" || group.id === "now" ? "You’re all caught up." : "No threads yet."}
               </p>
             ) : (
               <>
