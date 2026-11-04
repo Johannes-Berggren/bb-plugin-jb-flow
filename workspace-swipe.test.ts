@@ -38,3 +38,30 @@ test("a small sideways nudge doesn't switch", () => {
   const track = createSwipeTracker();
   assert.deepEqual([0, 10].map((time) => track(wheel(30, time))), [0, 0]);
 });
+
+// Sideways steps 16ms apart, as macOS sends them.
+const stream = (track: ReturnType<typeof createSwipeTracker>, deltas: number[], start = 0) =>
+  deltas.map((deltaX, index) => track(wheel(deltaX, start + index * 16))).filter((step) => step !== 0);
+
+test("a quick second swipe during the first one's momentum still switches", () => {
+  const track = createSwipeTracker();
+  const first = [10, 30, 50, 40];
+  const momentum = [30, 22, 15, 10, 6, 4];
+  const second = [12, 30, 50, 40];
+  assert.deepEqual(stream(track, [...first, ...momentum, ...second]), [1, 1]);
+});
+
+test("momentum alone, however long, never switches twice", () => {
+  const track = createSwipeTracker();
+  assert.deepEqual(stream(track, [10, 30, 50, 40, 30, 22, 15, 10, 6, 4, 3, 2, 2, 1, 1]), [1]);
+});
+
+test("a swipe that speeds up after switching doesn't switch twice", () => {
+  const track = createSwipeTracker();
+  assert.deepEqual(stream(track, [5, 5, 10, 10, 15, 15, 20, 20, 25, 30, 35, 40]), [1]);
+});
+
+test("swiping back during the momentum switches back", () => {
+  const track = createSwipeTracker();
+  assert.deepEqual(stream(track, [10, 30, 50, 40, 30, 22, 15, -12, -30, -50, -40]), [1, -1]);
+});
