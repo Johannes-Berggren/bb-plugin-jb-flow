@@ -29,7 +29,9 @@ export type NowThread = {
   attentionAt: number;
 };
 
-export type NowFlow = Pick<FlowState, "awaiting" | "promised" | "waitingOthers" | "readyToGo" | "watching" | "threadPrs" | "focused" | "due">;
+export type NowFlow = Pick<FlowState, "awaiting" | "promised" | "waitingOthers" | "readyToGo" | "watching" | "focused" | "due"> & {
+  threadPrs: Record<string, readonly { state: string; attention: string }[]>;
+};
 
 export type NowEntry = {
   thread: NowThread;
@@ -62,11 +64,15 @@ const PR_LABEL: Record<(typeof ACTIONABLE_PRS)[number], string> = {
   ready_to_merge: "ready to merge",
 };
 
+export const DEFAULT_FOCUS_LIMIT = 7;
+/** The limit from its setting, whatever was typed there. */
+export const focusLimitOf = (setting: unknown) => Math.max(1, Number(setting) || DEFAULT_FOCUS_LIMIT);
+
 const openPrs = (thread: NowThread, flow: NowFlow) =>
   (flow.threadPrs[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft");
 
 const actionablePr = (thread: NowThread, flow: NowFlow) => {
-  const attentions = openPrs(thread, flow).map((pr) => pr.attention as string);
+  const attentions = openPrs(thread, flow).map((pr) => pr.attention);
   return ACTIONABLE_PRS.find((attention) => attentions.includes(attention));
 };
 
@@ -164,6 +170,23 @@ export function nowQueue(
   return { now, moving };
 }
 
+/** Waiting on you right now: blocked, your answer, or a date that has passed. What a workspace tab counts. */
+export const needsYouNow = (entries: readonly NowEntry[], now: number) =>
+  entries.filter((entry) => entry.state === "blocked" || entry.state === "yours" || (entry.dueAt !== null && entry.dueAt < now)).length;
+
+/**
+ * The thread after this one, wrapping around. Threads stay in Now after you read
+ * them, so "next" has to move on from where you are rather than start at the top.
+ */
+export function nextAfter(order: readonly string[], current: string | null): string | null {
+  const index = current === null ? -1 : order.indexOf(current);
+  for (let step = 1; step <= order.length; step++) {
+    const candidate = order[(index + step) % order.length]!;
+    if (candidate !== current) return candidate;
+  }
+  return null;
+}
+
 /** "12m", "44h", "3d": short enough for a sidebar row. */
 export function waited(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
@@ -227,5 +250,20 @@ export function sidebarNowThread(
     isUnread: thread.isUnread,
     snoozed,
     attentionAt: thread.latestAttentionAt,
+  };
+}
+
+/** The server's view of a thread, which has read times rather than an unread flag. */
+export function serverNowThread(
+  thread: { id: string; status: string; hasPendingInteraction: boolean; latestAttentionAt: number | null; lastReadAt: number | null; createdAt: number },
+  snoozed: boolean,
+): NowThread {
+  return {
+    id: thread.id,
+    busy: thread.status === "active" || thread.status === "starting" || thread.status === "stopping",
+    blocked: thread.hasPendingInteraction ? "input" : thread.status === "error" ? "failed" : null,
+    isUnread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
+    snoozed,
+    attentionAt: thread.latestAttentionAt ?? thread.createdAt,
   };
 }

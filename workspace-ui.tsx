@@ -25,6 +25,7 @@ import {
   switchWorkspace,
   rememberWorkspaceThread,
 } from "./workspace-client";
+import { needsYouNow, nowQueue, sidebarNowThread, type NowFlow } from "./now-model";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Checkbox } from "./components/ui/checkbox";
@@ -89,16 +90,16 @@ function NavItem({
 }
 
 /** The bar and all workspace filtering only run with the Workspaces setting on. */
-export function WorkspaceTopBar() {
+export function WorkspaceTopBar({ flow = null }: { flow?: NowFlow | null }) {
   const { values, isLoading } = useSettings();
   const enabled = values?.workspaces === true;
   useEffect(() => {
     if (!isLoading) setWorkspacesEnabled(enabled);
   }, [enabled, isLoading]);
-  return enabled ? <WorkspaceTopBarInner /> : null;
+  return enabled ? <WorkspaceTopBarInner flow={values?.nowQueue === true ? flow : null} /> : null;
 }
 
-function WorkspaceTopBarInner() {
+function WorkspaceTopBarInner({ flow }: { flow: (NowFlow & { snoozedSectionId?: string | null }) | null }) {
   const { state, ready, error, refresh } = useWorkspaces();
   const selected = useSelectedWorkspace();
   const { threads, projects } = useSidebarThreads();
@@ -154,7 +155,19 @@ function WorkspaceTopBarInner() {
         thread.indicator === "unread-error" ||
         (thread.isUnread && thread.status === "idle"),
     ).length;
-    return { total: visible.length, attention };
+    // Counted with the sidebar's own queue, so a tab's number matches its Now list.
+    const now = Date.now();
+    const needsYou = flow
+      ? needsYouNow(
+          nowQueue(
+            visible.filter((thread) => !thread.isPinned).map((thread) => sidebarNowThread(thread, flow.snoozedSectionId != null && thread.sectionId === flow.snoozedSectionId)),
+            flow,
+            { now },
+          ).now,
+          now,
+        )
+      : 0;
+    return { total: visible.length, attention, needsYou };
   };
   // Until the first workspace exists, All and No workspace would show the same
   // threads; the bar shows only the way to create one.
@@ -207,13 +220,14 @@ function WorkspaceTopBarInner() {
         {tabs.map((tab) => {
           const counts = summary(tab.id);
           const description = `${counts.total} thread${counts.total === 1 ? "" : "s"} · ${counts.attention} ${counts.attention === 1 ? "needs" : "need"} attention`;
+          const nowText = counts.needsYou > 0 ? ` · ${counts.needsYou} waiting on you now` : "";
           return (
             <button
               type="button"
               role="tab"
               aria-label={tab.name}
-              aria-description={description}
-              title={`${tab.name}: ${description}`}
+              aria-description={`${description}${nowText}`}
+              title={`${tab.name}: ${description}${nowText}`}
               aria-selected={selected === tab.id}
               tabIndex={selected === tab.id ? 0 : -1}
               key={tab.id ?? "all"}
@@ -226,9 +240,13 @@ function WorkspaceTopBarInner() {
               <span className="jf-workspace-tab-count" aria-hidden="true">
                 {ready ? counts.total : "—"}
               </span>
-              {counts.attention > 0 && (
+              {counts.needsYou > 0 ? (
+                <span className="jf-workspace-needs-you" aria-hidden="true">
+                  {counts.needsYou}
+                </span>
+              ) : counts.attention > 0 ? (
                 <i className="jf-workspace-attention" aria-hidden="true" />
-              )}
+              ) : null}
             </button>
           );
         })}

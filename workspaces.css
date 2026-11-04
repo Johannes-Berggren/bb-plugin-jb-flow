@@ -119,6 +119,16 @@
   color: var(--muted-foreground);
   line-height: 14px;
 }
+.jf-workspace-needs-you {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warning-text, var(--primary)) 18%, transparent);
+  color: var(--warning-text, var(--primary));
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+}
 .jf-workspace-attention {
   width: 4px;
   height: 4px;

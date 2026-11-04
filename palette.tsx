@@ -49,7 +49,8 @@ import {
 } from "./palette-model";
 import { resolveLanes } from "./lanes";
 import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
-import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
+import { DUE_PRESETS, formatDue, parseDue, SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
+import { focusLimitOf } from "./now-model";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
 import { inWorkspace, workspaceForThread } from "./workspaces";
 import { PR_TONE, StatusIcon, ThreadPreviewCard, attentionLabel, prGlyph, rowStatus, runInfo, threadPrs, useNow, useThreadPreview } from "./ui-extras";
@@ -371,6 +372,8 @@ export function Palette({
   const settings = useSettings().values;
   const workspacesOn = settings?.workspaces === true;
   const catchUpOn = settings?.catchUp === true;
+  const nowOn = settings?.nowQueue === true;
+  const focusLimit = focusLimitOf(settings?.focusLimit);
   const { state: workspaceState, refresh: refreshWorkspaces } = useWorkspaces();
   const selectedWorkspace = useSelectedWorkspace();
   const now = useNow(30_000);
@@ -481,6 +484,25 @@ export function Palette({
         /* Not a time; the other rows still filter on it. */
       }
     }
+    const due = flow?.due[id];
+    const setDue = (at: number) =>
+      rpc.call("due_set", { threadId: id, at, reason: due?.reason ?? null }).then(() => toast.success(`${formatDue(at)}`));
+    const dueText = nowOn ? /^\s*due\s+(.+)$/i.exec(typed)?.[1]?.trim() : undefined;
+    if (dueText) {
+      try {
+        const at = parseDue(dueText);
+        entries.push({
+          id: "due:typed",
+          title: `Set due date: ${formatDue(at)}`,
+          detail: formatWhen(at),
+          icon: <Glyph name="alarm" />,
+          pinned: true,
+          run: () => setDue(at),
+        });
+      } catch {
+        /* Not a date; the other rows still filter on it. */
+      }
+    }
     const tag = /^\s*tag\s+(.+)$/i.exec(typed)?.[1]?.trim();
     const tags = flow?.tags[id] ?? [];
     if (tag) {
@@ -505,6 +527,39 @@ export function Palette({
         icon: <Icon name="CornerDownLeft" />,
         run: () => rpc.call("thread_reply", { threadId: id, text: reply.answer }),
       });
+    }
+    if (nowOn) {
+      const inFocus = flow?.focused[id] !== undefined;
+      const count = Object.keys(flow?.focused ?? {}).length;
+      entries.push({
+        id: "focus",
+        title: inFocus ? "Remove from Focus" : "Add to Focus",
+        keywords: "star priority important now",
+        icon: <Glyph name="star" />,
+        run: () =>
+          !inFocus && count >= focusLimit
+            ? void toast.error(`Focus is full (${count} of ${focusLimit}). Press f on a row in the sidebar to choose one to drop.`)
+            : rpc.call("focus_set", { threadId: id, focused: !inFocus }),
+      });
+      if (due) {
+        entries.push({
+          id: "due:clear",
+          title: "Clear due date",
+          detail: `${formatDue(due.at)}${due.reason ? `: ${due.reason}` : ""}`,
+          keywords: "deadline remove",
+          icon: <Glyph name="alarm" />,
+          run: () => rpc.call("due_set", { threadId: id, at: null, reason: null }),
+        });
+      }
+      for (const preset of DUE_PRESETS) {
+        entries.push({
+          id: `due:${preset.when}`,
+          title: `Due: ${preset.label}`,
+          keywords: `deadline date ${preset.when}`,
+          icon: <Glyph name="alarm" />,
+          run: () => setDue(parseDue(preset.when)),
+        });
+      }
     }
     const snoozed = flow?.snoozes[id];
     if (snoozed) {
@@ -698,7 +753,7 @@ export function Palette({
     );
     return entries;
     // projectName reads projectsById, a dependency here.
-  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState]);
+  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, nowOn, focusLimit, threads, selectedWorkspace, workspaceState]);
 
   // --- what to list ---
   const levelEntries: readonly Entry[] | null =
@@ -716,6 +771,7 @@ export function Palette({
     workspaceOf,
     selectedWorkspace,
     flow,
+    nowEnabled: nowOn,
     currentThreadId: context.threadId,
     recent,
     frecency,
