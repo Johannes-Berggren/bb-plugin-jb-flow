@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { groupBySection, sortRows } from "./sidebar-groups.ts";
+import { groupBySection, quietFor, sortRows } from "./sidebar-groups.ts";
 
 const row = (id: string, createdAt: number, updatedAt: number) => ({ id, createdAt, updatedAt });
 const ids = (rows: Array<{ id: string }>) => rows.map((thread) => thread.id);
@@ -21,6 +21,14 @@ test("sorting leaves the input alone", () => {
   const rows = [row("a", 1, 10), row("b", 2, 20)];
   sortRows(rows, true);
   assert.deepEqual(ids(rows), ["a", "b"]);
+});
+
+test("reading a thread doesn't make it any less quiet", () => {
+  assert.equal(quietFor({ latestAttentionAt: 100, updatedAt: 950 }, 1000), 900);
+});
+
+test("a thread that never asked for attention counts from its last update", () => {
+  assert.equal(quietFor({ latestAttentionAt: null, updatedAt: 950 }, 1000), 50);
 });
 
 const member = (id: string, section: string) => ({ id, section });

@@ -26,6 +26,7 @@ import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema }
 import { formatWhen, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
 import { wakeDueSnoozes } from "./snooze-wake";
+import { quietFor } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
@@ -1451,7 +1452,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                   ? "pinned"
                   : busy
                     ? "running"
-                    : promised[thread.id] !== undefined && !watching[thread.id] && Date.now() - thread.updatedAt > 3_600_000
+                    : promised[thread.id] !== undefined && !watching[thread.id] && quietFor(thread, Date.now()) > 3_600_000
                       ? "stalled"
                       : awaitingAll[thread.id] !== undefined
                       ? "your-move"
@@ -1461,7 +1462,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                           (waitingOthers[thread.id] !== undefined ||
                             (open.length > 0 && open.every((pr) => pr.attention === "review_requested")))
                         ? "waiting"
-                      : thread.sectionId === null && !watching[thread.id] && settled && Date.now() - thread.updatedAt > 2 * 3_600_000
+                      : thread.sectionId === null && !watching[thread.id] && settled && quietFor(thread, Date.now()) > 2 * 3_600_000
                         ? "done"
                         : "lane";
               const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
@@ -1475,7 +1476,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 watching: watching[thread.id] ?? null,
                 openPrs: open.map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`),
                 prs: prs.length,
-                idleHours: Math.round((Date.now() - thread.updatedAt) / 3_600_000),
+                idleHours: Math.round(quietFor(thread, Date.now()) / 3_600_000),
                 tail: (output.output ?? "").trim().slice(-1500),
               });
             }
