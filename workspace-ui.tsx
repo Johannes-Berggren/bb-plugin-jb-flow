@@ -573,6 +573,16 @@ export function WorkspaceSettings({ startNew = false }: { startNew?: boolean } =
                 setEditing({ ...active, name: event.target.value })
               }
             />
+            <label className="jf-membership-row">
+              <Checkbox
+                checked={active.groupByProject === true}
+                disabled={busy}
+                onCheckedChange={(checked) =>
+                  setEditing({ ...active, groupByProject: checked === true })
+                }
+              />
+              <span>Group threads by project</span>
+            </label>
           </div>
           <div
             className="jf-membership-tabs"
