@@ -30,3 +30,34 @@ export function groupBySection<T>(
 export function quietFor(thread: { latestAttentionAt: number | null; updatedAt: number }, now: number): number {
   return now - (thread.latestAttentionAt ?? thread.updatedAt);
 }
+
+/**
+ * Unfiled, top-level threads that have been quiet for at least `staleDays`, quietest
+ * first. Counted with quietFor, so opening a thread doesn't hold it back for another
+ * stretch without anything having happened in it.
+ */
+export function staleThreads<
+  T extends {
+    id: string;
+    sectionId: string | null;
+    parentThreadId: string | null;
+    pinnedAt: number | null;
+    status: string;
+    latestAttentionAt: number | null;
+    updatedAt: number;
+  },
+>(threads: readonly T[], options: { now: number; staleMs: number; keptUntil: Readonly<Record<string, number>>; snoozed: Readonly<Record<string, unknown>> }): T[] {
+  return threads
+    .filter(
+      (thread) =>
+        thread.sectionId === null &&
+        thread.parentThreadId === null &&
+        thread.pinnedAt === null &&
+        thread.status !== "active" &&
+        options.snoozed[thread.id] === undefined &&
+        (options.keptUntil[thread.id] ?? 0) < options.now &&
+        quietFor(thread, options.now) > options.staleMs,
+    )
+    .sort((a, b) => quietFor(b, options.now) - quietFor(a, options.now));
+}
+

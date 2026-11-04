@@ -311,7 +311,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - Unsnoozing puts the thread back in the section it came from.
 
 ### Stale-thread digest
-- A home page section listing unsectioned threads idle for more than N days (default 7), each with a one-line summary.
+- A home page section listing unsectioned threads idle for more than N days (default 7), each with a one-line summary. Idle means nothing has happened in the thread: opening it doesn't reset the count.
 - Bulk actions: Archive, Keep 14 days, Snooze 1 week. Nothing is archived without a click.
 - Rebuilt at 08:00 on weekdays. Run it from the CLI with `bb jb-flow digest`.
 
