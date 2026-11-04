@@ -705,22 +705,27 @@ function ThreadRow({
               <Glyph name="star" className="size-3 text-amber-500" />
             </span>
           ) : null}
+          {/* The title keeps a readable width; chips beside it truncate instead. */}
           <span
+            data-jb-flow-row-title=""
             className={cn(
-              "min-w-0 flex-1 truncate",
+              "min-w-[5.5rem] flex-1 truncate",
               thread.isUnread && "font-semibold",
             )}
           >
             <ThreadTitle threadId={thread.id} />
           </span>
-          {tags.slice(0, 2).map((tag) => (
-            <span
-              key={tag}
-              className="shrink-0 text-[10px] text-muted-foreground"
-            >
-              #{tag}
-            </span>
-          ))}
+          {/* A Now row's reason chip says more; its tags stay in the hover card. */}
+          {reasonChip
+            ? null
+            : tags.slice(0, 2).map((tag) => (
+                <span
+                  key={tag}
+                  className="min-w-0 max-w-[5rem] truncate text-[10px] text-muted-foreground"
+                >
+                  #{tag}
+                </span>
+              ))}
           <ProjectChip project={project} />
           {machine?.remote ? (
             <span className="shrink-0 text-[10px] text-muted-foreground" title={`Runs on ${machineLabel(machine.name)}`}>
@@ -738,7 +743,11 @@ function ThreadRow({
             </span>
           ) : null}
           {reasonChip ? (
-            <span className={cn("shrink-0 text-[10px] tabular-nums", reasonChip.urgent ? "font-medium text-amber-600" : "text-muted-foreground")}>
+            <span
+              data-jb-flow-reason=""
+              title={reasonChip.text}
+              className={cn("min-w-0 truncate whitespace-nowrap text-[10px] tabular-nums", reasonChip.urgent ? "font-medium text-amber-600" : "text-muted-foreground")}
+            >
               {reasonChip.text}
             </span>
           ) : null}
