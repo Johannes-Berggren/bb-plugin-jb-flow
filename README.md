@@ -16,7 +16,7 @@ On by default (turn off under Settings → JB Flow → **Workspaces**). Choose *
 if another navigation provider is pinned. A new install has no workspaces yet: the bar shows **Create your first workspace**, which
 opens a form to name it and pick its projects. After that your workspaces, plus **All** and
 **No workspace**, appear as tabs (**+** adds another, the gear manages them) across the top of the BB window and filter its threads, sections
-and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention.
+and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention. With **Now and Focus** on, a second number replaces the dot when threads in that tab's Now are waiting on you right now: blocked, your answer, or overdue. So work in another tab stays visible.
 Hover a tab for both counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
 uses its first available project. Opening a thread from another workspace
@@ -69,7 +69,7 @@ The key BB uses for Search threads (⌘K, or Ctrl+K on Windows and Linux, unless
 rebound it under Settings → Keyboard) opens JB Flow's palette instead. Press the key
 again or Escape to close it.
 
-- **An empty query shows your triage.** Sections: *Needs you* (oldest first),
+- **An empty query shows your triage.** Sections: *Now* (with **Now and Focus** on, in the sidebar's order), *Needs you* (oldest first),
   *Running*, *PRs to act on* (failing checks, changes requested, conflicts, ready to
   merge), *Recent* (the threads you visited) and *This thread*.
 - **Typing searches everything at once.**
@@ -89,8 +89,8 @@ again or Escape to close it.
   - A group with more matches than fit ends in *Show all N …*. For threads, messages
     and archived matches, that opens *Threads & messages*: every match, up to 50 per
     group from BB's full-text search.
-  - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and
-    `is:pr` narrow threads, with or without text.
+  - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned`, `is:pr`,
+    `is:focus` and `is:due` narrow threads, with or without text.
 - **Act without opening.**
   - Enter opens the selected item. ⌘Enter opens a thread in a split, or a PR's thread.
   - Tab (or →) lists everything you can do to the selected thread, ready to filter:
@@ -98,6 +98,7 @@ again or Escape to close it.
     - snooze (type `tomorrow` or `3d` for "Snooze until …")
     - move to a lane, section or workspace
     - add (`tag urgent`) or remove tags
+    - add to or remove from Focus, or set a due date (type `due fri`)
     - open its PRs or watch their CI
     - stop a run
     - copy its ID
@@ -351,7 +352,8 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   | Shortcut | Command |
   |---|---|
   | Alt+Shift+S | Snooze this thread |
-  | Alt+Shift+N | Open the next thread that needs me |
+  | Alt+Shift+N | Open the next thread that needs me. With **Now and Focus** on, it steps through Now in order from the thread you're on, across every workspace, because threads stay in Now after you read them |
+  | Alt+Shift+F | Add this thread to Focus, or remove it |
   | Alt+Shift+E | Archive and open the next one |
   | Alt+Shift+D | Start dev servers |
   | Alt+Shift+P | Show pull requests |
@@ -383,7 +385,8 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `bb jb-flow stop` stops its run
   - `bb jb-flow needs-me` lists threads waiting on you
   - `bb jb-flow next` opens the next waiting thread
-- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script.
+  - `bb jb-flow now` lists Now in order, with what's Moving
+- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script. With **Now and Focus** on, it also has `now`: the count and the top thread.
 
 ## Install
 
@@ -453,6 +456,7 @@ bb jb-flow tell <text…> [--thread <id>]
 bb jb-flow stop [<thread-id>|--focused]
 bb jb-flow needs-me [--json]
 bb jb-flow next
+bb jb-flow now [--json]
 bb jb-flow repo [--self|<thread-id>]
 bb jb-flow repo-run <command-id|script:<name>> [--self|<thread-id>]
 bb jb-flow repo-stop <command-id|script:<name>> [--self|<thread-id>]

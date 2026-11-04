@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ballState, nowQueue, reasonLabel, sidebarNowThread, waited, type NowFlow, type NowThread } from "./now-model.ts";
+import { ballState, focusLimitOf, needsYouNow, nextAfter, nowQueue, reasonLabel, serverNowThread, sidebarNowThread, waited, type NowFlow, type NowThread } from "./now-model.ts";
 
 const NOW = 1_800_000_000_000;
 const HOUR = 3_600_000;
@@ -275,5 +275,67 @@ test("the row leads with the deadline", () => {
   const state = flow({ awaiting: { a: NOW - 27 * HOUR }, due: { a: due(NOW - 3 * 24 * HOUR) } });
   const { now } = nowQueue([thread("a", { attentionAt: NOW - 27 * HOUR })], state, { now: NOW });
   assert.equal(reasonLabel(now[0]!, state, NOW), "3d overdue · you 27h");
+});
+
+test("next moves on from where you are, wrapping around", () => {
+  assert.equal(nextAfter(["a", "b", "c"], "a"), "b");
+  assert.equal(nextAfter(["a", "b", "c"], "c"), "a");
+});
+
+test("next starts at the top from a thread that isn't in the list, or from none", () => {
+  assert.equal(nextAfter(["a", "b"], "elsewhere"), "a");
+  assert.equal(nextAfter(["a", "b"], null), "a");
+});
+
+test("with only the thread you're on, or nothing, there's nowhere to go", () => {
+  assert.equal(nextAfter(["a"], "a"), null);
+  assert.equal(nextAfter([], "a"), null);
+  assert.equal(nextAfter([], null), null);
+});
+
+test("pressing next repeatedly visits every thread, even ones that stay after reading", () => {
+  const order = ["a", "b", "c"];
+  const seen: (string | null)[] = [];
+  let current: string | null = null;
+  for (let press = 0; press < 3; press++) {
+    current = nextAfter(order, current);
+    seen.push(current);
+  }
+  assert.deepEqual(seen, ["a", "b", "c"]);
+});
+
+test("a tab counts what's waiting on you right now, not everything in Now", () => {
+  const state = flow({
+    awaiting: { yours: 1 },
+    readyToGo: { go: 1 },
+    focused: { blocked: 1, yours: 1, go: 1, cold: 1, late: 1 },
+    due: { late: due(NOW - HOUR) },
+  });
+  const { now } = nowQueue(
+    [thread("blocked", { blocked: "input" }), thread("yours"), thread("go"), thread("cold", { attentionAt: NOW - 5 * HOUR }), thread("late", { attentionAt: NOW - 5 * HOUR })],
+    state,
+    { now: NOW },
+  );
+  assert.equal(now.length, 5);
+  assert.equal(needsYouNow(now, NOW), 3);
+});
+
+test("the server's thread maps onto the same shape", () => {
+  const base = { id: "t", status: "idle", hasPendingInteraction: false, latestAttentionAt: 100, lastReadAt: 50, createdAt: 1 };
+  assert.equal(serverNowThread(base, false).isUnread, true);
+  assert.equal(serverNowThread({ ...base, lastReadAt: null }, false).isUnread, true);
+  assert.equal(serverNowThread({ ...base, lastReadAt: 200 }, false).isUnread, false);
+  assert.equal(serverNowThread({ ...base, status: "error" }, false).blocked, "failed");
+  assert.equal(serverNowThread({ ...base, hasPendingInteraction: true }, false).blocked, "input");
+  assert.equal(serverNowThread({ ...base, latestAttentionAt: null }, true).attentionAt, 1);
+  assert.equal(serverNowThread({ ...base, status: "stopping" }, true).busy, true);
+});
+
+test("the Focus limit survives whatever was typed in its setting", () => {
+  assert.equal(focusLimitOf(3), 3);
+  assert.equal(focusLimitOf(undefined), 7);
+  assert.equal(focusLimitOf("nonsense"), 7);
+  assert.equal(focusLimitOf(0), 7);
+  assert.equal(focusLimitOf(-2), 1);
 });
 

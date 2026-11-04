@@ -59,7 +59,7 @@ const input = (changes: Partial<PaletteInput> = {}): PaletteInput => ({
   workspaces: [],
   workspaceOf: {},
   selectedWorkspace: null,
-  flow: { awaiting: {}, readyToGo: {}, running: {}, watching: {}, snoozes: {}, tags: {}, threadPrs: {} },
+  flow: { awaiting: {}, promised: {}, waitingOthers: {}, readyToGo: {}, running: {}, watching: {}, snoozes: {}, tags: {}, threadPrs: {}, focused: {}, due: {} },
   currentThreadId: null,
   recent: [],
   frecency: {},
@@ -316,3 +316,40 @@ test("the files scope keeps bb's order and highlights names", () => {
   // Files only show in their own scope.
   assert.equal(group(search(input({ files }), "all", "pal"), "files"), undefined);
 });
+
+const nowFlow = (changes: Partial<NonNullable<PaletteInput["flow"]>>) => ({ ...input().flow!, ...changes });
+
+test("with Now on, the empty query leads with it, in its order", () => {
+  const threads = [thread("late", "Late"), thread("focused", "Focused", { latestAttentionAt: NOW - 30 * HOUR }), thread("other", "Other")];
+  const sections = home(
+    input({
+      threads,
+      nowEnabled: true,
+      flow: nowFlow({ awaiting: { focused: NOW - 30 * HOUR, late: NOW - HOUR }, focused: { focused: 1 }, due: { late: { at: NOW + HOUR, reason: null, source: "you", setAt: 0 } } }),
+    }),
+  );
+  assert.equal(ids(sections)[0], "now");
+  assert.deepEqual(itemIds(group(sections, "now")), ["thread:late", "thread:focused"]);
+});
+
+test("a thread shows once: Now keeps it out of Needs you", () => {
+  const threads = [thread("a", "Blocked", { hasPendingInteraction: true })];
+  const sections = home(input({ threads, nowEnabled: true }));
+  assert.deepEqual(itemIds(group(sections, "now")), ["thread:a"]);
+  assert.equal(group(sections, "needs"), undefined);
+});
+
+test("with Now off, the empty query is as before", () => {
+  const threads = [thread("a", "Blocked", { hasPendingInteraction: true })];
+  const sections = home(input({ threads, flow: nowFlow({ focused: { a: 1 } }) }));
+  assert.equal(group(sections, "now"), undefined);
+  assert.deepEqual(itemIds(group(sections, "needs")), ["thread:a"]);
+});
+
+test("is:focus and is:due narrow threads", () => {
+  const threads = [thread("a", "Alpha"), thread("b", "Beta"), thread("c", "Gamma")];
+  const flow = nowFlow({ focused: { a: 1 }, due: { b: { at: NOW + HOUR, reason: null, source: "agent", setAt: 0 } } });
+  assert.deepEqual(itemIds(group(search(input({ threads, flow }), "threads", "is:focus"), "threads")), ["thread:a"]);
+  assert.deepEqual(itemIds(group(search(input({ threads, flow }), "threads", "is:due"), "threads")), ["thread:b"]);
+});
+

@@ -86,7 +86,7 @@ const threads = [
 ];
 
 type MountOptions = {
-  settings?: Record<string, boolean>;
+  settings?: Record<string, unknown>;
   state?: Partial<FlowState>;
   workspaces?: WorkspaceState;
   keybindings?: unknown[] | null;
@@ -314,6 +314,61 @@ describe("palette thread actions", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "snooze")).toBe(true));
     expect(slot.inspection.rpcCalls.find((call) => call.method === "snooze")?.input).toMatchObject({ threadId: "a", when: "tomorrow" });
+  });
+
+  it("sets a due date from typed text, and adds to Focus, with Now on", async () => {
+    const slot = await mount({
+      settings: { nowQueue: true, focusLimit: 7 },
+      rpc: { due_set: () => ({ ok: true }), focus_set: () => ({ focused: true }) },
+    });
+    const input = await openPalette(slot);
+    fireEvent.keyDown(input, { key: "Tab" });
+    await slot.findByRole("button", { name: /Fix billing export/ });
+    fireEvent.change(input, { target: { value: "due tomorrow" } });
+    expect(options(slot)[0]).toMatch(/^Set due date: due tomorrow/);
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "due_set")).toBe(true));
+    const end = new Date();
+    end.setDate(end.getDate() + 1);
+    end.setHours(23, 59, 59, 999);
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "due_set")?.input).toMatchObject({ threadId: "a", at: end.getTime() });
+  });
+
+  it("Add to Focus runs from the thread's actions", async () => {
+    const slot = await mount({ settings: { nowQueue: true, focusLimit: 7 }, rpc: { focus_set: () => ({ focused: true }) } });
+    const input = await openPalette(slot);
+    fireEvent.keyDown(input, { key: "Tab" });
+    await slot.findByRole("button", { name: /Fix billing export/ });
+    fireEvent.change(input, { target: { value: "Add to Focus" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "focus_set")?.input).toEqual({ threadId: "a", focused: true }));
+  });
+
+  it("at the Focus limit, Add to Focus changes nothing", async () => {
+    // The thread's tag proves this mount's state has arrived before Enter is pressed.
+    const slot = await mount({
+      settings: { nowQueue: true, focusLimit: 1 },
+      state: { focused: { other: NOW }, tags: { a: ["acme-tag"] } },
+      rpc: { focus_set: () => ({ focused: true }) },
+    });
+    const input = await openPalette(slot);
+    fireEvent.keyDown(input, { key: "Tab" });
+    await slot.findByRole("button", { name: /Fix billing export/ });
+    await waitFor(() => expect(options(slot).some((text) => text.includes("acme-tag"))).toBe(true));
+    fireEvent.change(input, { target: { value: "Add to Focus" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "focus_set")).toBe(false);
+  });
+
+  it("offers no Focus or due date actions with Now off", async () => {
+    const slot = await mount({ settings: { nowQueue: false } });
+    const input = await openPalette(slot);
+    fireEvent.keyDown(input, { key: "Tab" });
+    await slot.findByRole("button", { name: /Fix billing export/ });
+    expect(options(slot).some((text) => /Focus|^Due:/.test(text))).toBe(false);
+    fireEvent.change(input, { target: { value: "due tomorrow" } });
+    expect(slot.queryByRole("option", { name: /Set due date/ })).toBeNull();
   });
 
   it("answers a numbered decision and runs bb's own actions", async () => {

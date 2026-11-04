@@ -16,6 +16,7 @@ import { createActivity } from "./activity";
 import { createAwaiting, waitsOnOthers } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
+import { nextAfter, nowQueue, reasonLabel, serverNowThread } from "./now-model";
 import { createNowStore } from "./now-store";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
@@ -988,11 +989,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return { ok: true };
     },
     next_needs_me: async ({ archiveThreadId }) => {
+      // Worked out before archiving: the archived thread's place says where "next" is.
+      const nextId = await nextThread(archiveThreadId ?? focus.focusedThreadId(), archiveThreadId);
       if (archiveThreadId !== null) await bb.sdk.threads.archive({ threadId: archiveThreadId });
-      const next = (await focus.needsMe()).find((thread) => thread.id !== archiveThreadId);
-      if (next === undefined) return { opened: null };
-      await bb.sdk.threads.open({ threadId: next.id, file: null });
-      return { opened: next.id };
+      if (nextId === null) return { opened: null };
+      await bb.sdk.threads.open({ threadId: nextId, file: null });
+      return { opened: nextId };
     },
     decision_options: async ({ threadId }) => {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
@@ -1304,6 +1306,46 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   }
 
   /** Everything the deck shows, in one call. */
+  /** The sidebar's Now, across every workspace. Tabs belong to each browser window, not the server. */
+  async function currentNow(threads: readonly ListedThread[]) {
+    const [waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due, snoozedSection] = await Promise.all([
+      awaiting.all(),
+      awaiting.promised(),
+      awaiting.waitingOthers(),
+      awaiting.readyToGo(),
+      watchingByThread(),
+      prTracker.byThread(),
+      nowStore.all(),
+      nowStore.dueAll(),
+      findSnoozedSection(),
+    ]);
+    const flow = { awaiting: waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due };
+    const now = Date.now();
+    const rows = threads
+      .filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && thread.parentThreadId === null && thread.pinnedAt === null)
+      .map((thread) => serverNowThread(thread, snoozedSection !== null && thread.sectionId === snoozedSection));
+    const queue = nowQueue(rows, flow, { now });
+    const titles = new Map(threads.map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""]));
+    const describe = (entry: (typeof queue.now)[number]) => ({
+      id: entry.thread.id,
+      title: titles.get(entry.thread.id) ?? "",
+      state: entry.state,
+      reason: reasonLabel(entry, flow, now),
+      focused: entry.focused,
+      dueAt: entry.dueAt,
+    });
+    return { now: queue.now.map(describe), moving: queue.moving.map(describe) };
+  }
+
+  /** Where "next" goes. With Now off, the first thread that needs you, as before. */
+  async function nextThread(current: string | null, skip: string | null): Promise<string | null> {
+    const needs = await focus.needsMe();
+    if (!(await settings.get()).nowQueue) return needs.find((thread) => thread.id !== skip)?.id ?? null;
+    const { now } = await currentNow(await listLiveThreads(bb));
+    // Pinned threads aren't in Now, but one that's blocked still needs you.
+    return nextAfter([...new Set([...now.map((entry) => entry.id), ...needs.map((thread) => thread.id)])], current);
+  }
+
   async function deckSnapshot() {
     const [threads, waiting, radar, focused, snoozedSection] = await Promise.all([
       listThreadsCached(),
@@ -1326,11 +1368,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const moves = open
       .filter((thread) => thread.status === "idle" && waiting[thread.id] !== undefined && !needIds.has(thread.id))
       .map((thread) => Math.min(waiting[thread.id]!, thread.updatedAt));
+    const nowEnabled = (await settings.get()).nowQueue;
+    const queue = nowEnabled ? await currentNow(threads) : { now: [] };
     return {
       focused,
       needsMe: { count: needs.length },
       yourMove: { count: moves.length, oldestSince: moves.length ? Math.min(...moves) : null },
       prRadar: { broken: radar.broken.length, ready: radar.ready.length },
+      ...(nowEnabled ? { now: { count: queue.now.length, top: queue.now[0] ?? null } } : {}),
     };
   }
 
@@ -1367,6 +1412,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
+      { name: "now", summary: "List the Now queue in order, and what's Moving", usage: "bb jb-flow now [--json]" },
       { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
       { name: "prs", summary: "List the PRs a thread created, across repos, in stack order", usage: "bb jb-flow prs [--self|<thread-id>] [--json]" },
       { name: "pr-link", summary: "Link (or --remove) a PR to a thread", usage: "bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]" },
@@ -1699,10 +1745,21 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
           }
           case "next": {
             const focused = focus.focusedThreadId();
-            const next = (await focus.needsMe()).find((thread) => thread.id !== focused);
-            if (next === undefined) return { exitCode: 0, stdout: "Nothing needs you." };
-            await bb.sdk.threads.open({ threadId: next.id, file: null });
-            return { exitCode: 0, stdout: `Opened ${next.id}  ${next.title ?? ""}` };
+            const nextId = await nextThread(focused, focused);
+            if (nextId === null) return { exitCode: 0, stdout: "Nothing needs you." };
+            await bb.sdk.threads.open({ threadId: nextId, file: null });
+            const next = await bb.sdk.threads.get({ threadId: nextId }).catch(() => null);
+            return { exitCode: 0, stdout: `Opened ${nextId}  ${next?.title ?? ""}` };
+          }
+          case "now": {
+            if (!(await settings.get()).nowQueue) return { exitCode: 1, stderr: "Now and Focus is turned off in the plugin settings." };
+            const queue = await currentNow(await listLiveThreads(bb));
+            if (json) return { exitCode: 0, stdout: JSON.stringify({ count: queue.now.length, threads: queue.now, moving: queue.moving }) };
+            const line = (entry: (typeof queue.now)[number]) => `${entry.focused ? "*" : " "} ${entry.id}  ${entry.title}  [${entry.reason}]`;
+            return {
+              exitCode: 0,
+              stdout: [...(queue.now.length ? queue.now.map(line) : ["Nothing in Now."]), ...(queue.moving.length ? ["", "Moving:", ...queue.moving.map(line)] : [])].join("\n"),
+            };
           }
           case "repo": {
             const threadId = resolveThread(args[0] ?? "--self");

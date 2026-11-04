@@ -63,7 +63,7 @@ import { DUE_PRESETS, SNOOZE_PRESETS, formatDue, formatWhen, parseDue, parseWhen
 import { groupBySection, quietFor, sortRows } from "./sidebar-groups";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
 import { needsMe } from "./needs-me";
-import { DUE_NOW_MS, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
+import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -449,6 +449,11 @@ function CatchUpHost() {
   return open ? <CatchUpWithFlow onClose={close} /> : null;
 }
 
+function WorkspaceTopBarWithFlow() {
+  const { state } = useFlowState();
+  return <WorkspaceTopBar flow={state} />;
+}
+
 function CatchUpWithFlow({ onClose }: { onClose: () => void }) {
   const { state } = useFlowState();
   return <CatchUpOverlay flow={state} onClose={onClose} />;
@@ -458,6 +463,11 @@ function CatchUpWithFlow({ onClose }: { onClose: () => void }) {
 function CommandHost() {
   const settings = useSettings().values;
   const expandPlans = settings?.expandPlans === true;
+  const nowOn = settings?.nowQueue === true;
+  const focusLimit = focusLimitOf(settings?.focusLimit);
+  useEffect(() => {
+    focusCommand = nowOn ? { limit: focusLimit } : null;
+  }, [nowOn, focusLimit]);
   useEffect(() => {
     // Read by the plan-expander content script, which can't use hooks.
     if (expandPlans) document.documentElement.dataset[EXPAND_PLANS_FLAG] = "";
@@ -1428,7 +1438,6 @@ function FilterChip({ hint, active, onClick, glyph, tone, label, count }: {
 
 /** How many Now rows show before "Show N more". The list only helps while it's short. */
 const NOW_ROWS = 7;
-const DEFAULT_FOCUS_LIMIT = 7;
 /** Waiting this long on you turns the row's chip amber. */
 const OVERDUE_WAIT_MS = 24 * 3_600_000;
 
@@ -1630,7 +1639,7 @@ function TriageThreadList({
   const settingValues = useSettings().values;
   const createdOrder = settingValues?.createdRowOrder === true;
   const nowEnabled = settingValues?.nowQueue === true;
-  const focusLimit = Math.max(1, Number(settingValues?.focusLimit) || DEFAULT_FOCUS_LIMIT);
+  const focusLimit = focusLimitOf(settingValues?.focusLimit);
   const liveRows = useMemo(
     () => threads.filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId))),
     [threads],
@@ -2592,6 +2601,8 @@ function MigrationSettings() {
 let commandRpc: ReturnType<typeof useRpc<typeof rpcContract>> | null = null;
 /** The Catch up setting, for the command's availability check (it can't use hooks). */
 let catchUpEnabled = false;
+/** What the Focus command needs from settings; null while Now and Focus is off. */
+let focusCommand: { limit: number } | null = null;
 const SNOOZE_EVENT = "jb-flow:snooze";
 
 function FocusReporter() {
@@ -2803,7 +2814,7 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 
 export default definePluginApp((app) => {
   app.contentScripts.register({ id: "workspace-topbar", mount: mountWorkspaceTopBar });
-  app.slots.experimental_appOverlay({ id: "workspace-topbar", component: WorkspaceTopBar });
+  app.slots.experimental_appOverlay({ id: "workspace-topbar", component: WorkspaceTopBarWithFlow });
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
   app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
@@ -2895,6 +2906,23 @@ export default definePluginApp((app) => {
     isAvailable: inThread,
     run: ({ threadId }) => {
       if (threadId) window.dispatchEvent(new CustomEvent(SNOOZE_EVENT, { detail: threadId }));
+    },
+  });
+  app.commands.register({
+    id: "toggle-focus",
+    title: "Add this thread to Focus, or remove it",
+    defaultShortcut: { key: "f", alt: true, shift: true },
+    isAvailable: (context) => focusCommand !== null && inThread(context),
+    run: async ({ threadId }) => {
+      if (!threadId || focusCommand === null) return;
+      const focused = flowState?.focused ?? {};
+      const inFocus = focused[threadId] !== undefined;
+      if (!inFocus && Object.keys(focused).length >= focusCommand.limit) {
+        toast.error(`Focus is full (${Object.keys(focused).length} of ${focusCommand.limit}). Press f on a row in the sidebar to choose one to drop.`);
+        return;
+      }
+      await commandRpc?.call("focus_set", { threadId, focused: !inFocus });
+      toast.success(inFocus ? "Removed from Focus" : "Added to Focus");
     },
   });
   app.commands.register({

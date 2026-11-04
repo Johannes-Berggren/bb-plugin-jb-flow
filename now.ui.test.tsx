@@ -114,6 +114,7 @@ describe("Now and Focus", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     localStorage.clear();
   });
 
@@ -352,5 +353,40 @@ describe("Now and Focus", () => {
     expect(row.textContent).not.toMatch(/due|overdue/);
     fireEvent.keyDown(row, { key: "d" });
     expect(within(document.body).queryByRole("dialog")).toBeNull();
+  });
+
+  const workspaces = { workspaces: [{ id: "w", name: "Acme", projectIds: ["p1"], sectionIds: [], pluginIds: [], sectionOrder: [] }], threadWorkspaces: {} };
+  const mountBar = async (settings: Record<string, unknown>, threads: PluginSidebarThread[], state: Partial<FlowState>) => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const app = await loadPluginApp(() => import("./app"));
+    return renderSlot(app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!, {}, {
+      settings: { workspaces: true, ...settings },
+      rpc: { state_get: () => ({ ...baseState, ...state }), workspaces_get: () => workspaces } as never,
+      sidebarThreads: { status: "ready", projects, threads, sections: [] },
+    });
+  };
+
+  it("a workspace tab counts what's waiting on you now, not everything in its Now", async () => {
+    const slot = await mountBar(
+      { nowQueue: true },
+      [thread("asked", { latestAttentionAt: NOW - 18 * HOUR }), thread("blocked", { hasPendingInteraction: true }), thread("cold", { latestAttentionAt: NOW - 44 * HOUR })],
+      { awaiting: { asked: NOW - 18 * HOUR }, focused: { asked: NOW, cold: NOW } },
+    );
+    const tab = await slot.findByRole("tab", { name: "Acme" });
+    await waitFor(() => expect(tab.querySelector(".jf-workspace-needs-you")?.textContent).toBe("2"));
+    expect(tab.getAttribute("aria-description")).toContain("2 waiting on you now");
+    expect(tab.querySelector(".jf-workspace-attention")).toBeNull();
+  });
+
+  it("with the setting off, a tab shows only its dot", async () => {
+    const slot = await mountBar(
+      { nowQueue: false },
+      [thread("blocked", { hasPendingInteraction: true })],
+      { focused: { blocked: NOW } },
+    );
+    const tab = await slot.findByRole("tab", { name: "Acme" });
+    await waitFor(() => expect(tab.querySelector(".jf-workspace-attention")).not.toBeNull());
+    expect(tab.querySelector(".jf-workspace-needs-you")).toBeNull();
+    expect(tab.getAttribute("aria-description")).not.toContain("waiting on you");
   });
 });
