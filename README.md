@@ -264,9 +264,11 @@ thread or source reply changes. Motion respects reduced-motion preferences.
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 
 - **Groups**, top to bottom:
-  - **Now** (with **Now and Focus** on, the default; otherwise **Needs me** sits here, without the ranking): one ranked list of what to do next. It holds threads blocked on a prompt, a permission or a failure, unread threads whose last message asks you something, and threads you marked as **Focus** that want something from you. Unread status updates stay in their section, in bold.
+  - **Now** (with **Now and Focus** on, the default; otherwise **Needs me** sits here, without the ranking): one ranked list of what to do next. It holds threads blocked on a prompt, a permission or a failure, unread threads whose last message asks you something, threads you marked as **Focus** that want something from you, and threads with a deadline coming up. Unread status updates stay in their section, in bold.
     - **Focus** is a mark on the thread, separate from its section: press `f` on a row, or use the right-click menu. A star shows on the row. Marking more than the **Focus limit** (default 7) asks you to drop one, or keep them all. The first time, threads in your Priority lane start in Focus.
-    - **Order:** Focus threads that are blocked, then Focus threads waiting on you (longest wait first), then Focus threads with no next step, then everything else, oldest first. Seven rows show before *Show N more*.
+    - **Due dates:** press `d` on a row or use the right-click menu; `bb jb-flow due` does the same. Agents set them too, with the `set_thread_due` tool or a `**Due:** YYYY-MM-DD · what falls due` line in a status report, for real outside deadlines only. A day means the end of that day. A date you set is never changed by an agent, and a date you clear isn't proposed again. The hover preview shows who set it and why.
+    - **When a deadline counts:** within 48 hours, a thread that wants something from you joins Now without Focus. Within 24 hours or overdue, it joins even when someone else has the next step, so you can chase them, but not while an agent or a watch is on it. A snoozed thread comes back into Now once its deadline is within 24 hours.
+    - **Order:** Focus or soon-due threads that are blocked, then anything overdue or due within 24 hours (soonest first), then Focus threads waiting on you (longest wait first), then Focus threads with no next step, then threads due within 48 hours, then everything else, oldest first. Seven rows show before *Show N more*.
     - **Reading doesn't clear it.** A Focus thread stays until the agent is moving again. Each row says who holds the thread and for how long: *you · 18h*, *no next step · 44h*, *checks failed*. The wait is counted from when the thread asked, so opening it doesn't reset it.
     - The thread you have open keeps its row until you open another.
   - **Moving** (collapsed, only when there are some): Focus threads that don't need you right now: an agent is running, a watch is active, someone else has the next step, or the agent has only just finished.
@@ -285,6 +287,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `s` snooze
   - `t` tag
   - `f` add to or remove from Focus
+  - `d` set or clear a due date
   - `e` archive
   - `u` toggle unread
   - `j`/`k` move up and down
@@ -405,7 +408,7 @@ Under **Settings → JB Flow**:
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).
-- **Now and Focus**: the ranked Now group and the Focus mark in the Triage list (on by default). Off restores Needs me.
+- **Now and Focus**: the ranked Now group, the Focus mark and due dates, including the `set_thread_due` agent tool (on by default). Off restores Needs me.
 - **Focus limit**: how many threads can be in Focus before marking another one asks you to drop one (default 7).
 - **Keep threads in creation order**: Triage list rows stay put, newest thread first, instead of moving to the top on new activity (off by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
@@ -431,6 +434,7 @@ Release watches and sidebar chip names are set in JSON in the **Advanced config*
 bb jb-flow snooze <thread-id|--self> <when> [--note <text>]
 bb jb-flow unsnooze <thread-id|--self>
 bb jb-flow snoozed [--json]
+bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]
 bb jb-flow digest [--refresh] [--json]
 bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]
 bb jb-flow release-wait [--self|<thread-id>]

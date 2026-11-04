@@ -28,6 +28,7 @@ const baseState: FlowState = {
   snoozes: {},
   tags: {},
   focused: {},
+  due: {},
 };
 
 function thread(id: string, title: string, overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {

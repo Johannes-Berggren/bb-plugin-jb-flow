@@ -3,6 +3,7 @@
 // covers it; the sidebar and the server share it.
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
+import { formatDue } from "./when.ts";
 
 /** Who holds the thread. Checked in this order, see `ballState`. */
 export type BallState =
@@ -28,7 +29,7 @@ export type NowThread = {
   attentionAt: number;
 };
 
-export type NowFlow = Pick<FlowState, "awaiting" | "promised" | "waitingOthers" | "readyToGo" | "watching" | "threadPrs" | "focused">;
+export type NowFlow = Pick<FlowState, "awaiting" | "promised" | "waitingOthers" | "readyToGo" | "watching" | "threadPrs" | "focused" | "due">;
 
 export type NowEntry = {
   thread: NowThread;
@@ -36,12 +37,18 @@ export type NowEntry = {
   focused: boolean;
   /** How long it has been in this state's hands, for the row and the order. */
   since: number;
+  /** Its deadline, if it has one. */
+  dueAt: number | null;
 };
 
 /** A promise to report back counts as stalled after this long (matches awaiting.ts). */
 const STALLED_AFTER_MS = 60 * 60_000;
 /** A thread with nothing going on counts as cold after this long; before that it has only just finished. */
 export const COLD_AFTER_MS = 4 * 60 * 60_000;
+/** Due this close, a thread joins Now by itself if it wants something from you. */
+const DUE_SOON_MS = 48 * 60 * 60_000;
+/** Due this close, it joins unless an agent or a watch is already on it, so you can chase people in time. */
+export const DUE_NOW_MS = 24 * 60 * 60_000;
 
 /** The states that want something from you. The rest are moving without you. */
 const NOW_STATES: ReadonlySet<BallState> = new Set(["blocked", "yours", "stalled", "pr", "go", "cold"]);
@@ -87,18 +94,30 @@ function entryFor(thread: NowThread, flow: NowFlow, now: number): NowEntry {
     focused: flow.focused[thread.id] !== undefined,
     // An ask carries when it was first seen, which a backfill sets late; the thread's own time wins then.
     since: state === "yours" && asked !== undefined ? Math.min(asked, thread.attentionAt) : thread.attentionAt,
+    dueAt: flow.due[thread.id]?.at ?? null,
   };
 }
 
 /** Today's Needs me: blocked on you, or an ask you haven't read yet. */
 const wantsYouAnyway = (entry: NowEntry) => entry.state === "blocked" || (entry.state === "yours" && entry.thread.isUnread);
 
-/** Lower comes first. Gaps are kept for the deadline tiers. */
-function tier(entry: NowEntry): number {
-  if (entry.focused && entry.state === "blocked") return 1;
+const dueWithin = (entry: NowEntry, ms: number, now: number) => entry.dueAt !== null && entry.dueAt - now <= ms;
+
+function belongsInNow(entry: NowEntry, now: number): boolean {
+  if (wantsYouAnyway(entry)) return true;
+  if (NOW_STATES.has(entry.state) && (entry.focused || dueWithin(entry, DUE_SOON_MS, now))) return true;
+  return dueWithin(entry, DUE_NOW_MS, now) && entry.state !== "running" && entry.state !== "watched";
+}
+
+/** Lower comes first. */
+function tier(entry: NowEntry, now: number): number {
+  const dueSoon = dueWithin(entry, DUE_SOON_MS, now);
+  if ((entry.focused || dueSoon) && entry.state === "blocked") return 1;
+  if (dueWithin(entry, DUE_NOW_MS, now)) return 2;
   // An agent waiting on your answer comes before a thread with no next step:
   // answering unblocks it at once, and a cold thread may simply be finished.
   if (entry.focused) return entry.state === "cold" ? 3.5 : 3;
+  if (dueSoon) return 4;
   return 5;
 }
 
@@ -115,10 +134,21 @@ export function nowQueue(
     previous?: readonly string[];
   },
 ): NowQueue {
-  const entries = threads.filter((thread) => !thread.snoozed).map((thread) => entryFor(thread, flow, options.now));
+  const entries = threads
+    .map((thread) => entryFor(thread, flow, options.now))
+    // Snoozing hides a thread, unless its deadline is about to pass while it sleeps.
+    .filter((entry) => !entry.thread.snoozed || dueWithin(entry, DUE_NOW_MS, options.now));
+  const rank = (entry: NowEntry) => tier(entry, options.now);
   const now = entries
-    .filter((entry) => wantsYouAnyway(entry) || (entry.focused && NOW_STATES.has(entry.state)))
-    .sort((a, b) => tier(a) - tier(b) || a.since - b.since || (a.thread.id < b.thread.id ? -1 : a.thread.id > b.thread.id ? 1 : 0));
+    .filter((entry) => belongsInNow(entry, options.now))
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        // Deadlines go soonest first; everything else, longest wait first.
+        (rank(a) === 2 || rank(a) === 4 ? a.dueAt! - b.dueAt! : 0) ||
+        a.since - b.since ||
+        (a.thread.id < b.thread.id ? -1 : a.thread.id > b.thread.id ? 1 : 0),
+    );
 
   const open = options.openThreadId ?? null;
   const index = open === null ? -1 : (options.previous ?? []).indexOf(open);
@@ -129,7 +159,7 @@ export function nowQueue(
 
   const inNow = new Set(now.map((entry) => entry.thread.id));
   const moving = entries
-    .filter((entry) => entry.focused && !inNow.has(entry.thread.id))
+    .filter((entry) => entry.focused && !entry.thread.snoozed && !inNow.has(entry.thread.id))
     .sort((a, b) => a.since - b.since || (a.thread.id < b.thread.id ? -1 : 1));
   return { now, moving };
 }
@@ -144,8 +174,13 @@ export function waited(ms: number): string {
 
 const WATCH_LABEL = { ci: "CI watch", release: "release watch", continue: "auto-continue" } as const;
 
-/** What the row says about who holds the thread, and for how long if it's you. */
+/** What the row says: the deadline if there is one, then who holds the thread. */
 export function reasonLabel(entry: NowEntry, flow: NowFlow, now: number): string {
+  const holder = holderLabel(entry, flow, now);
+  return entry.dueAt === null ? holder : `${formatDue(entry.dueAt, new Date(now))} · ${holder.replace(" · ", " ")}`;
+}
+
+function holderLabel(entry: NowEntry, flow: NowFlow, now: number): string {
   const age = waited(now - entry.since);
   switch (entry.state) {
     case "blocked":

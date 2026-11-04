@@ -7,6 +7,11 @@ import { listLiveThreads } from "./thread-list.ts";
 
 const FOCUSED_KEY = "focused";
 const SEEDED_KEY = "focusedSeeded";
+const DUE_KEY = "due";
+/** Dates you cleared (thread id → that date), so the agent's next report can't put the same one back. */
+const DISMISSED_KEY = "dueDismissed";
+
+export type Due = { at: number; reason: string | null; source: "agent" | "you"; setAt: number };
 
 type Store = {
   storage: { kv: Pick<BbPluginApi["storage"]["kv"], "get" | "set"> };
@@ -70,15 +75,57 @@ export function createNowStore(bb: Store, changed: () => void) {
     return focused;
   };
 
+  const dueAll = async () => (await kv.get<Record<string, Due>>(DUE_KEY)) ?? {};
+
+  /**
+   * Sets or (with `at: null`) clears a deadline. A date you set is never changed by
+   * an agent, and a date you cleared isn't proposed again; another date still is.
+   * `applied` says whether this source got its way.
+   */
+  const setDue = async (threadId: string, at: number | null, reason: string | null, source: Due["source"]) => {
+    const result = await queued(async () => {
+      const due = await dueAll();
+      const dismissed = (await kv.get<Record<string, number>>(DISMISSED_KEY)) ?? {};
+      const existing = due[threadId];
+      if (source === "agent" && existing?.source === "you") return { applied: false, due: existing, moved: false };
+      if (source === "agent" && at !== null && dismissed[threadId] === at) return { applied: false, due: null, moved: false };
+      if (at === null) {
+        if (existing === undefined) return { applied: true, due: null, moved: false };
+        delete due[threadId];
+        if (source === "you") {
+          dismissed[threadId] = existing.at;
+          await kv.set(DISMISSED_KEY, dismissed);
+        }
+        await kv.set(DUE_KEY, due);
+        return { applied: true, due: null, moved: true };
+      }
+      if (existing?.at === at && existing.reason === reason && existing.source === source) return { applied: true, due: existing, moved: false };
+      const next: Due = { at, reason, source, setAt: Date.now() };
+      due[threadId] = next;
+      await kv.set(DUE_KEY, due);
+      if (source === "you" && threadId in dismissed) {
+        delete dismissed[threadId];
+        await kv.set(DISMISSED_KEY, dismissed);
+      }
+      return { applied: true, due: next, moved: true };
+    });
+    if (result.moved) changed();
+    return { applied: result.applied, due: result.due };
+  };
+
   /** Drops every thread that isn't live any more. */
   const prune = async (isLive: (threadId: string) => boolean) => {
     const pruned = await queued(async () => {
-      const current = await read();
-      const gone = Object.keys(current).filter((threadId) => !isLive(threadId));
-      if (gone.length === 0) return false;
-      for (const threadId of gone) delete current[threadId];
-      await kv.set(FOCUSED_KEY, current);
-      return true;
+      let any = false;
+      for (const key of [FOCUSED_KEY, DUE_KEY, DISMISSED_KEY]) {
+        const current = (await kv.get<Record<string, unknown>>(key)) ?? {};
+        const gone = Object.keys(current).filter((threadId) => !isLive(threadId));
+        if (gone.length === 0) continue;
+        for (const threadId of gone) delete current[threadId];
+        await kv.set(key, current);
+        any = true;
+      }
+      return any;
     });
     if (pruned) changed();
   };
@@ -87,5 +134,5 @@ export function createNowStore(bb: Store, changed: () => void) {
   bb.events.on("thread.archived", forget);
   bb.events.on("thread.deleted", forget);
 
-  return { all, set, prune };
+  return { all, set, prune, dueAll, setDue };
 }

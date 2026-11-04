@@ -23,6 +23,7 @@ const flow = (changes: Partial<NowFlow> = {}): NowFlow => ({
   watching: {},
   threadPrs: {},
   focused: {},
+  due: {},
   ...changes,
 });
 
@@ -198,3 +199,81 @@ test("the sidebar's thread maps onto the queue's shape", () => {
   assert.equal(sidebarNowThread(base, true).snoozed, true);
   assert.equal(sidebarNowThread(base, false).attentionAt, 5);
 });
+
+const due = (at: number) => ({ at, reason: null, source: "agent" as const, setAt: 0 });
+
+test("a thread due within 48h joins Now if it wants something from you, without Focus", () => {
+  const { now } = nowQueue(
+    [thread("asks"), thread("quiet"), thread("far")],
+    flow({ awaiting: { asks: 1, far: 1 }, due: { asks: due(NOW + 40 * HOUR), quiet: due(NOW + 40 * HOUR), far: due(NOW + 96 * HOUR) } }),
+    { now: NOW },
+  );
+  // "quiet" has only just finished, so it wants nothing yet. "far" is too far off.
+  assert.deepEqual(ids(now), ["asks"]);
+});
+
+test("within 24h or overdue it joins even when someone else has the next step, but not while an agent or watch is on it", () => {
+  const soon = NOW + 10 * HOUR;
+  const { now, moving } = nowQueue(
+    [thread("others"), thread("recent"), thread("running", { busy: true }), thread("watched"), thread("overdue")],
+    flow({
+      waitingOthers: { others: 1 },
+      watching: { watched: { kind: "ci", label: "" } },
+      due: { others: due(soon), recent: due(soon), running: due(soon), watched: due(soon), overdue: due(NOW - HOUR) },
+    }),
+    { now: NOW },
+  );
+  assert.deepEqual(ids(now), ["overdue", "others", "recent"]);
+  // Moving is for Focus threads: unfocused ones keep their lane, with a due chip.
+  assert.deepEqual(ids(moving), []);
+});
+
+test("full rank: blocked with a deadline or Focus, then due now, then Focus, then due soon, then the rest", () => {
+  const { now } = nowQueue(
+    [
+      thread("rest", { blocked: "input", attentionAt: NOW - 90 * HOUR }),
+      thread("due-soon", { attentionAt: NOW - 80 * HOUR }),
+      thread("focus-cold", { attentionAt: NOW - 70 * HOUR }),
+      thread("focus-asks", { attentionAt: NOW - 2 * HOUR }),
+      thread("due-now-later", { attentionAt: NOW - 60 * HOUR }),
+      thread("due-now-first", { attentionAt: NOW - HOUR }),
+      thread("blocked-far-due", { blocked: "input", attentionAt: NOW - 95 * HOUR }),
+      thread("blocked-due", { blocked: "failed", attentionAt: NOW - HOUR }),
+    ],
+    flow({
+      awaiting: { "due-soon": 1, "focus-asks": NOW - 2 * HOUR, "due-now-later": 1, "due-now-first": 1 },
+      focused: { "focus-cold": 1, "focus-asks": 1 },
+      due: {
+        "due-soon": due(NOW + 40 * HOUR),
+        "due-now-later": due(NOW + 20 * HOUR),
+        "due-now-first": due(NOW + 5 * HOUR),
+        "blocked-due": due(NOW + 30 * HOUR),
+        // A deadline two weeks off doesn't make it urgent yet.
+        "blocked-far-due": due(NOW + 300 * HOUR),
+      },
+    }),
+    { now: NOW },
+  );
+  assert.deepEqual(ids(now), ["blocked-due", "due-now-first", "due-now-later", "focus-asks", "focus-cold", "due-soon", "blocked-far-due", "rest"]);
+});
+
+test("a snoozed thread stays hidden until its deadline is within 24h", () => {
+  const state = (at: number) => flow({ awaiting: { a: 1 }, focused: { a: 1 }, due: { a: due(at) } });
+  const snoozed = [thread("a", { snoozed: true })];
+  assert.deepEqual(ids(nowQueue(snoozed, state(NOW + 30 * HOUR), { now: NOW }).now), []);
+  assert.deepEqual(ids(nowQueue(snoozed, state(NOW + 20 * HOUR), { now: NOW }).now), ["a"]);
+  assert.deepEqual(ids(nowQueue(snoozed, state(NOW - HOUR), { now: NOW }).now), ["a"]);
+});
+
+test("a snoozed thread due soon with an agent on it joins neither group", () => {
+  const { now, moving } = nowQueue([thread("a", { snoozed: true, busy: true })], flow({ focused: { a: 1 }, due: { a: due(NOW + HOUR) } }), { now: NOW });
+  assert.deepEqual(ids(now), []);
+  assert.deepEqual(ids(moving), []);
+});
+
+test("the row leads with the deadline", () => {
+  const state = flow({ awaiting: { a: NOW - 27 * HOUR }, due: { a: due(NOW - 3 * 24 * HOUR) } });
+  const { now } = nowQueue([thread("a", { attentionAt: NOW - 27 * HOUR })], state, { now: NOW });
+  assert.equal(reasonLabel(now[0]!, state, NOW), "3d overdue · you 27h");
+});
+

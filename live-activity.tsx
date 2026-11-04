@@ -1095,7 +1095,7 @@ export function LiveActivityBanner({
       watches={wakeups.state?.watches ?? []}
       onCancelWatch={wakeups.cancel}
       onRequestStatus={async () => {
-        await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
+        await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt, values?.nowQueue === true) });
       }}
       running={running}
       startedAt={runningSince[threadId]?.since ?? taskStart}

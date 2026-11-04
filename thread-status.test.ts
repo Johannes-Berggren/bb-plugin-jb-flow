@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { expect, it } from "vitest";
-import { DEFAULT_STATUS_PROMPT, handBackInstructions } from "./status-prompt";
+import { describe, expect, it } from "vitest";
+import { DEFAULT_STATUS_PROMPT, handBackInstructions, statusPrompt } from "./status-prompt";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -167,3 +167,25 @@ it("hands back with the status prompt the user set, or the built-in one", () => 
   // bb truncates thread instructions at 4096 characters.
   expect(handBackInstructions("").length).toBeLessThan(4096);
 });
+
+describe("a report's Due line", () => {
+  it("is read when present and absent otherwise", () => {
+    expect(parseStatusReport("**Goal:** Ship\n**Next:** Send\n**Due:** 2026-11-05 · invoices fall due", 1)?.due).toBe("2026-11-05 · invoices fall due");
+    expect(parseStatusReport("**Goal:** Ship\n**Next:** Send", 1)).not.toHaveProperty("due");
+  });
+
+  it("doesn't make a report out of a reply that isn't one", () => {
+    expect(parseStatusReport("**Goal:** Ship\n**Due:** 2026-11-05", 1)).toBeNull();
+  });
+});
+
+describe("the status prompt's Due line", () => {
+  it("is only in the built-in prompt, and only with the feature on", () => {
+    expect(statusPrompt("", true)).toContain("**Due:**");
+    expect(statusPrompt("", false)).not.toContain("**Due:**");
+    expect(statusPrompt("My own prompt", true)).toBe("My own prompt");
+    expect(handBackInstructions("", true)).toContain("**Due:**");
+    expect(handBackInstructions("", false)).not.toContain("**Due:**");
+  });
+});
+

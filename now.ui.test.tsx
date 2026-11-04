@@ -25,6 +25,7 @@ const baseState: FlowState = {
   snoozes: {},
   tags: {},
   focused: {},
+  due: {},
 };
 
 function thread(id: string, overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
@@ -74,6 +75,7 @@ async function mount(options: {
   settings?: Record<string, unknown>;
   activeThreadId?: string | null;
   focusSet?: (input: { threadId: string; focused: boolean }) => unknown;
+  dueSet?: (input: { threadId: string; at: number | null; reason: string | null }) => unknown;
   stateGet?: () => unknown;
 }) {
   const app = await loadPluginApp(() => import("./app"));
@@ -88,6 +90,7 @@ async function mount(options: {
         state_get: options.stateGet ?? (() => state),
         workspaces_get: () => ({ workspaces: [], threadWorkspaces: {} }),
         focus_set: options.focusSet ?? ((input: { focused: boolean }) => ({ focused: input.focused })),
+        due_set: options.dueSet ?? (() => ({ ok: true })),
       } as never,
       sidebarThreads: { status: "ready", threads: options.threads, projects, sections: [] },
     },
@@ -262,5 +265,92 @@ describe("Now and Focus", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Keep all" }));
     await waitFor(() => expect(focusSet).toHaveBeenCalledTimes(1));
     expect(focusSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "new", focused: true }));
+  });
+
+  const dueIn = (ms: number, source: "agent" | "you" = "agent") => ({ at: NOW + ms, reason: "invoices fall due", source, setAt: NOW });
+
+  it("a thread due tomorrow leads Now without Focus, and says so", async () => {
+    const slot = await mount({
+      threads: [thread("focused", { latestAttentionAt: NOW - 90 * HOUR }), thread("due", { latestAttentionAt: NOW - 27 * HOUR })],
+      state: {
+        awaiting: { focused: NOW - 90 * HOUR, due: NOW - 27 * HOUR },
+        focused: { focused: NOW },
+        due: { due: dueIn(10 * HOUR) },
+      },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["due", "focused"]));
+    expect(slot.container.querySelector('[data-jb-flow-row="due"]')?.textContent).toMatch(/due (today|tomorrow) · you 27h/);
+  });
+
+  it("a date far off shows on the row in its lane", async () => {
+    const slot = await mount({ threads: [thread("later")], state: { due: { later: dueIn(10 * 24 * HOUR) } } });
+    await waitFor(() => expect(slot.container.querySelector('[data-jb-flow-row="later"]')?.textContent).toMatch(/due \d+ \w+/));
+    expect(rowsUnder(slot.container, "Now")).toEqual([]);
+  });
+
+  it("a snoozed thread due within a day shows in Now, once", async () => {
+    const slot = await mount({
+      threads: [thread("sleeping", { sectionId: "sec_snoozed" })],
+      state: { snoozedSectionId: "sec_snoozed", due: { sleeping: dueIn(HOUR) }, awaiting: { sleeping: NOW - HOUR } },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["sleeping"]));
+    expect(slot.container.querySelectorAll('[data-jb-flow-row="sleeping"]').length).toBe(1);
+  });
+
+  it("d opens the date dialog, and a preset sets the end of that day", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({ threads: [thread("a"), thread("b")], state: { focused: { b: NOW } }, dueSet });
+    await waitFor(() => expect(heading(slot.container, "Moving")).toBeDefined());
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="a"]')!, { key: "d" });
+    const dialog = await within(document.body).findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("What falls due"), { target: { value: "contract" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tomorrow" }));
+    await waitFor(() => expect(dueSet).toHaveBeenCalledTimes(1));
+    const input = (dueSet.mock.calls[0] as unknown as [{ threadId: string; at: number; reason: string }])[0];
+    expect(input.threadId).toBe("a");
+    expect(input.reason).toBe("contract");
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(23, 59, 59, 999);
+    expect(input.at).toBe(tomorrow.getTime());
+    await waitFor(() => expect(within(document.body).queryByRole("dialog")).toBeNull());
+  });
+
+  it("the dialog says who set a date, and clears it", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({ threads: [thread("a")], state: { due: { a: dueIn(240 * HOUR) } }, dueSet });
+    await waitFor(() => expect(slot.container.querySelector('[data-jb-flow-row="a"]')?.textContent).toMatch(/due \d+ \w+/));
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="a"]')!, { key: "d" });
+    const dialog = await within(document.body).findByRole("dialog");
+    expect(dialog.textContent).toContain("Set by the agent.");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear date" }));
+    await waitFor(() => expect(dueSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "a", at: null, reason: null })));
+  });
+
+  it("a date it can't read shows an error and stays open", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({ threads: [thread("a"), thread("b")], state: { focused: { b: NOW } }, dueSet });
+    await waitFor(() => expect(heading(slot.container, "Moving")).toBeDefined());
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="a"]')!, { key: "d" });
+    const dialog = await within(document.body).findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Custom due date"), { target: { value: "soon" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Set" }));
+    await within(dialog).findByRole("alert");
+    expect(dueSet).not.toHaveBeenCalled();
+  });
+
+  it("with the setting off there's no due chip and no d key", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({
+      threads: [thread("a"), thread("blocked", { hasPendingInteraction: true })],
+      state: { due: { a: dueIn(HOUR) } },
+      settings: { nowQueue: false },
+      dueSet,
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Needs me")).toEqual(["blocked"]));
+    const row = slot.container.querySelector('[data-jb-flow-row="a"]')!;
+    expect(row.textContent).not.toMatch(/due|overdue/);
+    fireEvent.keyDown(row, { key: "d" });
+    expect(within(document.body).queryByRole("dialog")).toBeNull();
   });
 });

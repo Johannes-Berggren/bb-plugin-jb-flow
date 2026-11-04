@@ -94,3 +94,65 @@ test("prune keeps only live threads", async () => {
   await store.prune((id) => id === "b");
   assert.deepEqual(Object.keys(await store.all()), ["b"]);
 });
+
+test("an agent sets a date, and you can change it", async () => {
+  const { store } = fake();
+  await store.setDue("a", 100, "invoices", "agent");
+  assert.equal((await store.dueAll()).a?.source, "agent");
+  assert.equal((await store.setDue("a", 200, null, "you")).applied, true);
+  assert.equal((await store.dueAll()).a?.at, 200);
+});
+
+test("a date you set is never changed or cleared by an agent", async () => {
+  const { store } = fake();
+  await store.setDue("a", 100, "mine", "you");
+  const changed = await store.setDue("a", 200, "theirs", "agent");
+  assert.equal(changed.applied, false);
+  assert.equal(changed.due?.at, 100);
+  assert.equal((await store.setDue("a", null, null, "agent")).applied, false);
+  assert.deepEqual({ at: (await store.dueAll()).a?.at, reason: (await store.dueAll()).a?.reason }, { at: 100, reason: "mine" });
+});
+
+test("a date you cleared stays cleared, but the agent can propose another", async () => {
+  const { store } = fake();
+  await store.setDue("a", 100, "wrong", "agent");
+  await store.setDue("a", null, null, "you");
+  assert.equal((await store.setDue("a", 100, "wrong", "agent")).applied, false);
+  assert.equal((await store.dueAll()).a, undefined);
+  assert.equal((await store.setDue("a", 200, "right", "agent")).applied, true);
+  assert.equal((await store.dueAll()).a?.at, 200);
+});
+
+test("setting a date yourself lifts your earlier dismissal", async () => {
+  const { store, data } = fake();
+  await store.setDue("a", 100, null, "agent");
+  await store.setDue("a", null, null, "you");
+  await store.setDue("a", 300, null, "you");
+  assert.deepEqual(data.get("dueDismissed"), {});
+});
+
+test("the same date again publishes nothing, so repeated reports stay quiet", async () => {
+  const { store, changes } = fake();
+  await store.setDue("a", 100, "x", "agent");
+  const after = changes();
+  await store.setDue("a", 100, "x", "agent");
+  assert.equal(changes(), after);
+});
+
+test("archiving a thread forgets its date and dismissal", async () => {
+  const { store, emit, data } = fake();
+  await store.setDue("a", 100, null, "you");
+  await store.setDue("b", 100, null, "agent");
+  await store.setDue("b", null, null, "you");
+  await emit("thread.archived", "a");
+  await emit("thread.archived", "b");
+  assert.deepEqual(await store.dueAll(), {});
+  assert.deepEqual(data.get("dueDismissed"), {});
+});
+
+test("concurrent date writes don't lose each other", async () => {
+  const { store } = fake();
+  await Promise.all(["a", "b", "c"].map((id) => store.setDue(id, 100, null, "agent")));
+  assert.deepEqual(Object.keys(await store.dueAll()).sort(), ["a", "b", "c"]);
+});
+
