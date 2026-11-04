@@ -37,7 +37,7 @@ import {
   DialogDescription,
 } from "./components/ui/dialog";
 import { WORKSPACE_BAR_EVENT } from "./workspace-topbar";
-import { createSwipeTracker, swipeTarget } from "./workspace-swipe";
+import { createSwipeTracker, swipeTarget, workspaceTabOrder, type SwipeTab } from "./workspace-swipe";
 import "./workspaces.css";
 
 const isCatchUpPanel = (item: ExperimentalSidebarNavigationItem) =>
@@ -255,9 +255,57 @@ function WorkspaceTopBarInner() {
   );
 }
 
+// --- switching transition --------------------------------------------------------
+
+const SLIDE_PX = 28;
+const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * The part of the sidebar that holds both the navigation (tools, Catch up) and
+ * the thread list, so they move as one when the workspace changes. Falls back
+ * to the list itself when that block can't be found or isn't sidebar-sized.
+ */
+export function sidebarBlock(list: HTMLElement): HTMLElement {
+  const navigation = document.querySelector(".jf-workspaces");
+  if (!navigation) return list;
+  for (let node = list.parentElement; node && node !== document.body; node = node.parentElement) {
+    if (node.contains(navigation)) return node.getBoundingClientRect().width < window.innerWidth * 0.6 ? node : list;
+  }
+  return list;
+}
+
+/** Slides the sidebar out towards where the swipe goes, and stays hidden until `slideIn`. */
+function slideOut(block: HTMLElement, direction: 1 | -1): Promise<void> {
+  if (reducedMotion() || !block.animate) return Promise.resolve();
+  const out = block.animate(
+    [{ transform: "none", opacity: 1 }, { transform: `translateX(${-direction * SLIDE_PX}px)`, opacity: 0 }],
+    { duration: 110, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" },
+  );
+  // Never leave the sidebar hidden, even if the new workspace's list doesn't redraw.
+  setTimeout(() => out.cancel(), 600);
+  return out.finished.then(() => undefined, () => undefined);
+}
+
+/** Slides the new workspace's sidebar in from the side it came from. */
+export function slideIn(block: HTMLElement, direction: 1 | -1) {
+  block.getAnimations?.().forEach((animation) => animation.cancel());
+  if (reducedMotion() || !block.animate) return;
+  block.animate(
+    [{ transform: `translateX(${direction * SLIDE_PX}px)`, opacity: 0 }, { transform: "none", opacity: 1 }],
+    { duration: 200, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+  );
+}
+
+/** Which way the tabs moved: 1 when the new tab sits to the right of the old one. */
+export function tabDirection(workspaces: readonly { id: string }[], from: SwipeTab, to: SwipeTab): 1 | -1 {
+  const order = workspaceTabOrder(workspaces);
+  return order.indexOf(to) >= order.indexOf(from) ? 1 : -1;
+}
+
 /**
  * A wheel handler for the sidebar: a two-finger swipe left or right moves to
- * the next or previous workspace tab, like Spaces in Arc.
+ * the next or previous workspace tab, like Spaces in Arc. The sidebar slides
+ * out first, so the switch happens while it's hidden.
  */
 export function useWorkspaceSwipe() {
   const { values } = useSettings();
@@ -272,15 +320,11 @@ export function useWorkspaceSwipe() {
       if (values?.workspaces !== true || !ready || state.workspaces.length === 0) return;
       const direction = track(event);
       if (direction === 0) return;
-      const order = [...state.workspaces.map((workspace) => workspace.id as string | null), null, "unassigned"];
-      const target = swipeTarget(order, selected, direction);
+      const target = swipeTarget(workspaceTabOrder(state.workspaces), selected, direction);
       if (target === undefined) return;
-      switchWorkspace(target, { state, threads, projects, currentThreadId: context.threadId, navigate });
-      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches)
-        event.currentTarget.animate?.(
-          [{ transform: `translateX(${direction * 24}px)`, opacity: 0.4 }, { transform: "none", opacity: 1 }],
-          { duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
-        );
+      void slideOut(sidebarBlock(event.currentTarget), direction).then(() =>
+        switchWorkspace(target, { state, threads, projects, currentThreadId: context.threadId, navigate }),
+      );
     },
     [values?.workspaces, ready, state, selected, threads, projects, context.threadId, navigate, track],
   );

@@ -2,7 +2,7 @@ import "./flow-ui.css";
 import { mountWorkspaceTopBar } from "./workspace-topbar";
 import { toast } from "sonner";
 import type { WorkspaceState } from "./workspaces";
-import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSettings, useWorkspaceSwipe } from "./workspace-ui";
+import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSettings, useWorkspaceSwipe, sidebarBlock, slideIn, tabDirection } from "./workspace-ui";
 import { useWorkspaces, useSelectedWorkspace, selectWorkspace } from "./workspace-client";
 import { inWorkspace } from "./workspaces";
 import { mountTimelineActivity } from "./timeline-activity";
@@ -10,7 +10,7 @@ import { mountTimelineActivity } from "./timeline-activity";
 // header, the stale-thread digest on the homepage, and the area-tag migration
 // in settings. All plugin state comes from server.ts over RPC and refreshes on
 // the "jb-flow-changed" realtime signal.
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   definePluginApp,
@@ -1329,6 +1329,15 @@ function TriageThreadList({
   );
   const drag = useThreadDrag(onDrop);
   const onSwipe = useWorkspaceSwipe();
+  // Whatever switched the workspace (a swipe or a tab click), slide the new one in.
+  const listRef = useRef<HTMLElement>(null);
+  const shownWorkspace = useRef(selectedWorkspace);
+  useLayoutEffect(() => {
+    const before = shownWorkspace.current;
+    shownWorkspace.current = selectedWorkspace;
+    if (before === selectedWorkspace || !listRef.current) return;
+    slideIn(sidebarBlock(listRef.current), tabDirection(workspaceState.workspaces, before, selectedWorkspace));
+  }, [selectedWorkspace]);
 
   // Lanes and your own sections share one order, so any section can sit anywhere.
   const sectionKeys = useMemo(
@@ -1723,6 +1732,7 @@ function TriageThreadList({
     <DragContext.Provider value={drag}>
     <nav
       aria-label="Triage"
+      ref={listRef}
       onWheel={onSwipe}
       className="jf-triage flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >

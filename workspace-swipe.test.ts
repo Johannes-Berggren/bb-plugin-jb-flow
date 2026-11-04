@@ -42,18 +42,28 @@ test("a small sideways nudge doesn't switch", () => {
 // Sideways steps 16ms apart, as macOS sends them.
 const stream = (track: ReturnType<typeof createSwipeTracker>, deltas: number[], start = 0) =>
   deltas.map((deltaX, index) => track(wheel(deltaX, start + index * 16))).filter((step) => step !== 0);
+// Momentum after lifting your fingers: about 20 steps that fade out.
+const fade = (from: number, steps = 20) => Array.from({ length: steps }, (_, index) => Math.max(1, Math.round(from * 0.85 ** index)));
 
 test("a quick second swipe during the first one's momentum still switches", () => {
   const track = createSwipeTracker();
-  const first = [10, 30, 50, 40];
-  const momentum = [30, 22, 15, 10, 6, 4];
-  const second = [12, 30, 50, 40];
-  assert.deepEqual(stream(track, [...first, ...momentum, ...second]), [1, 1]);
+  assert.deepEqual(stream(track, [10, 30, 50, 40, ...fade(35), 12, 30, 50, 40]), [1, 1]);
 });
 
 test("momentum alone, however long, never switches twice", () => {
   const track = createSwipeTracker();
-  assert.deepEqual(stream(track, [10, 30, 50, 40, 30, 22, 15, 10, 6, 4, 3, 2, 2, 1, 1]), [1]);
+  assert.deepEqual(stream(track, [10, 30, 50, 40, ...fade(35, 60)]), [1]);
+});
+
+test("momentum that wobbles doesn't switch twice", () => {
+  const track = createSwipeTracker();
+  const wobbly = [32, 26, 30, 20, 24, 15, 19, 11, 14, 8, 12, 6, 9, 5, 8, 4, 7, 3, 6, 2, 5, 2, 4, 1];
+  assert.deepEqual(stream(track, [10, 30, 50, 40, ...wobbly]), [1]);
+});
+
+test("a fast flick right after a switch doesn't skip a tab", () => {
+  const track = createSwipeTracker();
+  assert.deepEqual(stream(track, [20, 60, 90, 70, 40, 20, 10, 25, 60, 30, 15, 8]), [1]);
 });
 
 test("a swipe that speeds up after switching doesn't switch twice", () => {
@@ -63,5 +73,5 @@ test("a swipe that speeds up after switching doesn't switch twice", () => {
 
 test("swiping back during the momentum switches back", () => {
   const track = createSwipeTracker();
-  assert.deepEqual(stream(track, [10, 30, 50, 40, 30, 22, 15, -12, -30, -50, -40]), [1, -1]);
+  assert.deepEqual(stream(track, [10, 30, 50, 40, ...fade(35), -12, -30, -50, -40]), [1, -1]);
 });
