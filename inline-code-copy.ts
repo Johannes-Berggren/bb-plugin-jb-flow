@@ -15,9 +15,11 @@ export function copyableChip(target: EventTarget | null): HTMLElement | null {
   return code.textContent?.trim() ? code : null;
 }
 
-async function writeClipboard(text: string) {
+/** True once the text is on the clipboard. */
+async function writeClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
+    return true;
   } catch {
     // Older embeds without the async clipboard API.
     const area = document.createElement("textarea");
@@ -25,8 +27,9 @@ async function writeClipboard(text: string) {
     area.style.cssText = "position:fixed;opacity:0";
     document.body.append(area);
     area.select();
-    document.execCommand("copy");
+    const copied = document.execCommand("copy");
     area.remove();
+    return copied;
   }
 }
 
@@ -87,9 +90,8 @@ export function mountInlineCodeCopy({ signal }: { signal: AbortSignal }) {
   };
   button.addEventListener("click", async (event) => {
     event.preventDefault();
-    const text = chip?.textContent;
-    if (!text) return;
-    await writeClipboard(text);
+    const text = chip?.textContent?.trim();
+    if (!text || !(await writeClipboard(text))) return;
     label(true);
     window.clearTimeout(doneTimer);
     doneTimer = window.setTimeout(() => label(false), 1200);

@@ -10,7 +10,7 @@ afterEach(() => {
 });
 function setup(enabled = true) {
   if (enabled) document.documentElement.dataset[COPY_CODE_FLAG] = "";
-  document.body.innerHTML = `<div data-timeline-row-id="m1"><p>Paste <code id="chip">under:org/123</code> here.</p>
+  document.body.innerHTML = `<div data-timeline-row-id="m1"><p>Paste <code id="chip"> under:org/123 </code> here.</p>
     <pre><code id="block">npm test</code></pre></div>
     <p>Outside <code id="outside">nope</code></p>`;
   controller = new AbortController();
