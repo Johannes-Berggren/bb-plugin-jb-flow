@@ -336,6 +336,12 @@ export default async function plugin(bb: BbPluginApi) {
         "Tabs across the top of BB that group projects, threads, sections and plugin tools. Off shows everything as before.",
       default: true,
     },
+    countSnoozedInTabs: {
+      type: "boolean",
+      label: "Count snoozed threads in workspace tabs",
+      description: "The number on each workspace tab includes threads that are snoozed. Off counts only threads that aren't snoozed.",
+      default: false,
+    },
     palette: {
       type: "boolean",
       label: "⌘K opens the JB Flow palette",
