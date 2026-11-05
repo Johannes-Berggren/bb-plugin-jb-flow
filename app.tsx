@@ -59,10 +59,11 @@ import {
   worstPr,
 } from "./ui-extras";
 import type { RunInfo, ThreadPr } from "./ui-extras";
-import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
-import { groupByProject, groupBySection, sortRows } from "./sidebar-groups";
+import { DUE_PRESETS, SNOOZE_PRESETS, formatDue, formatWhen, parseDue, parseWhen } from "./when";
+import { groupByProject, groupBySection, quietFor, sortRows } from "./sidebar-groups";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
 import { needsMe } from "./needs-me";
+import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -448,6 +449,11 @@ function CatchUpHost() {
   return open ? <CatchUpWithFlow onClose={close} /> : null;
 }
 
+function WorkspaceTopBarWithFlow() {
+  const { state } = useFlowState();
+  return <WorkspaceTopBar flow={state} />;
+}
+
 function CatchUpWithFlow({ onClose }: { onClose: () => void }) {
   const { state } = useFlowState();
   return <CatchUpOverlay flow={state} onClose={onClose} />;
@@ -457,6 +463,11 @@ function CatchUpWithFlow({ onClose }: { onClose: () => void }) {
 function CommandHost() {
   const settings = useSettings().values;
   const expandPlans = settings?.expandPlans === true;
+  const nowOn = settings?.nowQueue === true;
+  const focusLimit = focusLimitOf(settings?.focusLimit);
+  useEffect(() => {
+    focusCommand = nowOn ? { limit: focusLimit } : null;
+  }, [nowOn, focusLimit]);
   useEffect(() => {
     // Read by the plan-expander content script, which can't use hooks.
     if (expandPlans) document.documentElement.dataset[EXPAND_PLANS_FLAG] = "";
@@ -542,8 +553,23 @@ function ThreadRow({
   onNewSection,
   machine,
   workspaceState, onWorkspace,
+  focused,
+  onToggleFocus,
+  reason,
+  due,
+  onSetDue,
 }: {
   thread: PluginSidebarThread;
+  /** Marked as Focus. */
+  focused: boolean;
+  /** Missing when Now and Focus is turned off. */
+  onToggleFocus: (() => void) | undefined;
+  /** On a Now or Moving row: who holds the thread, and for how long. */
+  reason: { text: string; urgent: boolean } | undefined;
+  /** This thread's deadline, if it has one. */
+  due: FlowState["due"][string] | undefined;
+  /** Missing when Now and Focus is turned off. */
+  onSetDue: (() => void) | undefined;
   workspaceState: WorkspaceState;
   onWorkspace: (workspaceId: string | null, automatic: boolean) => void;
   project: PluginSidebarProject | undefined;
@@ -585,6 +611,8 @@ function ThreadRow({
   const worst = worstPr(prs);
   const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
   const rpc = useRpc<typeof rpcContract>();
+  // A running thread already shows its run time.
+  const reasonChip = run ? undefined : reason;
 
   const onKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -606,6 +634,12 @@ function ThreadRow({
     } else if (event.key === "t") {
       event.preventDefault();
       onTag();
+    } else if (event.key === "f" && onToggleFocus) {
+      event.preventDefault();
+      onToggleFocus();
+    } else if (event.key === "d" && onSetDue) {
+      event.preventDefault();
+      onSetDue();
     } else if (event.key === "u") {
       event.preventDefault();
       void actions.setRead(thread.id, thread.isUnread);
@@ -632,6 +666,7 @@ function ThreadRow({
           prs={prs}
           watching={watching}
           snoozeUntil={snoozeUntil}
+          dueDetail={due ? `${formatDue(due.at)}${due.reason ? `: ${due.reason}` : ""}${due.source === "agent" ? " (set by the agent)" : ""}` : null}
         >
         <a
           href={thread.href}
@@ -667,22 +702,32 @@ function ThreadRow({
           }}
         >
           <StatusIcon status={status} />
+          {focused ? (
+            <span role="img" aria-label="In Focus" title="In Focus" className="shrink-0">
+              <Glyph name="star" className="size-3 text-amber-500" />
+            </span>
+          ) : null}
+          {/* The title keeps a readable width; chips beside it truncate instead. */}
           <span
+            data-jb-flow-row-title=""
             className={cn(
-              "min-w-0 flex-1 truncate",
+              "min-w-[5.5rem] flex-1 truncate",
               thread.isUnread && "font-semibold",
             )}
           >
             <ThreadTitle threadId={thread.id} />
           </span>
-          {tags.slice(0, 2).map((tag) => (
-            <span
-              key={tag}
-              className="shrink-0 text-[10px] text-muted-foreground"
-            >
-              #{tag}
-            </span>
-          ))}
+          {/* A Now row's reason chip says more; its tags stay in the hover card. */}
+          {reasonChip
+            ? null
+            : tags.slice(0, 2).map((tag) => (
+                <span
+                  key={tag}
+                  className="min-w-0 max-w-[5rem] truncate text-[10px] text-muted-foreground"
+                >
+                  #{tag}
+                </span>
+              ))}
           <ProjectChip project={project} />
           {machine?.remote ? (
             <span className="shrink-0 text-[10px] text-muted-foreground" title={`Runs on ${machineLabel(machine.name)}`}>
@@ -694,7 +739,21 @@ function ThreadRow({
               {run.stuck ? `stuck ${duration(run.silent)}` : duration(run.elapsed)}
             </span>
           ) : null}
-          {worst ? (
+          {due && !reasonChip ? (
+            <span className={cn("shrink-0 text-[10px] tabular-nums", due.at - now <= DUE_NOW_MS ? "font-medium text-amber-600" : "text-muted-foreground")}>
+              {formatDue(due.at, new Date(now))}
+            </span>
+          ) : null}
+          {reasonChip ? (
+            <span
+              data-jb-flow-reason=""
+              title={reasonChip.text}
+              className={cn("min-w-0 truncate whitespace-nowrap text-[10px] tabular-nums", reasonChip.urgent ? "font-medium text-amber-600" : "text-muted-foreground")}
+            >
+              {reasonChip.text}
+            </span>
+          ) : null}
+          {worst && !reasonChip ? (
             <button
               type="button"
               tabIndex={-1}
@@ -750,6 +809,18 @@ function ThreadRow({
           </ContextMenuItem>
         ) : null}
         <ContextMenuSeparator />
+        {onToggleFocus ? (
+          <ContextMenuItem onSelect={onToggleFocus}>
+            <Glyph name="star" className="size-4" />
+            {focused ? "Remove from Focus" : "Add to Focus"}
+          </ContextMenuItem>
+        ) : null}
+        {onSetDue ? (
+          <ContextMenuItem onSelect={onSetDue}>
+            <Glyph name="alarm" className="size-4" />
+            {due ? "Change due date…" : "Set due date…"}
+          </ContextMenuItem>
+        ) : null}
         <ContextMenuItem
           onSelect={() => void actions.setPinned(thread.id, !thread.isPinned)}
         >
@@ -1033,6 +1104,124 @@ function ConfirmDialog({
   );
 }
 
+function DueDialog({ threadId, onClose }: { threadId: string; onClose: () => void }) {
+  const { rpc, state } = useFlowState();
+  const current = state?.due[threadId];
+  const [custom, setCustom] = useState("");
+  const [reason, setReason] = useState(current?.reason ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const save = async (at: () => number | null) => {
+    setPending(true);
+    setError(null);
+    try {
+      const value = at();
+      await rpc.call("due_set", { threadId, at: value, reason: value === null || reason.trim() === "" ? null : reason.trim() });
+      onClose();
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Due date</DialogTitle>
+          <DialogDescription>
+            {current
+              ? `${formatDue(current.at)}, ${formatWhen(current.at)}. ${current.source === "agent" ? "Set by the agent." : "Set by you."}`
+              : "A thread rises to Now as its date gets close."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-2">
+          {DUE_PRESETS.map((preset) => (
+            <Button key={preset.when} variant="outline" size="sm" disabled={pending} onClick={() => void save(() => parseDue(preset.when))}>
+              {preset.label}
+            </Button>
+          ))}
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (custom.trim() !== "") void save(() => parseDue(custom));
+          }}
+        >
+          <Input value={custom} onChange={(event) => setCustom(event.target.value)} placeholder="fri, 2026-10-12…" aria-label="Custom due date" />
+          <Button type="submit" size="sm" disabled={pending || custom.trim() === ""}>
+            Set
+          </Button>
+        </form>
+        <Input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Optional: what falls due" aria-label="What falls due" />
+        {error === null ? null : (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {current ? (
+          <DialogFooter>
+            <Button variant="ghost" size="sm" disabled={pending} onClick={() => void save(() => null)}>
+              Clear date
+            </Button>
+          </DialogFooter>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Focus is full: drop one to make room, or keep them all. */
+function FocusLimitDialog({
+  limit,
+  focusedIds,
+  onReplace,
+  onKeepAll,
+  onClose,
+}: {
+  limit: number;
+  focusedIds: readonly string[];
+  onReplace: (threadId: string) => void;
+  onKeepAll: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Focus is full</DialogTitle>
+          <DialogDescription>
+            You have {focusedIds.length} threads in Focus, and your limit is {limit}. Pick one to drop, or keep them all.
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+          {focusedIds.map((threadId) => (
+            <li key={threadId} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">
+                <ThreadTitle threadId={threadId} />
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => onReplace(threadId)}>
+                Drop
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={onKeepAll}>
+            Keep all
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // --- drag threads between sections ---------------------------------------------------
 // Pointer-based (not HTML5 drag) so bb's own drag-to-split keeps working: a
 // drop inside the sidebar moves the thread; leaving the sidebar cancels ours
@@ -1257,6 +1446,11 @@ function FilterChip({ hint, active, onClick, glyph, tone, label, count }: {
     </button>
   );
 }
+
+/** How many Now rows show before "Show N more". The list only helps while it's short. */
+const NOW_ROWS = 7;
+/** Waiting this long on you turns the row's chip amber. */
+const OVERDUE_WAIT_MS = 24 * 3_600_000;
 
 function TriageThreadList({
   activeThreadId,
@@ -1511,13 +1705,60 @@ function TriageThreadList({
       </>
     ) : null;
 
-  const createdOrder = useSettings().values?.createdRowOrder === true;
+  const settingValues = useSettings().values;
+  const createdOrder = settingValues?.createdRowOrder === true;
+  const nowEnabled = settingValues?.nowQueue === true;
+  const focusLimit = focusLimitOf(settingValues?.focusLimit);
+  const liveRows = useMemo(
+    () => threads.filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId))),
+    [threads],
+  );
+  // Waits and "no next step" depend on the clock, so the queue is rebuilt each minute.
+  const nowMinute = Math.floor(now / 60_000);
+  const lastNowOrder = useRef<readonly string[]>([]);
+  const queue = useMemo(() => {
+    if (!nowEnabled) return null;
+    // Before state arrives: an empty Now, so the list doesn't show Needs me and then swap it.
+    if (!state) return { now: [], moving: [] };
+    const candidates = liveRows
+      .filter((thread) => !thread.isPinned)
+      .map((thread) => sidebarNowThread(thread, state.snoozedSectionId !== null && thread.sectionId === state.snoozedSectionId));
+    const result = nowQueue(candidates, state, { now: Date.now(), openThreadId: activeThreadId ?? null, previous: lastNowOrder.current });
+    lastNowOrder.current = result.now.map((entry) => entry.thread.id);
+    return result;
+  }, [nowEnabled, state, liveRows, activeThreadId, nowMinute]);
+  const nowEntries = useMemo(
+    () => new Map<string, NowEntry>([...(queue?.now ?? []), ...(queue?.moving ?? [])].map((entry) => [entry.thread.id, entry])),
+    [queue],
+  );
+
+  const rowReason = (entry: NowEntry | undefined) =>
+    entry && state
+      ? {
+          text: reasonLabel(entry, state, now),
+          urgent:
+            entry.state === "blocked" ||
+            (entry.dueAt !== null && entry.dueAt - now <= DUE_NOW_MS) ||
+            (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
+        }
+      : undefined;
+
+  const [focusFull, setFocusFull] = useState<string | null>(null);
+  const [dueTarget, setDueTarget] = useState<string | null>(null);
+  const setFocus = (threadId: string, focused: boolean) =>
+    rpc.call("focus_set", { threadId, focused }).catch((cause) => toast.error(errorText(cause)));
+  // Threads in Focus across every workspace: the limit is on you, not on a tab.
+  const focusedIds = allThreads.filter((thread) => !thread.isArchived && state?.focused[thread.id] !== undefined).map((thread) => thread.id);
+  const toggleFocus = (threadId: string) => {
+    if (state?.focused[threadId] !== undefined) void setFocus(threadId, false);
+    else if (focusedIds.length >= focusLimit) setFocusFull(threadId);
+    else void setFocus(threadId, true);
+  };
+
   const { groups, smartCounts, machineCounts } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
     const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
-    const matching = threads
-      .filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId)))
-      .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter));
+    const matching = liveRows.filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter));
     const visible = sortRows(matching, createdOrder);
     // No Snoozed section until the first snooze: then nothing is snoozed (a null
     // sectionId is "unsectioned", not "in a missing section").
@@ -1532,7 +1773,7 @@ function TriageThreadList({
       !busy(thread) &&
       state?.promised[thread.id] !== undefined &&
       state?.watching[thread.id] === undefined &&
-      Date.now() - thread.updatedAt > STALLED_AFTER_MS;
+      quietFor(thread, Date.now()) > STALLED_AFTER_MS;
     const openPrs = (thread: PluginSidebarThread) =>
       threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
@@ -1550,7 +1791,7 @@ function TriageThreadList({
       done: (thread) =>
         thread.sectionId === null &&
         thread.id !== activeThreadId &&
-        Date.now() - thread.updatedAt > DONE_AFTER_MS &&
+        quietFor(thread, Date.now()) > DONE_AFTER_MS &&
         !busy(thread) &&
         !needs(thread) &&
         state?.watching[thread.id] === undefined &&
@@ -1643,19 +1884,27 @@ function TriageThreadList({
     };
     const waitingLane = lanes.find((lane) => lane.id === "waiting");
     const inActive = (thread: PluginSidebarThread) => thread.sectionId === null && !(waitingLane && waitsOnOthers(thread));
-    const stalled = awake.filter((thread) => !thread.isPinned && !needs(thread) && isStalled(thread));
+    // With Now on, its groups claim their rows; with it off, Needs me does.
+    const claimed = (thread: PluginSidebarThread) => (queue ? nowEntries.has(thread.id) : needs(thread));
+    const stalled = awake.filter((thread) => !thread.isPinned && !claimed(thread) && isStalled(thread));
     const pinned = awake.filter((thread) => thread.isPinned);
     const attention = awake.filter((thread) => !thread.isPinned && needs(thread));
-    const rest = awake.filter((thread) => !thread.isPinned && !needs(thread) && !isStalled(thread) && !sets.done(thread));
+    const rest = awake.filter((thread) => !thread.isPinned && !claimed(thread) && !isStalled(thread) && !sets.done(thread));
 
     const result: Group[] = [];
     if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
-    result.push({
-      id: "needs-me",
-      title: "Needs me",
-      threads: attention,
-      dynamic: { glyph: "question", tone: "text-amber-500" },
-    });
+    if (queue) {
+      const rows = (entries: readonly NowEntry[]) => entries.flatMap((entry) => visible.find((thread) => thread.id === entry.thread.id) ?? []);
+      result.push({ id: "now", title: "Now", threads: rows(queue.now), limit: NOW_ROWS, dynamic: { glyph: "star", tone: "text-amber-500" } });
+      result.push({ id: "moving", title: "Moving", threads: rows(queue.moving), defaultCollapsed: true, dynamic: { glyph: "hourglass", tone: "text-violet-500" } });
+    } else {
+      result.push({
+        id: "needs-me",
+        title: "Needs me",
+        threads: attention,
+        dynamic: { glyph: "question", tone: "text-amber-500" },
+      });
+    }
     if (stalled.length > 0) {
       result.push({
         id: "stalled",
@@ -1717,7 +1966,7 @@ function TriageThreadList({
     }
     const firstUser = result.find((group) => group.section !== undefined);
     if (firstUser) firstUser.firstUserGroup = true;
-    const done = awake.filter((thread) => !thread.isPinned && !needs(thread) && sets.done(thread));
+    const done = awake.filter((thread) => !thread.isPinned && !claimed(thread) && sets.done(thread));
     result.push({
       id: "done",
       title: "Done",
@@ -1729,12 +1978,12 @@ function TriageThreadList({
     result.push({
       id: "snoozed",
       title: "Snoozed",
-      threads: snoozed.sort((a, b) => (state?.snoozes[a.id]?.until ?? 0) - (state?.snoozes[b.id]?.until ?? 0)),
+      threads: snoozed.filter((thread) => !nowEntries.has(thread.id)).sort((a, b) => (state?.snoozes[a.id]?.until ?? 0) - (state?.snoozes[b.id]?.until ?? 0)),
       defaultCollapsed: true,
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts, machineCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById, workspaceState, allThreads, projects, navigate]);
+  }, [threads, liveRows, queue, nowEntries, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById, workspaceState, allThreads, projects, navigate]);
 
   const defaults = useMemo(
     () =>
@@ -1763,7 +2012,7 @@ function TriageThreadList({
     >
       <div className="jf-triage-heading"><span>Threads</span>
         {smart !== null && <button type="button" onClick={() => setSmart(null)}>Clear filter</button>}
-        <span className="jf-triage-keyboard" title="Keys on a focused row: 1–5 move to lane · s snooze · t tag · e archive · u unread · j/k move"><Icon name="Info" className="size-3" /></span>
+        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus · d due date" : ""} · e archive · u unread · j/k move`}><Icon name="Info" className="size-3" /></span>
       </div>
       <div className="jf-triage-filters">
         {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
@@ -1829,7 +2078,7 @@ function TriageThreadList({
       <MissingLanesHint sections={sections} pinned={state?.laneSections ?? {}} />
       {groups.map((group) => {
         const keepEmpty =
-          group.id === "needs-me" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
+          group.id === "needs-me" || group.id === "now" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
         if (group.threads.length === 0 && !keepEmpty) return null;
         const collapsed = group.id.startsWith("smart:") ? false : isCollapsed(group.id);
         const limit = expanded[group.id] ? Infinity : (group.limit ?? Infinity);
@@ -1880,7 +2129,7 @@ function TriageThreadList({
             />
             {collapsed ? null : group.threads.length === 0 ? (
               <p className="py-1 pl-6 pr-2 text-xs text-muted-foreground">
-                {group.id === "needs-me" ? "You’re all caught up." : "No threads yet."}
+                {group.id === "now" && !state ? "Loading…" : group.id === "needs-me" || group.id === "now" ? "You’re all caught up." : "No threads yet."}
               </p>
             ) : (
               <>
@@ -1909,6 +2158,11 @@ function TriageThreadList({
                     onRename={() => setRenameTarget(thread)}
                     onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
                     machine={rowMachine(thread)}
+                    focused={nowEnabled && state?.focused[thread.id] !== undefined}
+                    onToggleFocus={nowEnabled ? () => toggleFocus(thread.id) : undefined}
+                    due={nowEnabled ? state?.due[thread.id] : undefined}
+                    onSetDue={nowEnabled ? () => setDueTarget(thread.id) : undefined}
+                    reason={rowReason(group.id === "now" || group.id === "moving" ? nowEntries.get(thread.id) : undefined)}
                   />
                 ))}
                 {group.threads.length > limit ? (
@@ -1930,6 +2184,22 @@ function TriageThreadList({
           </section>
         );
       })}
+      {dueTarget === null ? null : <DueDialog threadId={dueTarget} onClose={() => setDueTarget(null)} />}
+      {focusFull === null ? null : (
+        <FocusLimitDialog
+          limit={focusLimit}
+          focusedIds={focusedIds}
+          onReplace={(dropped) => {
+            void setFocus(dropped, false).then(() => setFocus(focusFull, true));
+            setFocusFull(null);
+          }}
+          onKeepAll={() => {
+            void setFocus(focusFull, true);
+            setFocusFull(null);
+          }}
+          onClose={() => setFocusFull(null)}
+        />
+      )}
       {snoozeTarget === null ? null : (
         <SnoozeDialog
           threadId={snoozeTarget}
@@ -2422,6 +2692,8 @@ function MigrationSettings() {
 let commandRpc: ReturnType<typeof useRpc<typeof rpcContract>> | null = null;
 /** The Catch up setting, for the command's availability check (it can't use hooks). */
 let catchUpEnabled = false;
+/** What the Focus command needs from settings; null while Now and Focus is off. */
+let focusCommand: { limit: number } | null = null;
 const SNOOZE_EVENT = "jb-flow:snooze";
 
 function FocusReporter() {
@@ -2633,7 +2905,7 @@ function mountPlanExpander({ signal }: { signal: AbortSignal }) {
 
 export default definePluginApp((app) => {
   app.contentScripts.register({ id: "workspace-topbar", mount: mountWorkspaceTopBar });
-  app.slots.experimental_appOverlay({ id: "workspace-topbar", component: WorkspaceTopBar });
+  app.slots.experimental_appOverlay({ id: "workspace-topbar", component: WorkspaceTopBarWithFlow });
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
   app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
@@ -2681,7 +2953,7 @@ export default definePluginApp((app) => {
     id: "triage",
     title: "Triage",
     description:
-      "Needs me on top, then lanes, project chips, tags, snooze and keyboard triage.",
+      "What to do next on top, then lanes, project chips, tags, snooze and keyboard triage.",
     component: TriageThreadList,
   });
   app.slots.experimental_threadHeaderAction({
@@ -2725,6 +2997,23 @@ export default definePluginApp((app) => {
     isAvailable: inThread,
     run: ({ threadId }) => {
       if (threadId) window.dispatchEvent(new CustomEvent(SNOOZE_EVENT, { detail: threadId }));
+    },
+  });
+  app.commands.register({
+    id: "toggle-focus",
+    title: "Add this thread to Focus, or remove it",
+    defaultShortcut: { key: "f", alt: true, shift: true },
+    isAvailable: (context) => focusCommand !== null && inThread(context),
+    run: async ({ threadId }) => {
+      if (!threadId || focusCommand === null) return;
+      const focused = flowState?.focused ?? {};
+      const inFocus = focused[threadId] !== undefined;
+      if (!inFocus && Object.keys(focused).length >= focusCommand.limit) {
+        toast.error(`Focus is full (${Object.keys(focused).length} of ${focusCommand.limit}). Press f on a row in the sidebar to choose one to drop.`);
+        return;
+      }
+      await commandRpc?.call("focus_set", { threadId, focused: !inFocus });
+      toast.success(inFocus ? "Removed from Focus" : "Added to Focus");
     },
   });
   app.commands.register({

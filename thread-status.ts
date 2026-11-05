@@ -28,6 +28,8 @@ export const statusReportSchema = z.object({
     })
     .nullable()
     .optional(),
+  /** "**Due:** 2026-11-05 · why": a deadline the agent found. Optional: older saved reports lack it. */
+  due: z.string().max(1000).optional(),
   /** "Doing now: …": the agent is already carrying on, nothing to pick. */
   doingNow: z.string().max(500).optional(),
   capturedAt: z.number(),
@@ -94,7 +96,8 @@ export function parseStatusReport(
     if (label) milestones.push({ label, percent });
     if (milestones.length === 12) break;
   }
-  return { ...fields, milestones, ...parseNextSteps(reply), capturedAt };
+  const due = field("Due");
+  return { ...fields, milestones, ...parseNextSteps(reply), ...(due ? { due } : {}), capturedAt };
 }
 
 /** The "### Next steps" section: a go-list, a numbered decision, or "Doing now". */

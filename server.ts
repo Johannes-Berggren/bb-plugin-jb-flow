@@ -1,6 +1,6 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
-import { createThreadStatus, threadStatusSchema } from "./thread-status";
+import { createThreadStatus, parseStatusReport, threadStatusSchema } from "./thread-status";
 import { countSince } from "./catch-up-model";
 import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
@@ -16,15 +16,18 @@ import { createActivity } from "./activity";
 import { createAwaiting, waitsOnOthers } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
+import { nextAfter, nowQueue, reasonLabel, serverNowThread } from "./now-model";
+import { createNowStore } from "./now-store";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createUnreleased, unreleasedSchema } from "./unreleased";
 import { laneSections } from "./lanes";
 import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
-import { formatWhen, parseWhen } from "./when";
+import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
 import { wakeDueSnoozes } from "./snooze-wake";
+import { quietFor, staleThreads } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 
@@ -126,6 +129,10 @@ const stateSchema = z.object({
   snoozedSectionId: z.string().nullable(),
   snoozes: z.record(z.string(), snoozeSchema),
   tags: z.record(z.string(), z.array(z.string())),
+  /** Threads you marked as Focus (thread id → when). They keep their section. */
+  focused: z.record(z.string(), z.number()),
+  /** Deadlines (thread id → date, why, and who set it). */
+  due: z.record(z.string(), z.object({ at: z.number(), reason: z.string().nullable(), source: z.enum(["agent", "you"]), setAt: z.number() })),
 });
 export type FlowState = z.infer<typeof stateSchema>;
 
@@ -174,6 +181,15 @@ export const rpcContract = defineRpcContract({
       tags: z.array(z.string().trim().min(1).max(40)).max(10),
     }),
     output: z.object({ tags: z.array(z.string()) }),
+  },
+  due_set: {
+    /** `at` is resolved in the browser's time zone, as with snooze; null clears the date. */
+    input: z.object({ threadId: z.string().min(1).max(200), at: z.number().nullable(), reason: z.string().max(300).nullable() }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  focus_set: {
+    input: z.object({ threadId: z.string().min(1).max(200), focused: z.boolean() }),
+    output: z.object({ focused: z.boolean() }),
   },
   digest_list: {
     input: z.object({ refresh: z.boolean() }),
@@ -339,6 +355,19 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Keep threads in creation order",
       description: "Triage list rows stay put, newest thread first, instead of moving to the top on new activity.",
       default: false,
+    },
+    nowQueue: {
+      type: "boolean",
+      label: "Now and Focus",
+      description:
+        "A ranked Now group at the top of the Triage list replaces Needs me: what's blocked on you, threads you mark as Focus (press f on a row) that are waiting on you, and threads with a deadline coming up (press d, or agents set one). Off restores Needs me.",
+      default: true,
+    },
+    focusLimit: {
+      type: "number",
+      label: "Focus limit",
+      description: "Focus only works while it's short. Marking more than this many threads asks you to drop one first, or keep them all.",
+      default: 7,
     },
     polishShell: {
       type: "boolean",
@@ -647,18 +676,7 @@ export default async function plugin(bb: BbPluginApi) {
     const snoozes = await getSnoozes();
     // Read per build so a changed setting applies without a reload.
     const { staleDays } = await settings.get();
-    const stale = (await listAllActiveThreads())
-      .filter(
-        (thread) =>
-          thread.sectionId === null &&
-          thread.parentThreadId === null &&
-          thread.pinnedAt === null &&
-          thread.status !== "active" &&
-          snoozes[thread.id] === undefined &&
-          (kept[thread.id] ?? 0) < now &&
-          now - thread.updatedAt > staleDays * DAY_MS,
-      )
-      .sort((a, b) => a.updatedAt - b.updatedAt);
+    const stale = staleThreads(await listAllActiveThreads(), { now, staleMs: staleDays * DAY_MS, keptUntil: kept, snoozed: snoozes });
 
     const items: DigestItem[] = [];
     // Small batches keep the outline reads from hammering the server.
@@ -670,7 +688,7 @@ export default async function plugin(bb: BbPluginApi) {
           threadId: thread.id,
           projectId: thread.projectId,
           title: thread.title ?? thread.titleFallback ?? "Untitled",
-          idleDays: Math.floor((now - thread.updatedAt) / DAY_MS),
+          idleDays: Math.floor(quietFor(thread, now) / DAY_MS),
           summary: summaries[offset] ?? "",
         });
       });
@@ -725,6 +743,14 @@ export default async function plugin(bb: BbPluginApi) {
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
   const awaiting = createAwaiting(bb, changed);
+  const nowStore = createNowStore(bb, changed);
+  // A status report's "**Due:**" line sets the deadline. Leaving it out later keeps the date.
+  bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
+    if (!lastAssistantText || !(await settings.get()).nowQueue) return;
+    const line = parseStatusReport(lastAssistantText, 0)?.due;
+    const parsed = line ? parseDueLine(line) : null;
+    if (parsed) await nowStore.setDue(thread.id, parsed.at, parsed.reason, "agent");
+  });
 
   /** Watch every open PR the thread created; fall back to its branch PR. */
   async function watchThreadCi(
@@ -831,6 +857,8 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       snoozedSectionId: await findSnoozedSection(),
       snoozes: await getSnoozes(),
       tags: await getTags(),
+      focused: await nowStore.all(),
+      due: await nowStore.dueAll(),
     };
   }
 
@@ -877,6 +905,8 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       changed();
       return { tags: unique };
     },
+    focus_set: async ({ threadId, focused }) => ({ focused: await nowStore.set(threadId, focused) }),
+    due_set: async ({ threadId, at, reason }) => ({ ok: (await nowStore.setDue(threadId, at, reason, "you")).applied }),
     digest_list: ({ refresh }) => readDigest(refresh),
     digest_keep: async ({ threadIds, days }) => {
       const kept = await getKept();
@@ -948,11 +978,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return { ok: true };
     },
     next_needs_me: async ({ archiveThreadId }) => {
+      // Worked out before archiving: the archived thread's place says where "next" is.
+      const nextId = await nextThread(archiveThreadId ?? focus.focusedThreadId(), archiveThreadId);
       if (archiveThreadId !== null) await bb.sdk.threads.archive({ threadId: archiveThreadId });
-      const next = (await focus.needsMe()).find((thread) => thread.id !== archiveThreadId);
-      if (next === undefined) return { opened: null };
-      await bb.sdk.threads.open({ threadId: next.id, file: null });
-      return { opened: next.id };
+      if (nextId === null) return { opened: null };
+      await bb.sdk.threads.open({ threadId: nextId, file: null });
+      return { opened: nextId };
     },
     decision_options: async ({ threadId }) => {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
@@ -1053,6 +1084,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const live = new Set((await listAllActiveThreads()).map((thread) => thread.id));
     await forgetThreads((threadId) => !live.has(threadId));
     await awaiting.prune((threadId) => live.has(threadId));
+    await nowStore.prune((threadId) => live.has(threadId));
   }
   bb.events.on("thread.archived", ({ thread }) => forgetThreads((threadId) => threadId === thread.id));
 
@@ -1135,11 +1167,42 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   settings.onChange((next) => {
     agentSettings = next;
   });
+  bb.agents.registerTool({
+    name: "set_thread_due",
+    description:
+      "Record a real deadline for the current BB thread, or clear one that no longer applies. The thread then rises in the user's sidebar as the date gets close. A date the user set themselves can't be changed from here.",
+    instructions:
+      "When this work has a real outside deadline (an invoice due date, a contract date, a customer meeting, a date someone else set), call set_thread_due with the date and what falls due. Never invent a date, and don't use it for your own goals or estimates. Call it with when: none once the deadline no longer applies.",
+    parameters: z.object({
+      when: z.string().describe("YYYY-MM-DD (the end of that day) or YYYY-MM-DDTHH:MM, or none to clear"),
+      reason: z.string().max(300).optional().describe("What falls due, in a few words. Required when setting a date."),
+    }),
+    async execute({ when, reason }, ctx) {
+      try {
+        if (when.trim().toLowerCase() === "none") {
+          const { applied } = await nowStore.setDue(ctx.threadId, null, null, "agent");
+          return applied ? "Deadline cleared." : "The user set this deadline, so it wasn't changed. Tell them if it no longer applies.";
+        }
+        if (!reason?.trim()) throw new Error("Say what falls due in reason.");
+        const at = parseDue(when);
+        const { applied, due } = await nowStore.setDue(ctx.threadId, at, reason.trim(), "agent");
+        if (applied) return `Deadline set: ${formatDue(at)} (${formatWhen(at)}).`;
+        return due
+          ? `The user set this deadline to ${formatWhen(due.at)}, so it wasn't changed. Tell them if you think it's wrong.`
+          : "The user already cleared this date, so it wasn't set again. Tell them if you think it does apply.";
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+        };
+      }
+    },
+  });
   bb.agents.configure(() => ({
-    tools: ["snooze_thread", "wait_for_ci", "pr_status"],
+    tools: ["snooze_thread", "wait_for_ci", "pr_status", ...(agentSettings.nowQueue ? ["set_thread_due"] : [])],
     skills: [],
     ...(agentSettings.autoStatus && agentSettings.threadMonitor
-      ? { instructions: handBackInstructions(agentSettings.statusPrompt) }
+      ? { instructions: handBackInstructions(agentSettings.statusPrompt, agentSettings.nowQueue) }
       : {}),
   }));
 
@@ -1149,6 +1212,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     "Usage:",
     "  bb jb-flow snooze <thread-id|--self> <when> [--note <text>]",
     "  bb jb-flow unsnooze <thread-id|--self>",
+    "  bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]",
     "  bb jb-flow snoozed [--json]",
     "  bb jb-flow wake-now",
     "  bb jb-flow digest [--refresh] [--json]",
@@ -1231,6 +1295,46 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   }
 
   /** Everything the deck shows, in one call. */
+  /** The sidebar's Now, across every workspace. Tabs belong to each browser window, not the server. */
+  async function currentNow(threads: readonly ListedThread[]) {
+    const [waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due, snoozedSection] = await Promise.all([
+      awaiting.all(),
+      awaiting.promised(),
+      awaiting.waitingOthers(),
+      awaiting.readyToGo(),
+      watchingByThread(),
+      prTracker.byThread(),
+      nowStore.all(),
+      nowStore.dueAll(),
+      findSnoozedSection(),
+    ]);
+    const flow = { awaiting: waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due };
+    const now = Date.now();
+    const rows = threads
+      .filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && thread.parentThreadId === null && thread.pinnedAt === null)
+      .map((thread) => serverNowThread(thread, snoozedSection !== null && thread.sectionId === snoozedSection));
+    const queue = nowQueue(rows, flow, { now });
+    const titles = new Map(threads.map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""]));
+    const describe = (entry: (typeof queue.now)[number]) => ({
+      id: entry.thread.id,
+      title: titles.get(entry.thread.id) ?? "",
+      state: entry.state,
+      reason: reasonLabel(entry, flow, now),
+      focused: entry.focused,
+      dueAt: entry.dueAt,
+    });
+    return { now: queue.now.map(describe), moving: queue.moving.map(describe) };
+  }
+
+  /** Where "next" goes. With Now off, the first thread that needs you, as before. */
+  async function nextThread(current: string | null, skip: string | null): Promise<string | null> {
+    const needs = await focus.needsMe();
+    if (!(await settings.get()).nowQueue) return needs.find((thread) => thread.id !== skip)?.id ?? null;
+    const { now } = await currentNow(await listLiveThreads(bb));
+    // Pinned threads aren't in Now, but one that's blocked still needs you.
+    return nextAfter([...new Set([...now.map((entry) => entry.id), ...needs.map((thread) => thread.id)])], current);
+  }
+
   async function deckSnapshot() {
     const [threads, waiting, radar, focused, snoozedSection] = await Promise.all([
       listThreadsCached(),
@@ -1253,11 +1357,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const moves = open
       .filter((thread) => thread.status === "idle" && waiting[thread.id] !== undefined && !needIds.has(thread.id))
       .map((thread) => Math.min(waiting[thread.id]!, thread.updatedAt));
+    const nowEnabled = (await settings.get()).nowQueue;
+    const queue = nowEnabled ? await currentNow(threads) : { now: [] };
     return {
       focused,
       needsMe: { count: needs.length },
       yourMove: { count: moves.length, oldestSince: moves.length ? Math.min(...moves) : null },
       prRadar: { broken: radar.broken.length, ready: radar.ready.length },
+      ...(nowEnabled ? { now: { count: queue.now.length, top: queue.now[0] ?? null } } : {}),
     };
   }
 
@@ -1270,6 +1377,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         name: "snooze",
         summary: "Snooze a thread until a time",
         usage: "bb jb-flow snooze <thread-id|--self> <when> [--note <text>]",
+      },
+      {
+        name: "due",
+        summary: "Set or clear a thread's deadline",
+        usage: "bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]",
       },
       {
         name: "unsnooze",
@@ -1289,6 +1401,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
+      { name: "now", summary: "List the Now queue in order, and what's Moving", usage: "bb jb-flow now [--json]" },
       { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
       { name: "prs", summary: "List the PRs a thread created, across repos, in stack order", usage: "bb jb-flow prs [--self|<thread-id>] [--json]" },
       { name: "pr-link", summary: "Link (or --remove) a PR to a thread", usage: "bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]" },
@@ -1310,7 +1423,10 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       const refresh = argv.includes("--refresh");
       const noteIndex = argv.indexOf("--note");
       const note = noteIndex === -1 ? null : argv.slice(noteIndex + 1).join(" ");
-      const positional = (noteIndex === -1 ? argv : argv.slice(0, noteIndex)).filter(
+      const reasonIndex = argv.indexOf("--reason");
+      const reason = reasonIndex === -1 ? null : argv.slice(reasonIndex + 1).join(" ").trim() || null;
+      const beforeText = Math.min(...[noteIndex, reasonIndex].map((index) => (index === -1 ? argv.length : index)));
+      const positional = argv.slice(0, beforeText).filter(
         (arg) => arg !== "--json" && arg !== "--refresh",
       );
       const [command, ...args] = positional;
@@ -1339,6 +1455,15 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 ? JSON.stringify(record)
                 : `Snoozed ${threadId} until ${formatWhen(record.until)}.`,
             };
+          }
+          case "due": {
+            const threadId = resolveThread(args[0]);
+            const when = args.slice(1).join(" ");
+            if (threadId === undefined || when === "") break;
+            const at = when.toLowerCase() === "none" ? null : parseDue(when);
+            const { due } = await nowStore.setDue(threadId, at, at === null ? null : reason, "you");
+            if (json) return { exitCode: 0, stdout: JSON.stringify(due) };
+            return { exitCode: 0, stdout: at === null ? `Cleared the deadline on ${threadId}.` : `${threadId}: ${formatDue(at)} (${formatWhen(at)}).` };
           }
           case "unsnooze": {
             const threadId = resolveThread(args[0]);
@@ -1427,7 +1552,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                   ? "pinned"
                   : busy
                     ? "running"
-                    : promised[thread.id] !== undefined && !watching[thread.id] && Date.now() - thread.updatedAt > 3_600_000
+                    : promised[thread.id] !== undefined && !watching[thread.id] && quietFor(thread, Date.now()) > 3_600_000
                       ? "stalled"
                       : awaitingAll[thread.id] !== undefined
                       ? "your-move"
@@ -1437,7 +1562,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                           (waitingOthers[thread.id] !== undefined ||
                             (open.length > 0 && open.every((pr) => pr.attention === "review_requested")))
                         ? "waiting"
-                      : thread.sectionId === null && !watching[thread.id] && settled && Date.now() - thread.updatedAt > 2 * 3_600_000
+                      : thread.sectionId === null && !watching[thread.id] && settled && quietFor(thread, Date.now()) > 2 * 3_600_000
                         ? "done"
                         : "lane";
               const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
@@ -1451,7 +1576,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 watching: watching[thread.id] ?? null,
                 openPrs: open.map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`),
                 prs: prs.length,
-                idleHours: Math.round((Date.now() - thread.updatedAt) / 3_600_000),
+                idleHours: Math.round(quietFor(thread, Date.now()) / 3_600_000),
                 tail: (output.output ?? "").trim().slice(-1500),
               });
             }
@@ -1609,10 +1734,21 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
           }
           case "next": {
             const focused = focus.focusedThreadId();
-            const next = (await focus.needsMe()).find((thread) => thread.id !== focused);
-            if (next === undefined) return { exitCode: 0, stdout: "Nothing needs you." };
-            await bb.sdk.threads.open({ threadId: next.id, file: null });
-            return { exitCode: 0, stdout: `Opened ${next.id}  ${next.title ?? ""}` };
+            const nextId = await nextThread(focused, focused);
+            if (nextId === null) return { exitCode: 0, stdout: "Nothing needs you." };
+            await bb.sdk.threads.open({ threadId: nextId, file: null });
+            const next = await bb.sdk.threads.get({ threadId: nextId }).catch(() => null);
+            return { exitCode: 0, stdout: `Opened ${nextId}  ${next?.title ?? ""}` };
+          }
+          case "now": {
+            if (!(await settings.get()).nowQueue) return { exitCode: 1, stderr: "Now and Focus is turned off in the plugin settings." };
+            const queue = await currentNow(await listLiveThreads(bb));
+            if (json) return { exitCode: 0, stdout: JSON.stringify({ count: queue.now.length, threads: queue.now, moving: queue.moving }) };
+            const line = (entry: (typeof queue.now)[number]) => `${entry.focused ? "*" : " "} ${entry.id}  ${entry.title}  [${entry.reason}]`;
+            return {
+              exitCode: 0,
+              stdout: [...(queue.now.length ? queue.now.map(line) : ["Nothing in Now."]), ...(queue.moving.length ? ["", "Moving:", ...queue.moving.map(line)] : [])].join("\n"),
+            };
           }
           case "repo": {
             const threadId = resolveThread(args[0] ?? "--self");

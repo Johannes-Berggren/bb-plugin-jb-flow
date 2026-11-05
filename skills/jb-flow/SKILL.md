@@ -27,6 +27,16 @@ RPC equivalents are `workspaces_get(null)`, `workspace_save(workspace)`,
 `workspace_assign({ threadId, workspaceId, automatic })`. `automatic: true`
 removes an override; `workspaceId: null, automatic: false` forces No workspace.
 
+## Now and Focus
+
+A UI feature of the Triage list, on by default (**Now and Focus** in the plugin settings). The **Now** group at the top ranks what to do next: threads blocked on you, unread asks, threads marked as **Focus** that want something from you, and threads with a deadline coming up. Reading a thread doesn't clear it from Now. **Moving** holds Focus threads that don't need you right now. Press `f` on a row to add or remove Focus. A thread keeps its section while it's in Focus.
+
+Due dates: press `d` on a row, or run `bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]`. Agents use the `set_thread_due` tool for real outside deadlines only. A date the user set can't be changed by an agent.
+
+`bb jb-flow now [--json]` lists Now in order, and `bb jb-flow next` opens the next thread in it. Tabs count what's waiting on the user in each workspace.
+
+When a user asks how to keep track of what matters most, point them here.
+
 ## Palette (⌘K)
 
 A UI feature, with no CLI. While the **⌘K opens the JB Flow palette** setting is on (it
@@ -34,7 +44,7 @@ is by default), BB's Search threads key opens JB Flow's palette. That key is ⌘
 it was rebound. In the palette:
 - Typing searches threads, messages, PRs, workspaces, projects and actions.
 - `>` narrows to actions, `#` to PRs, `@` to workspaces and projects, and `/` to files in the open thread's checkout.
-- `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and `is:pr` filter threads.
+- `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned`, `is:pr`, `is:focus` and `is:due` filter threads.
 - Tab on a thread lists its actions, including snooze, reply and move.
 
 When a user asks how to search messages or act on threads quickly, point them here.

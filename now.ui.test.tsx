@@ -1,0 +1,414 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import type { FlowState } from "./server";
+
+const NOW = Date.now();
+const HOUR = 3_600_000;
+
+const baseState: FlowState = {
+  projectShortNames: {},
+  stripProjectPrefixes: [],
+  awaiting: {},
+  promised: {},
+  waitingOthers: {},
+  readyToGo: {},
+  sectionOrder: [],
+  machines: { hosts: [], threadHosts: {}, environmentHosts: {}, localHostId: null },
+  laneSections: {},
+  sectionProjects: {},
+  threadPrs: {},
+  running: {},
+  watching: {},
+  snoozedSectionId: null,
+  snoozes: {},
+  tags: {},
+  focused: {},
+  due: {},
+};
+
+function thread(id: string, overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
+  return {
+    id,
+    title: id,
+    displayTitle: id,
+    titleFallback: null,
+    projectId: "p1",
+    parentThreadId: null,
+    lifecycleOwnerThreadId: null,
+    sourceThreadId: null,
+    sectionId: null,
+    originKind: null,
+    originPluginId: null,
+    providerId: "codex",
+    status: "idle",
+    runtimeStatus: "idle",
+    queuedWork: "none",
+    hasPendingInteraction: false,
+    activity: { workflows: 0, backgroundAgents: 0, backgroundCommands: 0, planMode: 0, goals: 0 },
+    indicator: "none",
+    indicatorLabel: null,
+    isUnread: false,
+    isPinned: false,
+    pinnedAt: null,
+    pinSortKey: null,
+    isArchived: false,
+    archivedAt: null,
+    href: `/projects/p1/threads/${id}`,
+    isHidden: false,
+    environment: null,
+    host: null,
+    createdAt: NOW - 96 * HOUR,
+    updatedAt: NOW - HOUR,
+    lastReadAt: null,
+    latestAttentionAt: NOW - HOUR,
+    ...overrides,
+  };
+}
+
+const projects = [{ id: "p1", name: "web-app", isPersonal: false, href: "/projects/p1", settingsHref: "/projects/p1/settings" }];
+
+async function mount(options: {
+  threads: PluginSidebarThread[];
+  state?: Partial<FlowState>;
+  settings?: Record<string, unknown>;
+  activeThreadId?: string | null;
+  focusSet?: (input: { threadId: string; focused: boolean }) => unknown;
+  dueSet?: (input: { threadId: string; at: number | null; reason: string | null }) => unknown;
+  stateGet?: () => unknown;
+}) {
+  const app = await loadPluginApp(() => import("./app"));
+  const list = app.threadLists.find((item) => item.id === "triage")!;
+  const state = { ...baseState, ...options.state };
+  return renderSlot(
+    list,
+    { activeThreadId: options.activeThreadId ?? null, onNavigate: () => {} },
+    {
+      settings: { nowQueue: true, focusLimit: 7, ...options.settings },
+      rpc: {
+        state_get: options.stateGet ?? (() => state),
+        workspaces_get: () => ({ workspaces: [], threadWorkspaces: {} }),
+        focus_set: options.focusSet ?? ((input: { focused: boolean }) => ({ focused: input.focused })),
+        due_set: options.dueSet ?? (() => ({ ok: true })),
+      } as never,
+      sidebarThreads: { status: "ready", threads: options.threads, projects, sections: [] },
+    },
+  );
+}
+
+const heading = (root: HTMLElement, title: string) =>
+  within(root)
+    .queryAllByRole("button")
+    .find((button) => button.getAttribute("aria-expanded") !== null && button.textContent?.startsWith(title));
+
+const rowsUnder = (root: HTMLElement, title: string) => {
+  const section = heading(root, title)?.closest("section");
+  return section ? [...section.querySelectorAll("[data-jb-flow-row]")].map((row) => row.getAttribute("data-jb-flow-row")) : null;
+};
+
+/** Flow state is cached between mounts: wait for this test's stars before pressing keys. */
+const stars = (root: HTMLElement) => root.querySelectorAll('[aria-label="In Focus"]').length;
+
+describe("Now and Focus", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  // First in the file: flow state is cached between mounts, so only this mount starts without it.
+  it("before state loads, it shows Now loading, never Needs me", async () => {
+    let loaded = (_state: FlowState) => {};
+    const slot = await mount({ threads: [thread("a")], stateGet: () => new Promise((resolve) => (loaded = resolve)) });
+    await waitFor(() => expect(heading(slot.container, "Now")).toBeDefined());
+    expect(heading(slot.container, "Needs me")).toBeUndefined();
+    expect(slot.container.textContent).toContain("Loading…");
+    expect(slot.container.textContent).not.toContain("You’re all caught up.");
+    // The fetch is shared between mounts: finish it, or every later test waits on it.
+    loaded(baseState);
+    await waitFor(() => expect(slot.container.textContent).toContain("You’re all caught up."));
+  });
+
+  it("reading a thread doesn't reset Stalled or Done", async () => {
+    const justRead = { updatedAt: NOW, lastReadAt: NOW, latestAttentionAt: NOW - 3 * HOUR };
+    const mergedPr: FlowState["threadPrs"][string][number] = {
+      repo: "acme/web-app",
+      number: 1,
+      title: "Merged",
+      url: "https://github.com/acme/web-app/pull/1",
+      state: "merged",
+      attention: "merged",
+      base: "main",
+      head: "feature",
+      stackedOn: null,
+      checkedAt: NOW,
+    };
+    const slot = await mount({
+      threads: [thread("promised", justRead), thread("finished", justRead), thread("fresh", { latestAttentionAt: NOW - 60_000, updatedAt: NOW })],
+      state: { promised: { promised: NOW - 3 * HOUR }, threadPrs: { finished: [mergedPr], fresh: [mergedPr] } },
+      settings: { nowQueue: false },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Stalled")).toEqual(["promised"]));
+    fireEvent.click(heading(slot.container, "Done")!);
+    await waitFor(() => expect(rowsUnder(slot.container, "Done")).toEqual(["finished"]));
+    expect(rowsUnder(slot.container, "Done")).not.toContain("fresh");
+  });
+
+  it("with the setting off, Needs me stays, and there's no Now, no star and no f key", async () => {
+    const focusSet = vi.fn((input: { focused: boolean }) => ({ focused: input.focused }));
+    const slot = await mount({
+      threads: [thread("blocked", { hasPendingInteraction: true }), thread("flagged")],
+      state: { focused: { flagged: NOW } },
+      settings: { nowQueue: false },
+      focusSet,
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Needs me")).toEqual(["blocked"]));
+    expect(heading(slot.container, "Now")).toBeUndefined();
+    expect(heading(slot.container, "Moving")).toBeUndefined();
+    expect(slot.container.querySelector('[aria-label="In Focus"]')).toBeNull();
+    const row = slot.container.querySelector('[data-jb-flow-row="flagged"]')!;
+    fireEvent.keyDown(row, { key: "f" });
+    expect(focusSet).not.toHaveBeenCalled();
+  });
+
+  it("shows Now in rank order with who holds each thread, and Moving apart", async () => {
+    const slot = await mount({
+      threads: [
+        thread("needs-input", { hasPendingInteraction: true, latestAttentionAt: NOW - HOUR }),
+        thread("asked", { latestAttentionAt: NOW - 18 * HOUR }),
+        thread("cold", { latestAttentionAt: NOW - 44 * HOUR }),
+        thread("watched"),
+        thread("lane-row"),
+      ],
+      state: {
+        awaiting: { asked: NOW - 18 * HOUR },
+        watching: { watched: { kind: "ci", label: "CI on #1" } },
+        focused: { asked: NOW, cold: NOW, watched: NOW },
+      },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["asked", "cold", "needs-input"]));
+    const text = (id: string) => slot.container.querySelector(`[data-jb-flow-row="${id}"]`)?.textContent ?? "";
+    expect(slot.container.querySelector('[data-jb-flow-row="asked"] [aria-label="In Focus"]')).not.toBeNull();
+    expect(slot.container.querySelector('[data-jb-flow-row="needs-input"] [aria-label="In Focus"]')).toBeNull();
+    expect(text("asked")).toContain("you · 18h");
+    expect(text("cold")).toContain("no next step · 44h");
+    expect(text("needs-input")).toContain("needs input · 1h");
+    // Moving starts collapsed; its header still counts the thread.
+    expect(heading(slot.container, "Moving")?.closest("section")?.textContent).toContain("1");
+    expect(slot.container.querySelector('[data-jb-flow-row="watched"]')).toBeNull();
+    fireEvent.click(heading(slot.container, "Moving")!);
+    await waitFor(() => expect(text("watched")).toContain("CI watch"));
+    // A row is in one group only, and everything else keeps its lane.
+    expect(slot.container.querySelectorAll('[data-jb-flow-row="asked"]').length).toBe(1);
+    expect(slot.container.querySelector('[data-jb-flow-row="lane-row"]')).not.toBeNull();
+    expect(rowsUnder(slot.container, "Now")).not.toContain("lane-row");
+  });
+
+  it("a focused ask you've read stays in Now", async () => {
+    const slot = await mount({
+      threads: [thread("read", { isUnread: false, lastReadAt: NOW, updatedAt: NOW, latestAttentionAt: NOW - 18 * HOUR })],
+      state: { awaiting: { read: NOW - 18 * HOUR }, focused: { read: NOW } },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["read"]));
+  });
+
+  it("says you're caught up when Now is empty", async () => {
+    const slot = await mount({ threads: [] });
+    await waitFor(() => expect(slot.container.textContent).toContain("You’re all caught up."));
+  });
+
+  it("f adds a thread to Focus and takes it out again", async () => {
+    const focusSet = vi.fn((input: { focused: boolean }) => ({ focused: input.focused }));
+    const slot = await mount({ threads: [thread("a"), thread("b")], state: { focused: { b: NOW } }, focusSet });
+    await waitFor(() => expect(heading(slot.container, "Moving")).toBeDefined());
+    fireEvent.click(heading(slot.container, "Moving")!);
+    await waitFor(() => expect(stars(slot.container)).toBe(1));
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="a"]')!, { key: "f" });
+    await waitFor(() => expect(focusSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "a", focused: true })));
+    await waitFor(() => expect(slot.container.querySelector('[data-jb-flow-row="b"]')).not.toBeNull());
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="b"]')!, { key: "f" });
+    await waitFor(() => expect(focusSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "b", focused: false })));
+  });
+
+  it("past the limit it asks: drop one to make room, or keep them all", async () => {
+    const focusSet = vi.fn((input: { focused: boolean }) => ({ focused: input.focused }));
+    const slot = await mount({
+      threads: [thread("one"), thread("two"), thread("new")],
+      state: { focused: { one: NOW, two: NOW } },
+      settings: { focusLimit: 2 },
+      focusSet,
+    });
+    await waitFor(() => expect(heading(slot.container, "Moving")?.closest("section")?.textContent).toContain("2"));
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="new"]')!, { key: "f" });
+    const dialog = await within(document.body).findByRole("dialog");
+    expect(dialog.textContent).toContain("Focus is full");
+    expect(focusSet).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getAllByRole("button", { name: "Drop" })[0]!);
+    await waitFor(() => expect(focusSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "new", focused: true })));
+    expect(focusSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "one", focused: false }));
+    await waitFor(() => expect(within(document.body).queryByRole("dialog")).toBeNull());
+  });
+
+  it("Keep all goes past the limit without dropping anything", async () => {
+    const focusSet = vi.fn((input: { focused: boolean }) => ({ focused: input.focused }));
+    const slot = await mount({
+      threads: [thread("one"), thread("new")],
+      state: { focused: { one: NOW } },
+      settings: { focusLimit: 1 },
+      focusSet,
+    });
+    await waitFor(() => expect(heading(slot.container, "Moving")?.closest("section")?.textContent).toContain("1"));
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="new"]')!, { key: "f" });
+    const dialog = await within(document.body).findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep all" }));
+    await waitFor(() => expect(focusSet).toHaveBeenCalledTimes(1));
+    expect(focusSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "new", focused: true }));
+  });
+
+  const dueIn = (ms: number, source: "agent" | "you" = "agent") => ({ at: NOW + ms, reason: "invoices fall due", source, setAt: NOW });
+
+  it("a thread due tomorrow leads Now without Focus, and says so", async () => {
+    const slot = await mount({
+      threads: [thread("focused", { latestAttentionAt: NOW - 90 * HOUR }), thread("due", { latestAttentionAt: NOW - 27 * HOUR })],
+      state: {
+        awaiting: { focused: NOW - 90 * HOUR, due: NOW - 27 * HOUR },
+        focused: { focused: NOW },
+        due: { due: dueIn(10 * HOUR) },
+      },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["due", "focused"]));
+    expect(slot.container.querySelector('[data-jb-flow-row="due"]')?.textContent).toMatch(/due (today|tomorrow) · you 27h/);
+  });
+
+  it("a date far off shows on the row in its lane", async () => {
+    const slot = await mount({ threads: [thread("later")], state: { due: { later: dueIn(10 * 24 * HOUR) } } });
+    await waitFor(() => expect(slot.container.querySelector('[data-jb-flow-row="later"]')?.textContent).toMatch(/due \d+ \w+/));
+    expect(rowsUnder(slot.container, "Now")).toEqual([]);
+  });
+
+  it("a snoozed thread due within a day shows in Now, once", async () => {
+    const slot = await mount({
+      threads: [thread("sleeping", { sectionId: "sec_snoozed" })],
+      state: { snoozedSectionId: "sec_snoozed", due: { sleeping: dueIn(HOUR) }, awaiting: { sleeping: NOW - HOUR } },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["sleeping"]));
+    expect(slot.container.querySelectorAll('[data-jb-flow-row="sleeping"]').length).toBe(1);
+  });
+
+  it("d opens the date dialog, and a preset sets the end of that day", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({ threads: [thread("a"), thread("b")], state: { focused: { b: NOW } }, dueSet });
+    await waitFor(() => expect(heading(slot.container, "Moving")).toBeDefined());
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="a"]')!, { key: "d" });
+    const dialog = await within(document.body).findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("What falls due"), { target: { value: "contract" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tomorrow" }));
+    await waitFor(() => expect(dueSet).toHaveBeenCalledTimes(1));
+    const input = (dueSet.mock.calls[0] as unknown as [{ threadId: string; at: number; reason: string }])[0];
+    expect(input.threadId).toBe("a");
+    expect(input.reason).toBe("contract");
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(23, 59, 59, 999);
+    expect(input.at).toBe(tomorrow.getTime());
+    await waitFor(() => expect(within(document.body).queryByRole("dialog")).toBeNull());
+  });
+
+  it("the dialog says who set a date, and clears it", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({ threads: [thread("a")], state: { due: { a: dueIn(240 * HOUR) } }, dueSet });
+    await waitFor(() => expect(slot.container.querySelector('[data-jb-flow-row="a"]')?.textContent).toMatch(/due \d+ \w+/));
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="a"]')!, { key: "d" });
+    const dialog = await within(document.body).findByRole("dialog");
+    expect(dialog.textContent).toContain("Set by the agent.");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear date" }));
+    await waitFor(() => expect(dueSet).toHaveBeenCalledWith(expect.objectContaining({ threadId: "a", at: null, reason: null })));
+  });
+
+  it("a date it can't read shows an error and stays open", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({ threads: [thread("a"), thread("b")], state: { focused: { b: NOW } }, dueSet });
+    await waitFor(() => expect(heading(slot.container, "Moving")).toBeDefined());
+    fireEvent.keyDown(slot.container.querySelector('[data-jb-flow-row="a"]')!, { key: "d" });
+    const dialog = await within(document.body).findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Custom due date"), { target: { value: "soon" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Set" }));
+    await within(dialog).findByRole("alert");
+    expect(dueSet).not.toHaveBeenCalled();
+  });
+
+  it("with the setting off there's no due chip and no d key", async () => {
+    const dueSet = vi.fn(() => ({ ok: true }));
+    const slot = await mount({
+      threads: [thread("a"), thread("blocked", { hasPendingInteraction: true })],
+      state: { due: { a: dueIn(HOUR) } },
+      settings: { nowQueue: false },
+      dueSet,
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Needs me")).toEqual(["blocked"]));
+    const row = slot.container.querySelector('[data-jb-flow-row="a"]')!;
+    expect(row.textContent).not.toMatch(/due|overdue/);
+    fireEvent.keyDown(row, { key: "d" });
+    expect(within(document.body).queryByRole("dialog")).toBeNull();
+  });
+
+  const workspaces = { workspaces: [{ id: "w", name: "Acme", projectIds: ["p1"], sectionIds: [], pluginIds: [], sectionOrder: [] }], threadWorkspaces: {} };
+  const mountBar = async (settings: Record<string, unknown>, threads: PluginSidebarThread[], state: Partial<FlowState>) => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const app = await loadPluginApp(() => import("./app"));
+    return renderSlot(app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!, {}, {
+      settings: { workspaces: true, ...settings },
+      rpc: { state_get: () => ({ ...baseState, ...state }), workspaces_get: () => workspaces } as never,
+      sidebarThreads: { status: "ready", projects, threads, sections: [] },
+    });
+  };
+
+  it("a workspace tab counts what's waiting on you now, not everything in its Now", async () => {
+    const slot = await mountBar(
+      { nowQueue: true },
+      [thread("asked", { latestAttentionAt: NOW - 18 * HOUR }), thread("blocked", { hasPendingInteraction: true }), thread("cold", { latestAttentionAt: NOW - 44 * HOUR })],
+      { awaiting: { asked: NOW - 18 * HOUR }, focused: { asked: NOW, cold: NOW } },
+    );
+    const tab = await slot.findByRole("tab", { name: "Acme" });
+    await waitFor(() => expect(tab.querySelector(".jf-workspace-needs-you")?.textContent).toBe("2"));
+    expect(tab.getAttribute("aria-description")).toContain("2 waiting on you now");
+    expect(tab.querySelector(".jf-workspace-attention")).toBeNull();
+  });
+
+  it("with the setting off, a tab shows only its dot", async () => {
+    const slot = await mountBar(
+      { nowQueue: false },
+      [thread("blocked", { hasPendingInteraction: true })],
+      { focused: { blocked: NOW } },
+    );
+    const tab = await slot.findByRole("tab", { name: "Acme" });
+    await waitFor(() => expect(tab.querySelector(".jf-workspace-attention")).not.toBeNull());
+    expect(tab.querySelector(".jf-workspace-needs-you")).toBeNull();
+    expect(tab.getAttribute("aria-description")).not.toContain("waiting on you");
+  });
+
+  it("a Now row keeps its title readable: its chip truncates and its tags move to the hover card", async () => {
+    const slot = await mount({
+      threads: [thread("asked", { latestAttentionAt: NOW - 18 * HOUR }), thread("lane")],
+      state: {
+        awaiting: { asked: NOW - 18 * HOUR },
+        focused: { asked: NOW },
+        due: { asked: { at: NOW + 10 * HOUR, reason: null, source: "agent", setAt: NOW } },
+        tags: { asked: ["payments"], lane: ["perf"] },
+      },
+    });
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["asked"]));
+    const row = slot.container.querySelector('[data-jb-flow-row="asked"]')!;
+    expect(row.querySelector("[data-jb-flow-row-title]")?.className).toContain("min-w-[5.5rem]");
+    const chip = row.querySelector("[data-jb-flow-reason]")!;
+    expect(chip.className).toContain("truncate");
+    expect(chip.className).not.toContain("shrink-0");
+    expect(chip.getAttribute("title")).toBe(chip.textContent);
+    expect(row.textContent).not.toContain("#payments");
+    expect(slot.container.querySelector('[data-jb-flow-row="lane"]')?.textContent).toContain("#perf");
+  });
+});
+

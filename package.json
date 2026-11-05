@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-jb-flow",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "type": "module",
   "engines": {
     "bb": ">=0.46",
@@ -60,7 +60,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts thread-list.test.ts ci-watch.test.ts snooze-wake.test.ts awaiting.test.ts decisions.test.ts releases.test.ts release-delivery.test.ts unreleased.test.ts lanes.test.ts sidebar-groups.test.ts workspace-swipe.test.ts needs-me.test.ts palette-model.test.ts catch-up-model.test.ts generic.test.ts && npm run test:ui",
+    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts thread-list.test.ts ci-watch.test.ts snooze-wake.test.ts awaiting.test.ts decisions.test.ts releases.test.ts release-delivery.test.ts unreleased.test.ts lanes.test.ts sidebar-groups.test.ts workspace-swipe.test.ts needs-me.test.ts now-model.test.ts now-store.test.ts palette-model.test.ts catch-up-model.test.ts generic.test.ts && npm run test:ui",
     "test:ui": "vitest run"
   },
   "license": "MIT",

@@ -16,7 +16,7 @@ On by default (turn off under Settings → JB Flow → **Workspaces**). Choose *
 if another navigation provider is pinned. A new install has no workspaces yet: the bar shows **Create your first workspace**, which
 opens a form to name it and pick its projects. After that your workspaces, plus **All** and
 **No workspace**, appear as tabs (**+** adds another, the gear manages them) across the top of the BB window and filter its threads, sections
-and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention.
+and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention. With **Now and Focus** on, a second number replaces the dot when threads in that tab's Now are waiting on you right now: blocked, your answer, or overdue. So work in another tab stays visible.
 Hover a tab for both counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
 uses its first available project. Opening a thread from another workspace
@@ -69,7 +69,7 @@ The key BB uses for Search threads (⌘K, or Ctrl+K on Windows and Linux, unless
 rebound it under Settings → Keyboard) opens JB Flow's palette instead. Press the key
 again or Escape to close it.
 
-- **An empty query shows your triage.** Sections: *Needs you* (oldest first),
+- **An empty query shows your triage.** Sections: *Now* (with **Now and Focus** on, in the sidebar's order), *Needs you* (oldest first),
   *Running*, *PRs to act on* (failing checks, changes requested, conflicts, ready to
   merge), *Recent* (the threads you visited) and *This thread*.
 - **Typing searches everything at once.**
@@ -89,8 +89,8 @@ again or Escape to close it.
   - A group with more matches than fit ends in *Show all N …*. For threads, messages
     and archived matches, that opens *Threads & messages*: every match, up to 50 per
     group from BB's full-text search.
-  - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and
-    `is:pr` narrow threads, with or without text.
+  - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned`, `is:pr`,
+    `is:focus` and `is:due` narrow threads, with or without text.
 - **Act without opening.**
   - Enter opens the selected item. ⌘Enter opens a thread in a split, or a PR's thread.
   - Tab (or →) lists everything you can do to the selected thread, ready to filter:
@@ -98,6 +98,7 @@ again or Escape to close it.
     - snooze (type `tomorrow` or `3d` for "Snooze until …")
     - move to a lane, section or workspace
     - add (`tag urgent`) or remove tags
+    - add to or remove from Focus, or set a due date (type `due fri`)
     - open its PRs or watch their CI
     - stop a run
     - copy its ID
@@ -264,7 +265,14 @@ thread or source reply changes. Motion respects reduced-motion preferences.
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 
 - **Groups**, top to bottom:
-  - **Needs me**: threads blocked on a prompt or permission, failed threads, and unread threads whose last message asks you something. Unread status updates stay in their section, in bold.
+  - **Now** (with **Now and Focus** on, the default; otherwise **Needs me** sits here, without the ranking): one ranked list of what to do next. It holds threads blocked on a prompt, a permission or a failure, unread threads whose last message asks you something, threads you marked as **Focus** that want something from you, and threads with a deadline coming up. Unread status updates stay in their section, in bold.
+    - **Focus** is a mark on the thread, separate from its section: press `f` on a row, or use the right-click menu. A star shows on the row. Marking more than the **Focus limit** (default 7) asks you to drop one, or keep them all. The first time, threads in your Priority lane start in Focus.
+    - **Due dates:** press `d` on a row or use the right-click menu; `bb jb-flow due` does the same. Agents set them too, with the `set_thread_due` tool or a `**Due:** YYYY-MM-DD · what falls due` line in a status report, for real outside deadlines only. A day means the end of that day. A date you set is never changed by an agent, and a date you clear isn't proposed again. The hover preview shows who set it and why.
+    - **When a deadline counts:** within 48 hours, a thread that wants something from you joins Now without Focus. Within 24 hours or overdue, it joins even when someone else has the next step, so you can chase them, but not while an agent or a watch is on it. A snoozed thread comes back into Now once its deadline is within 24 hours.
+    - **Order:** Focus or soon-due threads that are blocked, then anything overdue or due within 24 hours (soonest first), then Focus threads waiting on you (longest wait first), then Focus threads with no next step, then threads due within 48 hours, then everything else, oldest first. Seven rows show before *Show N more*.
+    - **Reading doesn't clear it.** A Focus thread stays until the agent is moving again. Each row says who holds the thread and for how long: *you · 18h*, *no next step · 44h*, *checks failed*. The wait is counted from when the thread asked, so opening it doesn't reset it.
+    - The thread you have open keeps its row until you open another.
+  - **Moving** (collapsed, only when there are some): Focus threads that don't need you right now: an agent is running, a watch is active, someone else has the next step, or the agent has only just finished.
   - A status report is read by its fields, not its wording: a **Decision needed** callout or a **Blocked** line naming you counts as waiting on you, and a **Blocked** line naming anything else goes to Waiting for others. Keywords only apply to replies without a report.
   - **Stalled** (only when there are some): the agent said it would report back ("I'll report when it finishes", "I'm checking every 30 seconds") but the thread has been idle for over an hour with nothing watching it. **Nudge all** asks each one to check and continue.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. Each is matched to one of your sections by name the first time, then remembered by id, so you can rename a lane's section (right-click → Rename…) and it keeps its number key and behaviour. Active is the unsectioned bucket and can't be renamed.
@@ -279,6 +287,8 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `1`–`5` move it to a lane
   - `s` snooze
   - `t` tag
+  - `f` add to or remove from Focus
+  - `d` set or clear a due date
   - `e` archive
   - `u` toggle unread
   - `j`/`k` move up and down
@@ -301,7 +311,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - Unsnoozing puts the thread back in the section it came from.
 
 ### Stale-thread digest
-- A home page section listing unsectioned threads idle for more than N days (default 7), each with a one-line summary.
+- A home page section listing unsectioned threads idle for more than N days (default 7), each with a one-line summary. Idle means nothing has happened in the thread: opening it doesn't reset the count.
 - Bulk actions: Archive, Keep 14 days, Snooze 1 week. Nothing is archived without a click.
 - Rebuilt at 08:00 on weekdays. Run it from the CLI with `bb jb-flow digest`.
 
@@ -342,7 +352,8 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   | Shortcut | Command |
   |---|---|
   | Alt+Shift+S | Snooze this thread |
-  | Alt+Shift+N | Open the next thread that needs me |
+  | Alt+Shift+N | Open the next thread that needs me. With **Now and Focus** on, it steps through Now in order from the thread you're on, across every workspace, because threads stay in Now after you read them |
+  | Alt+Shift+F | Add this thread to Focus, or remove it |
   | Alt+Shift+E | Archive and open the next one |
   | Alt+Shift+D | Start dev servers |
   | Alt+Shift+P | Show pull requests |
@@ -374,7 +385,8 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `bb jb-flow stop` stops its run
   - `bb jb-flow needs-me` lists threads waiting on you
   - `bb jb-flow next` opens the next waiting thread
-- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script.
+  - `bb jb-flow now` lists Now in order, with what's Moving
+- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script. With **Now and Focus** on, it also has `now`: the count and the top thread.
 
 ## Install
 
@@ -399,6 +411,8 @@ Under **Settings → JB Flow**:
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).
+- **Now and Focus**: the ranked Now group, the Focus mark and due dates, including the `set_thread_due` agent tool (on by default). Off restores Needs me.
+- **Focus limit**: how many threads can be in Focus before marking another one asks you to drop one (default 7).
 - **Keep threads in creation order**: Triage list rows stay put, newest thread first, instead of moving to the top on new activity (off by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
 - **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
@@ -423,6 +437,7 @@ Release watches and sidebar chip names are set in JSON in the **Advanced config*
 bb jb-flow snooze <thread-id|--self> <when> [--note <text>]
 bb jb-flow unsnooze <thread-id|--self>
 bb jb-flow snoozed [--json]
+bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]
 bb jb-flow digest [--refresh] [--json]
 bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]
 bb jb-flow release-wait [--self|<thread-id>]
@@ -441,6 +456,7 @@ bb jb-flow tell <text…> [--thread <id>]
 bb jb-flow stop [<thread-id>|--focused]
 bb jb-flow needs-me [--json]
 bb jb-flow next
+bb jb-flow now [--json]
 bb jb-flow repo [--self|<thread-id>]
 bb jb-flow repo-run <command-id|script:<name>> [--self|<thread-id>]
 bb jb-flow repo-stop <command-id|script:<name>> [--self|<thread-id>]

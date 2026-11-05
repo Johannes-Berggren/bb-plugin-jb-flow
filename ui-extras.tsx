@@ -191,6 +191,8 @@ function ago(timestamp: number, now: number): string {
 }
 
 type HoverPreviewProps = {
+  /** The thread's deadline, shown first among the details. */
+  dueDetail: string | null;
   thread: PluginSidebarThread;
   /** The row's status (icon, colour, label), shown first. */
   status: { glyph: GlyphName; tone: string; label: string; spin?: boolean };
@@ -335,7 +337,7 @@ export function ThreadPreviewCard({ title, status, preview, prs, watching, snooz
  * element, so wrapping never swallows right-click or keyboard handling.
  */
 export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProps>(function ThreadHoverPreview(
-  { thread, status, projectName, machineName, sectionName, tags, prs, watching, snoozeUntil, children, ...triggerProps },
+  { thread, status, projectName, machineName, sectionName, tags, prs, watching, snoozeUntil, dueDetail, children, ...triggerProps },
   ref,
 ) {
   // Portaled to <body>: these attributes put the card inside the plugin's CSS scope.
@@ -347,6 +349,7 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
   const preview = useThreadPreview(open ? thread.id : null, thread.updatedAt);
 
   const details = [
+    dueDetail,
     projectName === "Personal" ? null : projectName,
     sectionName,
     machineName ? `on ${machineName}` : null,

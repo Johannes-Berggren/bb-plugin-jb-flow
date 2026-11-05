@@ -6,6 +6,7 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState } from "./server";
 import { needsMe } from "./needs-me.ts";
+import { nowQueue, sidebarNowThread } from "./now-model.ts";
 
 export type Range = [start: number, end: number];
 
@@ -23,7 +24,7 @@ export const SCOPE_LABEL: Record<Exclude<Scope, "all">, string> = {
   files: "Files",
 };
 
-export type Filter = "needs" | "running" | "snoozed" | "unread" | "pinned" | "pr";
+export type Filter = "needs" | "running" | "snoozed" | "unread" | "pinned" | "pr" | "focus" | "due";
 const FILTER_WORDS: Record<string, Filter> = {
   needs: "needs",
   "needs-me": "needs",
@@ -31,12 +32,15 @@ const FILTER_WORDS: Record<string, Filter> = {
   running: "running",
   working: "running",
   snoozed: "snoozed",
+  focus: "focus",
+  focused: "focus",
+  due: "due",
   unread: "unread",
   pinned: "pinned",
   pr: "pr",
   prs: "pr",
 };
-export const FILTER_HINTS = ["is:needs", "is:running", "is:snoozed", "is:unread", "is:pinned", "is:pr"] as const;
+export const FILTER_HINTS = ["is:needs", "is:running", "is:snoozed", "is:unread", "is:pinned", "is:pr", "is:focus", "is:due"] as const;
 
 export type Query = { text: string; tokens: string[]; filters: Filter[] };
 
@@ -208,7 +212,7 @@ export type PaletteThread = Pick<
   | "latestAttentionAt"
 > & { environment: { branchName: string | null } | null };
 export type PalettePr = Pick<PrStatus, "repo" | "number" | "title" | "url" | "state" | "attention">;
-export type PaletteFlow = Pick<FlowState, "awaiting" | "readyToGo" | "running" | "watching" | "snoozes" | "tags"> & {
+export type PaletteFlow = Pick<FlowState, "awaiting" | "readyToGo" | "running" | "watching" | "snoozes" | "tags" | "promised" | "waitingOthers" | "focused" | "due"> & {
   threadPrs: Record<string, readonly PalettePr[]>;
 };
 /** An action the palette can rank; palette.tsx keeps what it runs, by id. */
@@ -235,6 +239,8 @@ export type PaletteInput = {
   /** The workspace tab: null is All, "unassigned" is No workspace. */
   selectedWorkspace: string | null;
   flow: PaletteFlow | null;
+  /** The Now and Focus setting: the empty query leads with Now. */
+  nowEnabled?: boolean;
   currentThreadId: string | null;
   recent: readonly string[];
   frecency: Frecency;
@@ -265,6 +271,7 @@ export type PaletteItem =
   | { kind: "compose"; id: "compose"; prompt: string };
 
 export type GroupId =
+  | "now"
   | "needs"
   | "running"
   | "pr-attention"
@@ -279,6 +286,7 @@ export type GroupId =
   | "files"
   | "compose";
 export const GROUP_TITLE: Record<GroupId, string> = {
+  now: "Now",
   needs: "Needs you",
   running: "Running",
   "pr-attention": "PRs to act on",
@@ -326,6 +334,10 @@ function passes(thread: PaletteThread, filters: readonly Filter[], flow: Palette
         return busy(thread);
       case "snoozed":
         return flow?.snoozes[thread.id] !== undefined;
+      case "focus":
+        return flow?.focused[thread.id] !== undefined;
+      case "due":
+        return flow?.due[thread.id] !== undefined;
       case "unread":
         return thread.isUnread;
       case "pinned":
@@ -426,6 +438,16 @@ export function home(input: PaletteInput): Section[] {
   const add = (id: GroupId, items: PaletteItem[]) => {
     if (items.length > 0) sections.push({ id, title: GROUP_TITLE[id], items });
   };
+  if (input.nowEnabled && input.flow) {
+    const flow = input.flow;
+    const { now } = nowQueue(
+      live.filter((thread) => !thread.isPinned).map((thread) => sidebarNowThread(thread, flow.snoozes[thread.id] !== undefined)),
+      flow,
+      { now: input.now },
+    );
+    const byId = new Map(live.map((thread) => [thread.id, thread]));
+    add("now", take(now.flatMap((entry) => byId.get(entry.thread.id) ?? []), 7));
+  }
   add(
     "needs",
     take(
@@ -600,6 +622,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
   }
 
   const cap: Record<GroupId, number> = {
+    now: 7,
     needs: 5,
     running: 5,
     "pr-attention": 5,
