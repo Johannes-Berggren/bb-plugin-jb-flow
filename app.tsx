@@ -6,6 +6,7 @@ import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSe
 import { useWorkspaces, useSelectedWorkspace } from "./workspace-client";
 import { inWorkspace } from "./workspaces";
 import { mountTimelineActivity } from "./timeline-activity";
+import { COPY_CODE_FLAG, mountInlineCodeCopy } from "./inline-code-copy";
 // jb-flow frontend: the Triage thread list, a snooze control in the thread
 // header, the stale-thread digest on the homepage, and the area-tag migration
 // in settings. All plugin state comes from server.ts over RPC and refreshes on
@@ -463,6 +464,7 @@ function CatchUpWithFlow({ onClose }: { onClose: () => void }) {
 function CommandHost() {
   const settings = useSettings().values;
   const expandPlans = settings?.expandPlans === true;
+  const copyCode = settings?.copyCode !== false;
   const nowOn = settings?.nowQueue === true;
   const focusLimit = focusLimitOf(settings?.focusLimit);
   useEffect(() => {
@@ -473,6 +475,11 @@ function CommandHost() {
     if (expandPlans) document.documentElement.dataset[EXPAND_PLANS_FLAG] = "";
     else delete document.documentElement.dataset[EXPAND_PLANS_FLAG];
   }, [expandPlans]);
+  useEffect(() => {
+    // Read by the inline-code-copy content script.
+    if (copyCode) document.documentElement.dataset[COPY_CODE_FLAG] = "";
+    else delete document.documentElement.dataset[COPY_CODE_FLAG];
+  }, [copyCode]);
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   useEffect(() => {
     const onSnooze = (event: Event) => setSnoozeThreadId((event as CustomEvent<string>).detail);
@@ -2826,6 +2833,7 @@ export default definePluginApp((app) => {
   app.slots.experimental_appOverlay({ id: "workspace-topbar", component: WorkspaceTopBarWithFlow });
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
   app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
+  app.contentScripts.register({ id: "inline-code-copy", mount: mountInlineCodeCopy });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
   app.slots.navPanel({
     id: "catch-up",
