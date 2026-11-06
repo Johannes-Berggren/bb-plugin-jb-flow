@@ -622,39 +622,43 @@ export function ActivityCard({
             {title}
           </strong>
         </div>
-        <span className="jf-live-live">
-          <span aria-hidden="true" />
-          {connected ? (active ? "Live" : "Idle") : "Reconnecting"}
-        </span>
+        {/* The title already says the agent is idle; the chip only marks Live or Reconnecting.
+            A collapsed card keeps "Idle" because its title is truncated. */}
+        {(active || !connected || collapsed) && (
+          <span className="jf-live-live">
+            <span aria-hidden="true" />
+            {connected ? (active ? "Live" : "Idle") : "Reconnecting"}
+          </span>
+        )}
         {active && startedAt !== null && (
           <time className="jf-live-elapsed" aria-label="Elapsed time">
             {elapsed(now - startedAt)}
           </time>
         )}
-        {canRequest && (
+        {/* Out of date: the banner in the body carries the Update action, so the header only
+            shows it while the body is collapsed. Current: a small refresh icon. */}
+        {canRequest && outdated && collapsed && (
           <button
             type="button"
-            className={outdated ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
+            className="jf-monitor-update"
             disabled={requesting}
             onClick={requestStatus}
-            title="Ask the agent for a fresh status report"
+            title={outdatedReason ?? "Ask the agent for a fresh status report"}
           >
-            {requesting ? "Requesting…" : outdated ? "Update status" : "Refresh"}
+            {requesting ? "Requesting…" : "Update status"}
           </button>
         )}
-        {!collapsed && (
+        {canRequest && !outdated && (
           <button
             type="button"
-            className="jf-live-toggle"
-            aria-expanded={expanded}
-            aria-controls={detailsId}
-            onClick={() => setExpanded(!expanded)}
+            className="jf-monitor-refresh"
+            disabled={requesting}
+            data-requesting={requesting}
+            onClick={requestStatus}
+            aria-label="Refresh status"
+            title="Ask the agent for a fresh status report"
           >
-            {expanded ? "Less" : "Details"}
-            <Icon
-              name={expanded ? "ChevronUp" : "ChevronDown"}
-              className="size-3.5"
-            />
+            <Icon name="RefreshCw" className="size-3.5" />
           </button>
         )}
         <button
@@ -680,13 +684,38 @@ export function ActivityCard({
           </div>
         )}
         {(!active || expanded) && (
-          <div className="jf-monitor-report">
+          <div className="jf-monitor-report" data-outdated={outdated}>
+            {outdated && (
+              <div className="jf-monitor-outdated" role="status">
+                <Icon name="Info" className="size-4" />
+                <div className="jf-monitor-outdated-copy">
+                  <strong>Status is out of date</strong>
+                  <span>{outdatedReason}</span>
+                </div>
+                <button
+                  type="button"
+                  className="jf-monitor-update jf-monitor-update-hero"
+                  disabled={requesting}
+                  onClick={requestStatus}
+                  title="Ask the agent for a fresh status report"
+                >
+                  <Icon name={requesting ? "spinner" : "RefreshCw"} className="size-3.5" />
+                  {requesting ? "Requesting…" : "Update status"}
+                </button>
+              </div>
+            )}
             {monitor?.report ? (
               <>
                 <div className="jf-monitor-caption">
                   <span>
                     Status report
-                    {outdated && <span className="jf-monitor-stale" title={outdatedReason ?? undefined}> · out of date</span>}
+                    {canRequest && !outdated && (
+                      <span className="jf-monitor-current">
+                        {" · "}
+                        <Icon name="Check" className="size-3" />
+                        up to date
+                      </span>
+                    )}
                   </span>{" "}
                   <time
                     title={new Date(monitor.report.capturedAt).toLocaleString()}
@@ -699,8 +728,8 @@ export function ActivityCard({
                     [
                       ["Done", monitor.report.done],
                       ["Next", monitor.report.doingNow ? `Doing now: ${monitor.report.doingNow}` : monitor.report.next],
-                      ["Goal", goal?.objective || monitor.report.goal],
                       ["Blocked", monitor.report.blocked],
+                      ["Goal", goal?.objective || monitor.report.goal],
                     ] as const
                   )
                     .filter(([, text]) => text)
@@ -732,10 +761,7 @@ export function ActivityCard({
             ) : monitor?.latest ? (
               <>
                 <div className="jf-monitor-caption">
-                  <span>
-                    Latest reply
-                    {outdated && <span className="jf-monitor-stale"> · no status report yet</span>}
-                  </span>{" "}
+                  <span>Latest reply</span>{" "}
                   <time title={new Date(monitor.latestAt).toLocaleString()}>
                     {elapsed(now - monitor.latestAt)} ago
                   </time>
@@ -874,6 +900,19 @@ export function ActivityCard({
               ].filter(Boolean);
               return parts.length ? <span className="jf-monitor-summary">{parts.join(" · ")}</span> : null;
             })()}
+            <button
+              type="button"
+              className="jf-live-toggle jf-live-details-toggle"
+              aria-expanded={expanded}
+              aria-controls={detailsId}
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? "Less" : "Details"}
+              <Icon
+                name={expanded ? "ChevronUp" : "ChevronDown"}
+                className="size-3"
+              />
+            </button>
           </div>
             {onToggleAutoContinue && autoContinue && (
               <AutoPromptMenu

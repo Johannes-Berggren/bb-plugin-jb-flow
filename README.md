@@ -220,9 +220,11 @@ styling. Reduced-motion preferences disable decorative animation.
 ### Persistent thread monitor
 
 On by default (**Thread monitor** in the plugin settings). The activity card stays visible when the agent is idle,
-as a quiet summary of the agent's last status report: **Done**, **Next**, **Goal** and **Blocked**, with milestone
-bars and context use under **Details**. When the report is out of date (the agent replied since, it's over 6 hours
-old, or there is none), the header says so and offers **Update status**; otherwise a small **Refresh** does the same.
+as a quiet summary of the agent's last status report: **Done**, **Next**, **Blocked** and **Goal**, with milestone
+bars and context use under **Details** in the footer. When the report is out of date (the agent replied since, it's
+over 6 hours old, or there is none), a call-out at the top of the report says why and offers a large **Update status**
+button, and the old report is dimmed (Blocked stays readable). When it's current, the caption says "up to date" and a
+small refresh icon in the header does the same.
 
 If the report ends with numbered **Next steps** (the built-in prompt asks for a recommended path forward in a callout),
 they appear in **Your next move** above the monitor (see Decision buttons), and a **Doing now** line shows what the

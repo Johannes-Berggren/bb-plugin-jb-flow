@@ -150,7 +150,9 @@ it("stops claiming live updates when disconnected, and keeps the idle monitor", 
     },
   );
   expect(idle.getByRole("region", { name: "Agent activity" })).toBeTruthy();
-  expect(idle.getByText("Idle")).toBeTruthy();
+  expect(idle.getByText("Agent idle")).toBeTruthy();
+  // The title already says idle, so the header has no separate Idle chip.
+  expect(idle.queryByText("Idle")).toBeNull();
   idle.lifecycle.unmount();
 });
 
@@ -377,7 +379,7 @@ it("keeps read-only PR summaries available when idle and rejects unsafe links", 
       ],
     },
   );
-  expect(slot.getByText("Idle")).toBeTruthy();
+  expect(slot.getByText("Agent idle")).toBeTruthy();
   expect(slot.getAllByRole("link")).toHaveLength(1);
   slot.lifecycle.unmount();
 });
@@ -473,7 +475,7 @@ it("keeps a dated idle report and milestone bars with newer replies in Details",
         .getByRole("region", { name: "Agent activity" })
         .querySelectorAll(".jf-monitor-steps dt"),
     ).map((node) => node.textContent),
-  ).toEqual(["Done", "Next", "Goal", "Blocked"]);
+  ).toEqual(["Done", "Next", "Blocked", "Goal"]);
   expect(slot.getByText("Review the design")).toBeTruthy();
   expect(slot.getByText("Waiting for feedback")).toBeTruthy();
   // Milestone bars live in Details; the main view has a one-line summary.
@@ -568,7 +570,7 @@ it("keeps the saved report and reports a failed status request inline", async ()
       },
     },
   );
-  fireEvent.click(slot.getByRole("button", { name: /Update status|Refresh/ }));
+  fireEvent.click(slot.getByRole("button", { name: /Update status|Refresh status/ }));
   await slot.findByRole("alert");
   expect(slot.getByText("Review the design")).toBeTruthy();
   expect(
@@ -576,7 +578,7 @@ it("keeps the saved report and reports a failed status request inline", async ()
   ).toBeTruthy();
   expect(
     slot
-      .getByRole("button", { name: /Update status|Refresh/ })
+      .getByRole("button", { name: /Update status|Refresh status/ })
       .hasAttribute("disabled"),
   ).toBe(false);
   slot.lifecycle.unmount();
@@ -677,17 +679,27 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { component: ActivityCard },
     { ...base, now: 200_000, monitor: { ...savedMonitor, latestAt: 150_000 } },
   );
-  expect(outdated.getByText("· out of date").getAttribute("title")).toBe("The agent replied after this report");
+  const banner = outdated.getByRole("status");
+  expect(banner.textContent).toContain("Status is out of date");
+  expect(banner.textContent).toContain("The agent replied after this report");
+  // One Update action, in the banner; none in the header.
   expect(outdated.getAllByRole("button", { name: "Update status" })).toHaveLength(1);
+  expect(banner.querySelector("button")?.textContent).toContain("Update status");
+  expect(outdated.queryByRole("button", { name: "Refresh status" })).toBeNull();
+  expect(
+    outdated.getByRole("region", { name: "Agent activity" }).querySelector(".jf-monitor-report")?.getAttribute("data-outdated"),
+  ).toBe("true");
   outdated.lifecycle.unmount();
 
   const current = renderSlot(
     { component: ActivityCard },
     { ...base, now: 61_000, monitor: { ...savedMonitor, latestAt: 1000 } },
   );
-  expect(current.queryByText("· out of date")).toBeNull();
-  // Current: a quiet Refresh instead of the prominent Update status.
-  expect(current.getByRole("button", { name: "Refresh" })).toBeTruthy();
+  expect(current.queryByText("Status is out of date")).toBeNull();
+  expect(current.queryByRole("button", { name: "Update status" })).toBeNull();
+  // Current: a small refresh icon and an "up to date" caption.
+  expect(current.getByRole("button", { name: "Refresh status" })).toBeTruthy();
+  expect(current.getByText(/up to date/)).toBeTruthy();
   current.lifecycle.unmount();
 });
 
