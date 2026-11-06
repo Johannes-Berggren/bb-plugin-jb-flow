@@ -258,9 +258,13 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     exclusive(async () => {
       const all = await getThreads();
       const entry = all[threadId] ?? { refs: [], cursor: 0 };
+      const refsBefore = JSON.stringify(entry.refs);
       apply(entry);
       all[threadId] = entry;
       await setThreads(all);
+      // A PR linked or unlinked shows at once, even when its status is already
+      // known and the refresh after it finds nothing new.
+      if (JSON.stringify(entry.refs) !== refsBefore) changed();
       return entry;
     });
   const getStatus = async () => {
