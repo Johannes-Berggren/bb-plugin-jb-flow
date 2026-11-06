@@ -423,6 +423,12 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Plans awaiting approval open expanded. Drag the handle under a plan to set its height.",
       default: true,
     },
+    copyCode: {
+      type: "boolean",
+      label: "Copy buttons on code",
+      description: "Hovering an inline code snippet in a chat message shows a button that copies it.",
+      default: false,
+    },
     advancedConfig: {
       type: "string",
       label: "Advanced config (JSON)",
