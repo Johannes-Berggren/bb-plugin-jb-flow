@@ -183,7 +183,25 @@ export type CiCycle = {
   /** True only when the thread is known to be archived or deleted, not on a lookup failure. */
   threadGone: (threadId: string) => Promise<boolean>;
   warn: (message: string) => void;
+  /** PRs read at once (default READ_CONCURRENCY). */
+  concurrency?: number;
 };
+
+/** How many PRs a cycle reads from GitHub at once. */
+export const READ_CONCURRENCY = 4;
+
+/** Runs `fn` over `items`, at most `limit` at a time. */
+export async function inPool<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next]!;
+      next += 1;
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+}
 
 /**
  * One pass over all watches. Returns what to store: key → new state, or null to
@@ -210,6 +228,7 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
     for (const [key, watch] of Object.entries(watches)) if (watch.threadId === threadId) changes.set(key, null);
   };
 
+  const due: Array<[string, CiWatch]> = [];
   for (const [key, watch] of Object.entries(watches)) {
     if (!states.has(watch.threadId)) {
       const state = await cycle.threadState(watch.threadId);
@@ -217,11 +236,15 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
       if (state === "gone") dropThread(watch.threadId);
     }
     if (states.get(watch.threadId) !== "idle") continue;
+    const lastChecked = watch.lastCheckedAt;
+    if (!cycle.force && watch.watchFor === "reviews" && lastChecked !== undefined && cycle.now() - lastChecked < REVIEW_RECHECK_MS) continue;
+    due.push([key, watch]);
+  }
+
+  // A few PRs at a time: one by one, a dozen watches outlast the 2-minute cycle.
+  await inPool(due, cycle.concurrency ?? READ_CONCURRENCY, async ([key, watch]) => {
     // Before the read: a review landing during it stays newer than this cutoff.
     const now = cycle.now();
-    const lastChecked = watch.lastCheckedAt;
-    if (!cycle.force && watch.watchFor === "reviews" && lastChecked !== undefined && now - lastChecked < REVIEW_RECHECK_MS) continue;
-
     let pr: PrState;
     try {
       pr = await cycle.readPr(watch);
@@ -235,14 +258,14 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
       } else {
         changes.set(key, { ...watch, lastCheckedAt: now });
       }
-      continue;
+      return;
     }
 
     const result = await evaluateWatch(watch, pr, now, await cycle.me(), cycle.failedLog);
     const next: CiWatch = { ...result.watch, lastCheckedAt: now };
     if (!result.report) {
       changes.set(key, next);
-      continue;
+      return;
     }
     const entry = stage(watch.threadId);
     entry.notes.push(...result.notes);
@@ -252,7 +275,7 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
       entry.staged.set(key, next);
       entry.stillWatching = true;
     }
-  }
+  });
 
   for (const [threadId, entry] of outbox) {
     const others = Object.entries(watches).filter(
@@ -301,6 +324,16 @@ export function applyCiChanges(
     if (next === null) delete stored[key];
     else stored[key] = next;
   }
+}
+
+/** Whether applying a cycle's changes alters anything the UI shows (which watches, and what for). */
+export function visibleChange(snapshot: Record<string, CiWatch>, changes: ReadonlyMap<string, CiWatch | null>): boolean {
+  for (const [key, next] of changes) {
+    const seen = snapshot[key];
+    if (next === null || seen === undefined) return true;
+    if (next.watchFor !== seen.watchFor || next.quiet !== seen.quiet) return true;
+  }
+  return false;
 }
 
 /** Real status from a failed bb call, from its field or its "HTTP 404: …" message. */

@@ -147,6 +147,9 @@ export function recordThreadStatus(
   };
 }
 
+/** A refresh asked for this soon after the last read returns the stored record. */
+export const RECHECK_AFTER_MS = 10_000;
+
 /** One bounded durable record per thread, shared by every BB window and device. */
 export function createThreadStatus(bb: BbPluginApi, changed: () => void) {
   const pending = new Map<string, Promise<unknown>>();
@@ -155,6 +158,9 @@ export function createThreadStatus(bb: BbPluginApi, changed: () => void) {
     disposed = true;
   });
   const key = (id: string) => `thread-status:${id}`;
+  // When each thread's reply was last read. Going idle captures it, and every
+  // open window then asks for a refresh too; one read of a long reply is enough.
+  const checkedAt = new Map<string, number>();
   const read = async (id: string) => {
     const parsed = threadStatusSchema.safeParse(
       await bb.storage.kv.get(key(id)),
@@ -176,6 +182,7 @@ export function createThreadStatus(bb: BbPluginApi, changed: () => void) {
   const capture = (id: string, supplied?: string | null) =>
     serial(id, async () => {
       if (disposed) return null;
+      checkedAt.set(id, Date.now());
       const previous = await read(id);
       const reply =
         supplied === undefined
@@ -197,12 +204,13 @@ export function createThreadStatus(bb: BbPluginApi, changed: () => void) {
   );
   bb.events.on("thread.deleted", ({ thread }) =>
     serial(thread.id, async () => {
+      checkedAt.delete(thread.id);
       if (!disposed) await bb.storage.kv.delete(key(thread.id));
     }),
   );
   return {
     get: (id: string, refresh = true) =>
-      refresh
+      refresh && Date.now() - (checkedAt.get(id) ?? 0) > RECHECK_AFTER_MS
         ? capture(id)
         : serial(id, () => (disposed ? Promise.resolve(null) : read(id))),
   };

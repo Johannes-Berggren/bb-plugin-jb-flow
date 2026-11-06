@@ -12,7 +12,7 @@
 //   is left alone; its news arrives as one message once it goes idle.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { applyCiChanges, isGoneError, isThreadGone, MAX_SEND_FAILURES, runCiCycle, type CiWatch, type PrState } from "./ci-watch";
+import { applyCiChanges, isGoneError, isThreadGone, MAX_SEND_FAILURES, runCiCycle, visibleChange, type CiWatch, type PrState } from "./ci-watch";
 import { gh as runGh, GH_MISSING } from "./gh";
 import { parseLimitHit } from "./limits";
 import { RELEASE_WAIT, releaseWaitEnded, releaseWaitStated } from "./release-wait";
@@ -304,6 +304,10 @@ export function createWatchers(
     const pending = await get<Record<string, Pending>>("pendingReleases", {});
     const projects = new Set([...waiters.map((waiter) => waiter.projectName), ...Object.values(pending).map((p) => p.projectName)]);
     const seen = await get<Record<string, number>>("seenReleases", {});
+    // seen[repo] is only checked for presence (has this repo been read before?),
+    // so its timestamp moving on each cycle is not a change worth storing.
+    const fingerprint = () => JSON.stringify([pending, Object.keys(seen).sort()]);
+    const before = fingerprint();
 
     for (const projectName of projects) {
       if (lifetime.signal.aborted) return;
@@ -388,6 +392,8 @@ export function createWatchers(
       delete pending[key];
       bb.log.info(`release ${key}: notified ${delivery.notified} thread(s)`);
     }
+    // Most cycles find nothing new; don't rewrite storage or wake every window for that.
+    if (fingerprint() === before) return;
     await kv.set("pendingReleases", pending);
     await kv.set("seenReleases", seen);
     changed();
@@ -444,7 +450,8 @@ export function createWatchers(
 
   async function checkCiNow(force: boolean) {
     const watches = await get<Record<string, CiWatch>>("ciWatches", {});
-    let me: string | null = null;
+    // Shared by the PRs read at once, so gh is asked who "me" is only once.
+    let me: Promise<string> | null = null;
     const changes = await runCiCycle({
       watches,
       force,
@@ -463,7 +470,7 @@ export function createWatchers(
         JSON.parse(
           await gh(["pr", "view", String(watch.pr), "-R", watch.repo, "--json", "state,headRefOid,url,statusCheckRollup,reviews,comments"]),
         ) as PrState,
-      me: async () => (me ??= (await gh(["api", "user", "-q", ".login"]).catch(() => "")).trim()),
+      me: () => (me ??= gh(["api", "user", "-q", ".login"]).then((login) => login.trim(), () => "")),
       failedLog,
       send: (threadId, text) => tell(threadId, text),
       threadGone: (threadId) => isThreadGone(() => bb.sdk.threads.get({ threadId })),
@@ -471,9 +478,10 @@ export function createWatchers(
     });
     // Disposed meanwhile: the next load checks again from what's stored.
     if (lifetime.signal.aborted) return;
+    if (changes.size === 0) return;
     // Applied to a fresh read, so watches added during the check survive.
     await update<Record<string, CiWatch>>("ciWatches", {}, (all) => applyCiChanges(all, watches, changes));
-    changed();
+    if (visibleChange(watches, changes)) changed();
   }
 
   // --- wiring ----------------------------------------------------------------

@@ -5,6 +5,7 @@ import {
   CI_TIMEOUT_MS,
   evaluateWatch,
   isGoneError,
+  visibleChange,
   isThreadGone,
   MAX_SEND_FAILURES,
   REVIEW_RECHECK_MS,
@@ -346,4 +347,33 @@ test("a failed send to a thread that's gone drops its other watches too", async 
   const changes = await runCiCycle(config);
   assert.equal(changes.get("done"), null);
   assert.equal(changes.get("later"), null);
+});
+
+test("PRs are read a few at a time, and every watch is still handled", async () => {
+  let running = 0;
+  let peak = 0;
+  const watches = Object.fromEntries(
+    Array.from({ length: 9 }, (_, index) => [`k${index}`, watch({ threadId: `thr_${index}`, pr: index + 1, watchFor: "checks" })]),
+  );
+  const { config, sent } = cycle(watches, prState(), {
+    concurrency: 3,
+    readPr: async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+      return prState({ statusCheckRollup: [green] });
+    },
+  });
+  const changes = await runCiCycle(config);
+  assert.equal(peak, 3);
+  assert.equal(sent.length, 9);
+  for (const key of Object.keys(watches)) assert.equal(changes.get(key), null);
+});
+
+test("only a removed watch or a new kind of wait counts as a visible change", () => {
+  const seen = { k: watch() };
+  assert.equal(visibleChange(seen, new Map([["k", { ...seen.k, lastCheckedAt: T0 }]])), false);
+  assert.equal(visibleChange(seen, new Map([["k", { ...seen.k, watchFor: "reviews" as const, quiet: true }]])), true);
+  assert.equal(visibleChange(seen, new Map([["k", null]])), true);
 });
