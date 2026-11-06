@@ -353,3 +353,16 @@ test("is:focus and is:due narrow threads", () => {
   assert.deepEqual(itemIds(group(search(input({ threads, flow }), "threads", "is:due"), "threads")), ["thread:b"]);
 });
 
+test("threads come first, then message matches, ahead of PRs and places that match better", () => {
+  const flow = { ...input().flow!, threadPrs: { b: [pr(7, "merged", { title: "Acme flow" })] } };
+  const server = [{ threadId: "c", title: "Notes", projectId: "p1", archived: false, updatedAt: NOW, snippet: { text: "the acme flow is slow", ranges: [] } }];
+  const order = (threads: PaletteThread[]) =>
+    ids(search(input({ threads, flow, server, workspaces: [{ id: "w", name: "Acme flow" }] }), "all", "acme flow")).filter((id) => id !== "compose");
+  // "b" matches through its PR's title, weaker than the PR and workspace themselves.
+  assert.deepEqual(order([thread("b", "Other"), thread("c", "Notes")]).slice(0, 2), ["threads", "messages"]);
+  // With no title match, message matches still lead.
+  const noTitle = order([thread("c", "Notes")]);
+  assert.equal(noTitle[0], "messages");
+  assert.ok(noTitle.indexOf("prs") > 0 && noTitle.indexOf("places") > 0);
+});
+
