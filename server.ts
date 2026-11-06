@@ -866,25 +866,59 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
 
   let stateBuild: Promise<FlowState> | null = null;
   async function buildState(): Promise<FlowState> {
+    // Independent reads; one round trip instead of seventeen in a row.
+    const [
+      awaitingAll,
+      promised,
+      waitingOthers,
+      readyToGo,
+      sectionOrder,
+      sectionProjects,
+      lanes,
+      machineMap,
+      threadPrs,
+      watching,
+      snoozedSectionId,
+      snoozes,
+      tags,
+      focused,
+      due,
+    ] = await Promise.all([
+      awaiting.all(),
+      awaiting.promised(),
+      awaiting.waitingOthers(),
+      awaiting.readyToGo(),
+      bb.storage.kv.get<string[]>("sectionOrder"),
+      bb.storage.kv.get<Record<string, string>>("sectionProjects"),
+      laneSections(bb),
+      machines.read(),
+      prTracker.byThread(),
+      watchingByThread(),
+      findSnoozedSection(),
+      getSnoozes(),
+      getTags(),
+      nowStore.all(),
+      nowStore.dueAll(),
+    ]);
     return {
-      awaiting: await awaiting.all(),
-      promised: await awaiting.promised(),
-      waitingOthers: await awaiting.waitingOthers(),
-      readyToGo: await awaiting.readyToGo(),
-      sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
-      sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
-      laneSections: await laneSections(bb),
-      machines: await machines.read(),
-      threadPrs: await prTracker.byThread(),
+      awaiting: awaitingAll,
+      promised,
+      waitingOthers,
+      readyToGo,
+      sectionOrder: sectionOrder ?? [],
+      sectionProjects: sectionProjects ?? {},
+      laneSections: lanes,
+      machines: machineMap,
+      threadPrs,
       running: activity.snapshot(),
-      watching: await watchingByThread(),
+      watching,
       projectShortNames: localConfig.projectShortNames,
       stripProjectPrefixes: localConfig.stripProjectPrefixes,
-      snoozedSectionId: await findSnoozedSection(),
-      snoozes: await getSnoozes(),
-      tags: await getTags(),
-      focused: await nowStore.all(),
-      due: await nowStore.dueAll(),
+      snoozedSectionId,
+      snoozes,
+      tags,
+      focused,
+      due,
     };
   }
 
@@ -1171,12 +1205,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     instructions:
       "To check the state of this thread's PRs, call pr_status (one call, all repos) instead of gh pr view / gh pr checks. Use gh only to read full review comments or logs.",
     parameters: z.object({
-      refresh: z.boolean().optional().describe("Fetch live state first (one batched GitHub query)"),
+      refresh: z.boolean().optional().describe("Fetch this thread's PRs live first (one batched GitHub query)"),
     }),
     async execute({ refresh }, ctx) {
       if (refresh) {
-        await prTracker.scan(ctx.threadId);
-        await prTracker.refresh();
+        await prTracker.refreshThread(ctx.threadId);
       }
       const prs = (await prTracker.byThread())[ctx.threadId] ?? [];
       if (prs.length === 0) return "No PRs linked to this thread. PRs opened with gh pr create are linked automatically; others via `bb jb-flow pr-link <url> --self`.";
@@ -1537,8 +1570,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
           case "prs": {
             const threadId = resolveThread(args[0] ?? "--self");
             if (threadId === undefined) break;
-            await prTracker.scan(threadId);
-            await prTracker.refresh();
+            await prTracker.refreshThread(threadId);
             const prs = (await prTracker.byThread())[threadId] ?? [];
             if (json) return { exitCode: 0, stdout: JSON.stringify(prs) };
             const lines = prs.map(
