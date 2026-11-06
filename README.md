@@ -77,7 +77,8 @@ again or Escape to close it.
     workspace and section. Threads in your current workspace, the ones you pick often
     and the ones waiting on you rank first.
   - BB's full-text search adds message matches, with snippets, and archived threads.
-  - Pull requests, workspaces, projects and actions are ranked into the same list.
+  - Pull requests, workspaces, projects and actions are ranked into the same list,
+    below the threads: thread title matches first, then message matches.
   - The last row always starts a new thread with what you typed. Press Tab on it to
     pick the project.
 - **Narrow the scope.**

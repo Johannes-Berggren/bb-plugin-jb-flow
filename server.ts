@@ -252,7 +252,8 @@ export const rpcContract = defineRpcContract({
     }),
   },
   thread_reply: {
-    input: z.object({ threadId: z.string(), text: z.string().min(1).max(2000) }),
+    // Room for a long status report prompt; bb takes far longer messages than this.
+    input: z.object({ threadId: z.string(), text: z.string().min(1).max(20_000) }),
     output: z.object({ ok: z.boolean() }),
   },
   your_move: {

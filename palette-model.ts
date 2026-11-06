@@ -498,9 +498,13 @@ const MORE: Partial<Record<GroupId, { scope: Exclude<Scope, "all">; noun: string
   actions: { scope: "actions", noun: "actions" },
 };
 
+/** Thread results lead whatever matches best elsewhere: a thread is usually what you're looking for. */
+const THREADS_FIRST: GroupId[] = ["threads", "messages"];
+
 /**
- * One ranked list across kinds. Groups follow their best hit; a new thread
- * from the query always comes last. A scope shows one kind, uncapped.
+ * One ranked list across kinds. Threads (by title, then by message) come first;
+ * the other groups follow their best hit; a new thread from the query always
+ * comes last. A scope shows one kind, uncapped.
  */
 export function search(input: PaletteInput, scope: Scope, raw: string): Section[] {
   const query = parseQuery(raw);
@@ -647,7 +651,11 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     }
     return { id, best: list[0]!.score, items };
   });
-  ranked.sort((a, b) => b.best - a.best || PRIORITY.indexOf(a.id) - PRIORITY.indexOf(b.id));
+  const pinned = (id: GroupId) => {
+    const index = THREADS_FIRST.indexOf(id);
+    return index === -1 ? THREADS_FIRST.length : index;
+  };
+  ranked.sort((a, b) => pinned(a.id) - pinned(b.id) || b.best - a.best || PRIORITY.indexOf(a.id) - PRIORITY.indexOf(b.id));
   const sections: Section[] = ranked.map(({ id, items }) => ({ id, title: GROUP_TITLE[id], items }));
   if (scope === "all" && query.text.length > 0) {
     sections.push({ id: "compose", title: GROUP_TITLE.compose, items: [{ kind: "compose", id: "compose", prompt: query.text }] });
