@@ -314,7 +314,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   type Batch = Record<string, Record<string, GqlPr | null> | null>;
   async function fetchBatch(query: string, signal: AbortSignal): Promise<{ data: Batch } | { error: unknown }> {
     try {
-      return { data: await ghGraphql<Batch>(query, { signal }) };
+      // Up to 40 PRs with their checks: GitHub can take a while.
+      return { data: await ghGraphql<Batch>(query, { signal, timeout: 60_000 }) };
     } catch (error) {
       if (!signal.aborted) bb.log.warn(`pr refresh: ${String(error)}`);
       return { error };

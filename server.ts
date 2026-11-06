@@ -651,7 +651,14 @@ export default async function plugin(bb: BbPluginApi) {
         updateSnoozes((all) => {
           if (all[threadId]?.snoozedAt === record.snoozedAt) all[threadId] = { ...all[threadId]!, wakeStarted: true };
         }),
-      restore: async (threadId, record) => wake(threadId, record, "due", await (context ??= wakeContext("due"))),
+      restore: async (threadId, record) => {
+        // A failed read isn't kept: the next thread in this pass tries again.
+        context ??= wakeContext("due").catch((error: unknown) => {
+          context = null;
+          throw error;
+        });
+        await wake(threadId, record, "due", await context);
+      },
       sendNote: async (threadId, note) => {
         await bb.sdk.threads.send({
           threadId,
