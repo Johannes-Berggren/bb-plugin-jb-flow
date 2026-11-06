@@ -5,10 +5,9 @@
 // (incrementally, from a per-thread cursor), plus manual links. Status: one
 // batched GraphQL query every few minutes for all linked PRs, with stack order
 // derived from base/head branches within a repo.
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { anySignal, ghGraphql, type GhError } from "./gh.ts";
 import { listLiveThreads } from "./thread-list.ts";
 
 export const prAttention = z.enum([
@@ -105,45 +104,6 @@ export function refsToRefreshAfterTurn(
   return [...out.values()];
 }
 
-export const GH_MISSING = "The GitHub CLI (gh) isn't installed or isn't on PATH. Install it and run `gh auth login`.";
-
-/** A readable gh failure; a missing binary gets setup instructions instead of "spawn gh ENOENT". */
-export function ghError(prefix: string, error: Error & { code?: string | number | null }, stderr: string, max: number): Error {
-  if (error.code === "ENOENT") return new Error(GH_MISSING);
-  return new Error(`${prefix}: ${stderr || error.message}`.slice(0, max));
-}
-
-export function gh(args: string[], timeout = 60_000): Promise<string> {
-  const bin = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
-  return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(ghError("gh", error, stderr, 400));
-      else resolve(stdout);
-    });
-  });
-}
-
-/**
- * A GraphQL query through gh. GitHub answers a query with one unresolvable
- * part (an issue number, a deleted repo) with an error *and* data for every
- * other part; gh then exits non-zero. Keep that partial data.
- */
-export function ghGraphql<T>(query: string, timeout = 60_000): Promise<T> {
-  const bin = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
-  return new Promise((resolve, reject) => {
-    execFile(bin, ["api", "graphql", "-f", `query=${query}`], { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      let parsed: { data?: T | null } | null = null;
-      try {
-        parsed = JSON.parse(stdout) as { data?: T | null };
-      } catch {
-        parsed = null;
-      }
-      if (parsed?.data) resolve(parsed.data);
-      else reject(error ? ghError("gh graphql", error, stderr, 400) : new Error("gh graphql: no data"));
-    });
-  });
-}
-
 type GqlPr = {
   number: number;
   title: string;
@@ -198,8 +158,25 @@ export function orderStack(prs: PrStatus[]): PrStatus[] {
   return ordered;
 }
 
+/**
+ * What to do when a whole batch query failed. A GitHub outage or a missing gh
+ * fails every query alike, so asking repo by repo would only multiply the
+ * failures; stop and let the next cycle try. Anything else (one deleted repo,
+ * one inaccessible PR) is worth splitting up so the rest still updates.
+ */
+export function onBatchFailure(error: unknown): "split" | "stop" {
+  const failure = error as GhError | null;
+  if (failure?.transient || failure?.aborted) return "stop";
+  if (/isn't installed or isn't on PATH|auth login|HTTP 401|HTTP 403|rate limit/i.test(String(failure?.message ?? error))) return "stop";
+  return "split";
+}
+
 export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
+  // Aborted when this load is disposed (a reload, disable or update). Work still
+  // running then must stop before its next bb call: the old handle is dead.
+  const lifetime = new AbortController();
+  bb.onDispose(() => lifetime.abort());
   // PR data lives in the plugin's own SQLite database: kv values are capped at
   // 256KB, and a busy user links hundreds of PRs a month.
   const db = () => bb.storage.database();
@@ -278,6 +255,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
       }
       if (rows.length < 100) break;
     }
+    // Disposed mid-scan: nothing is saved, and the next load scans from the same cursor.
+    if (signal?.aborted || lifetime.signal.aborted) return found;
     await updateThread(threadId, (entry) => {
       entry.cursor = Math.max(entry.cursor, cursor);
       for (const ref of found) if (!entry.refs.some((existing) => key(existing) === key(ref))) entry.refs.push(ref);
@@ -324,22 +303,25 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   /** Fetches status for the given PRs (default: all linked to active threads). */
   let refreshLock: Promise<unknown> = Promise.resolve();
   function refresh(only?: PrRef[], signal?: AbortSignal): Promise<void> {
+    const combined = anySignal(lifetime.signal, signal)!;
     // One at a time: each run writes the whole prStatus map.
-    const run = refreshLock.then(() => refreshNow(only, signal), () => refreshNow(only, signal));
+    const go = () => (combined.aborted ? undefined : refreshNow(only, combined));
+    const run = refreshLock.then(go, go);
     refreshLock = run.catch(() => undefined);
     return run;
   }
 
-  async function fetchBatch(query: string): Promise<Record<string, Record<string, GqlPr | null> | null> | null> {
+  type Batch = Record<string, Record<string, GqlPr | null> | null>;
+  async function fetchBatch(query: string, signal: AbortSignal): Promise<{ data: Batch } | { error: unknown }> {
     try {
-      return await ghGraphql<Record<string, Record<string, GqlPr | null> | null>>(query);
+      return { data: await ghGraphql<Batch>(query, { signal }) };
     } catch (error) {
-      bb.log.warn(`pr refresh: ${String(error)}`);
-      return null;
+      if (!signal.aborted) bb.log.warn(`pr refresh: ${String(error)}`);
+      return { error };
     }
   }
 
-  async function refreshNow(only?: PrRef[], signal?: AbortSignal) {
+  async function refreshNow(only: PrRef[] | undefined, signal: AbortSignal) {
     const status = await getStatus();
     let refs = only;
     if (refs === undefined) {
@@ -358,9 +340,9 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         return { repo: repo!, number: Number(number) };
       });
     }
-    for (let index = 0; index < refs.length; index += 40) {
-      // A reload waits for this; stop between batches (what's fetched so far is kept).
-      if (signal?.aborted) break;
+    batches: for (let index = 0; index < refs.length; index += 40) {
+      // Stop between batches on a reload; what's fetched so far is kept below.
+      if (signal.aborted) break;
       const batch = refs.slice(index, index + 40);
       const byRepo = new Map<string, number[]>();
       for (const ref of batch) byRepo.set(ref.repo, [...(byRepo.get(ref.repo) ?? []), ref.number]);
@@ -375,15 +357,18 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         .join(" ")} }
         fragment F on PullRequest { number title url state isDraft mergeable reviewDecision baseRefName headRefName mergedAt
           commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }`;
-      // One deleted repo or inaccessible PR fails the whole query; then retry
-      // repo by repo so the rest still updates.
-      const whole = await fetchBatch(queryFor(allRepos));
-      const parts: Array<[typeof allRepos, Record<string, Record<string, GqlPr | null> | null>]> = [];
-      if (whole) parts.push([allRepos, whole]);
+      // One deleted repo or inaccessible PR can fail the whole query; then retry
+      // repo by repo so the rest still updates. A GitHub outage stops the run.
+      const whole = await fetchBatch(queryFor(allRepos), signal);
+      const parts: Array<[typeof allRepos, Batch]> = [];
+      if ("data" in whole) parts.push([allRepos, whole.data]);
+      else if (onBatchFailure(whole.error) === "stop") break batches;
       else if (allRepos.length > 1) {
         for (const single of allRepos) {
-          const data = await fetchBatch(queryFor([single]));
-          if (data) parts.push([[single], data]);
+          if (signal.aborted) break batches;
+          const one = await fetchBatch(queryFor([single]), signal);
+          if ("data" in one) parts.push([[single], one.data]);
+          else if (onBatchFailure(one.error) === "stop") break batches;
         }
       }
       for (const [repos, data] of parts) repos.forEach(([repo, numbers], r) => {
@@ -406,6 +391,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         }
       });
     }
+    // Disposed meanwhile: the storage handle is gone; the next load refreshes again.
+    if (lifetime.signal.aborted) return;
     writeTable("pr_status", "key", status);
     changed();
   }
@@ -430,13 +417,21 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   // When a turn ends, its new PRs appear and its linked PRs show what the
   // turn did to them (merged, closed, new checks) right away.
   bb.events.on("thread.idle", async ({ thread }) => {
-    const found = await scan(thread.id).catch(() => []);
+    const found = await scan(thread.id, lifetime.signal).catch(() => []);
+    if (lifetime.signal.aborted) return;
     const linked = (await getThreads())[thread.id]?.refs ?? [];
     const refs = refsToRefreshAfterTurn(linked, await getStatus(), found);
     if (refs.length > 0) await refresh(refs);
   });
 
-  bb.background.schedule("pr-refresh", "*/3 * * * *", () => refresh());
+  // Single flight: a slow run (GitHub having a bad day) mustn't queue up more
+  // full runs behind it; the next tick after it finishes picks up from there.
+  let scheduled: Promise<void> | null = null;
+  bb.background.schedule("pr-refresh", "*/3 * * * *", () => {
+    if (scheduled !== null || lifetime.signal.aborted) return;
+    scheduled = refresh().finally(() => (scheduled = null));
+    return scheduled;
+  });
 
   // Backfill active threads once per load, without blocking startup.
   bb.background.service("pr-backfill", {

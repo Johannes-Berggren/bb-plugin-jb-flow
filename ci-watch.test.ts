@@ -4,6 +4,7 @@ import {
   applyCiChanges,
   CI_TIMEOUT_MS,
   evaluateWatch,
+  isGoneError,
   isThreadGone,
   MAX_SEND_FAILURES,
   REVIEW_RECHECK_MS,
@@ -56,7 +57,7 @@ function cycle(watches: Record<string, CiWatch>, pr: PrState, fields: Partial<Ci
   const config: CiCycle = {
     watches,
     now: () => T0,
-    isBusy: async () => false,
+    threadState: async () => "idle",
     readPr: async () => pr,
     me: async () => "me",
     failedLog: noLog,
@@ -190,7 +191,7 @@ test("a message that can never be sent is given up on eventually", async () => {
 test("a busy thread's watches wait, with nothing read or sent", async () => {
   let reads = 0;
   const { config, sent } = cycle({ k: watch() }, prState({ statusCheckRollup: [green] }), {
-    isBusy: async () => true,
+    threadState: async () => "busy",
     readPr: async () => {
       reads += 1;
       return prState();
@@ -298,4 +299,51 @@ test("only proof counts as a thread being gone", async () => {
   assert.equal(await isThreadGone(fail("BbHttpError: HTTP 404: Not found")), true);
   assert.equal(await isThreadGone(fail("BbHttpError: HTTP 503: Unavailable")), false);
   assert.equal(await isThreadGone(fail("socket hang up")), false);
+  assert.equal(await isThreadGone(fail("BbHttpError: HTTP 409: Thread is archived")), true);
+  assert.equal(await isThreadGone(fail("BbHttpError: HTTP 409: Conflict")), false);
+});
+
+test("409 counts as gone only when bb says the thread is archived or deleted", () => {
+  assert.equal(isGoneError(new Error("BbHttpError: HTTP 409: Thread is archived")), true);
+  assert.equal(isGoneError(Object.assign(new Error("Thread is archived"), { status: 409 })), true);
+  assert.equal(isGoneError(new Error("BbHttpError: HTTP 409: Version conflict")), false);
+});
+
+test("an archived thread's watches are all dropped without reading GitHub", async () => {
+  let reads = 0;
+  const watches = {
+    a: watch({ pr: 1 }),
+    b: watch({ pr: 2, watchFor: "reviews" }),
+    other: watch({ threadId: "thr_other", pr: 3 }),
+  };
+  const { config, sent } = cycle(watches, prState(), {
+    threadState: async (threadId) => (threadId === "thr_other" ? "busy" : "gone"),
+    readPr: async () => {
+      reads += 1;
+      return prState();
+    },
+  });
+  const changes = await runCiCycle(config);
+  assert.equal(changes.get("a"), null);
+  assert.equal(changes.get("b"), null);
+  assert.equal(changes.has("other"), false);
+  assert.equal(reads, 0);
+  assert.equal(sent.length, 0);
+});
+
+test("a failed send to a thread that's gone drops its other watches too", async () => {
+  const watches = {
+    done: watch({ pr: 1, watchFor: "checks" }),
+    // Spaced out this cycle, so it isn't staged with the first.
+    later: watch({ pr: 2, watchFor: "reviews", lastCheckedAt: T0 - 60_000 }),
+  };
+  const { config } = cycle(watches, prState({ statusCheckRollup: [green] }), {
+    send: async () => {
+      throw new Error("HTTP 409: Thread is archived");
+    },
+    threadGone: async () => true,
+  });
+  const changes = await runCiCycle(config);
+  assert.equal(changes.get("done"), null);
+  assert.equal(changes.get("later"), null);
 });

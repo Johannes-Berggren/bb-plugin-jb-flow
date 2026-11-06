@@ -9,6 +9,7 @@ import { readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { ghBin } from "./gh";
 
 export const leftoverSchema = z.object({
   path: z.string(),
@@ -34,7 +35,6 @@ function run(bin: string, args: string[], cwd?: string): Promise<string> {
   });
 }
 const gitBin = () => ["/opt/homebrew/bin/git", "/usr/bin/git"].find(existsSync) ?? "git";
-const ghBin = () => ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
 
 async function isFile(path: string): Promise<boolean> {
   return stat(path).then((info) => info.isFile(), () => false);

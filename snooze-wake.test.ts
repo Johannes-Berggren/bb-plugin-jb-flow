@@ -144,3 +144,18 @@ test("with no Snoozed section, a record not yet waking is stale", async () => {
   assert.deepEqual(calls, []);
   assert.equal(result.done.size, 1);
 });
+
+test("one thread whose lookup hangs doesn't hold up the others", async () => {
+  const warnings: string[] = [];
+  const { deps, calls } = fake({
+    lookupTimeoutMs: 20,
+    getThread: (threadId) =>
+      threadId === "slow" ? new Promise(() => undefined) : Promise.resolve({ sectionId: SNOOZED, archivedAt: null }),
+    warn: (message) => warnings.push(message),
+  });
+  const result = await wakeDueSnoozes({ slow: record(), fast: record() }, deps);
+  assert.equal(result.done.has("slow"), false, "a timeout proves nothing: try again next minute");
+  assert.equal(result.done.get("fast"), 500);
+  assert.deepEqual(calls, ["started", "restore"]);
+  assert.match(warnings.join(), /snooze slow: .*timed out/);
+});
