@@ -38,7 +38,8 @@ export const prStatusSchema = z.object({
 });
 export type PrStatus = z.infer<typeof prStatusSchema>;
 type PrRef = { repo: string; number: number };
-type ThreadPrs = { refs: PrRef[]; cursor: number };
+/** `scannedUpdatedAt`: the thread's updatedAt at its last scan; unchanged since means nothing new to read. */
+type ThreadPrs = { refs: PrRef[]; cursor: number; scannedUpdatedAt?: number };
 
 const PR_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
 const key = (ref: PrRef) => `${ref.repo}#${ref.number}`;
@@ -171,6 +172,18 @@ export function onBatchFailure(error: unknown): "split" | "stop" {
   return "split";
 }
 
+/** What the UI shows of the PR map: everything but when each PR was last checked. */
+export function shown(status: Readonly<Record<string, PrStatus>>): string {
+  return JSON.stringify(
+    Object.keys(status)
+      .sort()
+      .map((prKey) => {
+        const { checkedAt: _, ...rest } = status[prKey]!;
+        return [prKey, rest];
+      }),
+  );
+}
+
 export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
   // Aborted when this load is disposed (a reload, disable or update). Work still
@@ -188,13 +201,33 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     const rows = db().prepare(`SELECT ${column} AS id, json FROM ${table}`).all() as Array<{ id: string; json: string }>;
     return Object.fromEntries(rows.map((row) => [row.id, JSON.parse(row.json) as T]));
   }
-  function writeTable(table: "pr_status" | "thread_prs", column: "key" | "thread_id", value: Record<string, unknown>) {
+  // byThread() is read by every state build, the palette and Now; it changes
+  // only when a table is written.
+  let byThreadCache: Promise<Record<string, PrStatus[]>> | null = null;
+  /** Stores `value` as the whole table, writing only the rows that differ. Returns how many did. */
+  function writeTable(table: "pr_status" | "thread_prs", column: "key" | "thread_id", value: Record<string, unknown>): number {
     const handle = db();
-    const insert = handle.prepare(`INSERT INTO ${table} (${column}, json) VALUES (?, ?)`);
+    const upsert = handle.prepare(`INSERT OR REPLACE INTO ${table} (${column}, json) VALUES (?, ?)`);
+    const remove = handle.prepare(`DELETE FROM ${table} WHERE ${column} = ?`);
+    let written = 0;
+    byThreadCache = null;
     handle.transaction(() => {
-      handle.prepare(`DELETE FROM ${table}`).run();
-      for (const [id, entry] of Object.entries(value)) insert.run(id, JSON.stringify(entry));
+      const rows = handle.prepare(`SELECT ${column} AS id, json FROM ${table}`).all() as Array<{ id: string; json: string }>;
+      const stored = new Map(rows.map((row) => [row.id, row.json]));
+      for (const [id, entry] of Object.entries(value)) {
+        const json = JSON.stringify(entry);
+        if (stored.get(id) !== json) {
+          upsert.run(id, json);
+          written += 1;
+        }
+        stored.delete(id);
+      }
+      for (const id of stored.keys()) {
+        remove.run(id);
+        written += 1;
+      }
     })();
+    return written;
   }
   // One-time move out of kv (v0.1.1 and earlier).
   const moved = (async () => {
@@ -225,9 +258,13 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     exclusive(async () => {
       const all = await getThreads();
       const entry = all[threadId] ?? { refs: [], cursor: 0 };
+      const refsBefore = JSON.stringify(entry.refs);
       apply(entry);
       all[threadId] = entry;
       await setThreads(all);
+      // A PR linked or unlinked shows at once, even when its status is already
+      // known and the refresh after it finds nothing new.
+      if (JSON.stringify(entry.refs) !== refsBefore) changed();
       return entry;
     });
   const getStatus = async () => {
@@ -236,7 +273,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   };
 
   /** Reads new completed commands since the thread's cursor and links PRs it created. */
-  async function scan(threadId: string, signal?: AbortSignal): Promise<PrRef[]> {
+  async function scan(threadId: string, signal?: AbortSignal, updatedAt?: number): Promise<PrRef[]> {
     let cursor = (await getThreads())[threadId]?.cursor ?? 0;
     const found: PrRef[] = [];
     for (let page = 0; page < 400; page += 1) {
@@ -259,6 +296,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     if (signal?.aborted || lifetime.signal.aborted) return found;
     await updateThread(threadId, (entry) => {
       entry.cursor = Math.max(entry.cursor, cursor);
+      if (updatedAt !== undefined) entry.scannedUpdatedAt = updatedAt;
       for (const ref of found) if (!entry.refs.some((existing) => key(existing) === key(ref))) entry.refs.push(ref);
     });
     return found;
@@ -324,6 +362,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
 
   async function refreshNow(only: PrRef[] | undefined, signal: AbortSignal) {
     const status = await getStatus();
+    const before = shown(status);
     let refs = only;
     if (refs === undefined) {
       const all = await prune(await liveThreadIds(), status);
@@ -395,11 +434,20 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     // Disposed meanwhile: the storage handle is gone; the next load refreshes again.
     if (lifetime.signal.aborted) return;
     writeTable("pr_status", "key", status);
-    changed();
+    // Open windows re-read all state on a change; a refresh that only moved
+    // checkedAt forward has nothing new to show.
+    if (shown(status) !== before) changed();
   }
 
-  /** PRs per active thread, stack-ordered, for the UI. */
-  async function byThread(): Promise<Record<string, PrStatus[]>> {
+  /** PRs per active thread, stack-ordered, for the UI. Callers must not mutate the result. */
+  function byThread(): Promise<Record<string, PrStatus[]>> {
+    const build = (byThreadCache ??= buildByThread());
+    build.catch(() => {
+      if (byThreadCache === build) byThreadCache = null;
+    });
+    return build;
+  }
+  async function buildByThread(): Promise<Record<string, PrStatus[]>> {
     const all = await getThreads();
     const status = await getStatus();
     const result: Record<string, PrStatus[]> = {};
@@ -417,13 +465,20 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
 
   // When a turn ends, its new PRs appear and its linked PRs show what the
   // turn did to them (merged, closed, new checks) right away.
-  bb.events.on("thread.idle", async ({ thread }) => {
-    const found = await scan(thread.id, lifetime.signal).catch(() => []);
+  /**
+   * One thread's PRs, live: new ones it created, and every linked PR that isn't
+   * settled. For agents and the CLI, so asking about one thread doesn't refresh
+   * every PR of every thread.
+   */
+  async function refreshThread(threadId: string): Promise<void> {
+    const found = await scan(threadId, lifetime.signal).catch(() => []);
     if (lifetime.signal.aborted) return;
-    const linked = (await getThreads())[thread.id]?.refs ?? [];
+    const linked = (await getThreads())[threadId]?.refs ?? [];
     const refs = refsToRefreshAfterTurn(linked, await getStatus(), found);
     if (refs.length > 0) await refresh(refs);
-  });
+  }
+
+  bb.events.on("thread.idle", ({ thread }) => refreshThread(thread.id));
 
   // Single flight: a slow run (GitHub having a bad day) mustn't queue up more
   // full runs behind it; the next tick after it finishes picks up from there.
@@ -442,10 +497,13 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         await kv.set("threadPrsVersion", 2);
       }
       const threads = await listLiveThreads(bb, { signal });
+      const known = await getThreads();
       for (const thread of threads) {
         if (signal.aborted) return;
         if (thread.parentThreadId !== null) continue;
-        await scan(thread.id, signal).catch((error) => {
+        // Untouched since its last scan: no new commands to read.
+        if (known[thread.id]?.scannedUpdatedAt === thread.updatedAt) continue;
+        await scan(thread.id, signal, thread.updatedAt).catch((error) => {
           if (!signal.aborted) bb.log.warn(`pr scan ${thread.id}: ${String(error)}`);
         });
       }
@@ -454,5 +512,5 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     },
   });
 
-  return { scan, link, refresh, byThread, openPrsFor };
+  return { scan, link, refresh, refreshThread, byThread, openPrsFor };
 }
