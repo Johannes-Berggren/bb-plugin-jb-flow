@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { groupBySection, quietFor, sortRows, staleThreads } from "./sidebar-groups.ts";
+import { groupByProject, groupBySection, quietFor, sortRows, staleThreads } from "./sidebar-groups.ts";
 
 const row = (id: string, createdAt: number, updatedAt: number) => ({ id, createdAt, updatedAt });
 const ids = (rows: Array<{ id: string }>) => rows.map((thread) => thread.id);
@@ -52,6 +52,21 @@ test("a match in an unknown section isn't dropped, and no thread shows twice", (
   assert.deepEqual(ids(loose), ["b"]);
   const shown = [...sections.flatMap((group) => ids(group.threads)), ...ids(loose)];
   assert.deepEqual(shown.sort(), ["a", "b"]);
+});
+
+test("threads split by project, newest project first, order kept inside each", () => {
+  const rows = [
+    { id: "a", projectId: "web" },
+    { id: "b", projectId: "api" },
+    { id: "c", projectId: "web" },
+  ];
+  assert.deepEqual(
+    groupByProject(rows).map((group) => [group.projectId, ids(group.threads)]),
+    [
+      ["web", ["a", "c"]],
+      ["api", ["b"]],
+    ],
+  );
 });
 
 const DAY = 86_400_000;

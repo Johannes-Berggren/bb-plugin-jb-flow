@@ -8,6 +8,8 @@ export const workspaceSchema = z.object({
   sectionIds: ids,
   pluginIds: ids,
   sectionOrder: ids,
+  /** Split the unsectioned Active lane into one group per project. */
+  groupByProject: z.boolean().optional(),
 });
 export const workspaceStateSchema = z.object({
   workspaces: z.array(workspaceSchema).max(30),
