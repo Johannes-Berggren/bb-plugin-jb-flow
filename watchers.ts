@@ -10,13 +10,11 @@
 //   plugin polls once for everyone and messages the thread when checks finish,
 //   reviews/comments arrive, or the PR merges. A thread that is still working
 //   is left alone; its news arrives as one message once it goes idle.
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { applyCiChanges, isThreadGone, MAX_SEND_FAILURES, runCiCycle, type CiWatch, type PrState } from "./ci-watch";
+import { applyCiChanges, isGoneError, isThreadGone, MAX_SEND_FAILURES, runCiCycle, type CiWatch, type PrState } from "./ci-watch";
+import { gh as runGh, GH_MISSING } from "./gh";
 import { parseLimitHit } from "./limits";
-import { GH_MISSING, ghError } from "./prs";
 import { RELEASE_WAIT, releaseWaitEnded, releaseWaitStated } from "./release-wait";
 import { deliverToWaiters, deliveryReached, readField } from "./release-delivery";
 import { listLiveThreads } from "./thread-list";
@@ -60,19 +58,6 @@ type Pending = {
   sendFailures?: number;
 };
 type Release = { key: string; prNumber: number | null; title: string; sha: string | null; at: number };
-function ghPath(): string {
-  return ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
-}
-
-function gh(args: string[], timeout = 30_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(ghPath(), args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(ghError(`gh ${args.slice(0, 3).join(" ")}`, error, stderr, 500));
-      else resolve(stdout);
-    });
-  });
-}
-
 /** "{}" for a failed lookup, but a missing gh is reported as such. */
 function orEmpty(error: Error): string {
   if (error.message === GH_MISSING) throw error;
@@ -98,6 +83,11 @@ export function createWatchers(
   threadPrs: (threadId: string) => Promise<ThreadPrRef[]> = async () => [],
 ) {
   const kv = bb.storage.kv;
+  // Aborted on dispose: a running gh is killed, and a cycle stops before its
+  // next bb call instead of hitting the old, dead handle.
+  const lifetime = new AbortController();
+  bb.onDispose(() => lifetime.abort());
+  const gh = (args: string[], timeout = 30_000) => runGh(args, { timeout, signal: lifetime.signal });
   const get = async <T>(key: string, fallback: T): Promise<T> => (await kv.get<T>(key)) ?? fallback;
   // Read-modify-write of one kv record, one at a time per key: a CI check runs
   // for tens of seconds and must not erase a watch registered meanwhile.
@@ -316,6 +306,7 @@ export function createWatchers(
     const seen = await get<Record<string, number>>("seenReleases", {});
 
     for (const projectName of projects) {
+      if (lifetime.signal.aborted) return;
       const repo = await releaseRepo(projectName);
       if (!releaseConfig[projectName] || !repo) continue;
       // 1. New releases become pending until their workflows finish.
@@ -458,9 +449,15 @@ export function createWatchers(
       watches,
       force,
       now: () => Date.now(),
-      isBusy: async (threadId) => {
-        const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
-        return thread !== null && BUSY_STATUSES.has(thread.status);
+      threadState: async (threadId) => {
+        try {
+          const thread = await bb.sdk.threads.get({ threadId });
+          if (thread.archivedAt !== null || thread.deletedAt !== null) return "gone";
+          return BUSY_STATUSES.has(thread.status) ? "busy" : "idle";
+        } catch (error) {
+          // A failed lookup proves nothing; read the PR as usual.
+          return isGoneError(error) ? "gone" : "idle";
+        }
       },
       readPr: async (watch) =>
         JSON.parse(
@@ -472,6 +469,8 @@ export function createWatchers(
       threadGone: (threadId) => isThreadGone(() => bb.sdk.threads.get({ threadId })),
       warn: (message) => bb.log.warn(message),
     });
+    // Disposed meanwhile: the next load checks again from what's stored.
+    if (lifetime.signal.aborted) return;
     // Applied to a fresh read, so watches added during the check survive.
     await update<Record<string, CiWatch>>("ciWatches", {}, (all) => applyCiChanges(all, watches, changes));
     changed();
@@ -532,14 +531,14 @@ export function createWatchers(
   const checkCi = (force = false) => (ciRun ??= checkCiNow(force).finally(() => (ciRun = null)));
 
   bb.background.schedule("release-watch", "*/3 * * * *", async () => {
-    if (releaseRun !== null || Object.keys(releaseConfig).length === 0) return;
+    if (releaseRun !== null || lifetime.signal.aborted || Object.keys(releaseConfig).length === 0) return;
     const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
     const pending = await get<Record<string, Pending>>("pendingReleases", {});
     if (Object.keys(waiters).length + Object.keys(pending).length === 0) return;
     await checkReleases();
   });
   bb.background.schedule("ci-watch", "*/2 * * * *", async () => {
-    if (ciRun !== null || Object.keys(await get<Record<string, CiWatch>>("ciWatches", {})).length === 0) return;
+    if (ciRun !== null || lifetime.signal.aborted || Object.keys(await get<Record<string, CiWatch>>("ciWatches", {})).length === 0) return;
     await checkCi();
   });
 

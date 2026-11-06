@@ -163,13 +163,19 @@ export async function evaluateWatch(
   return { watch, notes, done, report };
 }
 
+export type ThreadState = "busy" | "idle" | "gone";
+
 export type CiCycle = {
   /** The stored watches this cycle works from. */
   watches: Record<string, CiWatch>;
   /** Read every watch now, ignoring the review-only spacing (`check-now`). */
   force?: boolean;
   now: () => number;
-  isBusy: (threadId: string) => Promise<boolean>;
+  /**
+   * "busy" while the thread works, "gone" once it's archived or deleted (only
+   * when known for sure, not on a failed lookup), else "idle".
+   */
+  threadState: (threadId: string) => Promise<ThreadState>;
   readPr: (watch: CiWatch) => Promise<PrState>;
   me: () => Promise<string>;
   failedLog: (detailsUrl: string | undefined, repo: string) => Promise<string>;
@@ -197,11 +203,20 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
   // A working agent checks its PRs itself (pr_status). Its watches stay as they
   // are until it goes idle; the first idle cycle then reports the current checks
   // and every review since the last report, in one message.
-  const busy = new Map<string, boolean>();
+  const states = new Map<string, ThreadState>();
+  // An archived or deleted thread has no one to tell: drop all its watches
+  // without reading GitHub for them.
+  const dropThread = (threadId: string) => {
+    for (const [key, watch] of Object.entries(watches)) if (watch.threadId === threadId) changes.set(key, null);
+  };
 
   for (const [key, watch] of Object.entries(watches)) {
-    if (!busy.has(watch.threadId)) busy.set(watch.threadId, await cycle.isBusy(watch.threadId));
-    if (busy.get(watch.threadId)) continue;
+    if (!states.has(watch.threadId)) {
+      const state = await cycle.threadState(watch.threadId);
+      states.set(watch.threadId, state);
+      if (state === "gone") dropThread(watch.threadId);
+    }
+    if (states.get(watch.threadId) !== "idle") continue;
     // Before the read: a review landing during it stays newer than this cutoff.
     const now = cycle.now();
     const lastChecked = watch.lastCheckedAt;
@@ -253,10 +268,13 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
     } catch (error) {
       cycle.warn(`ci notify: ${String(error)}`);
       const gone = await cycle.threadGone(threadId);
+      if (gone) {
+        dropThread(threadId);
+        continue;
+      }
       for (const key of entry.staged.keys()) {
         const failures = (watches[key]!.sendFailures ?? 0) + 1;
-        if (gone) changes.set(key, null);
-        else if (failures >= MAX_SEND_FAILURES) {
+        if (failures >= MAX_SEND_FAILURES) {
           cycle.warn(`ci ${key}: dropped after ${failures} failed sends`);
           changes.set(key, null);
         } else changes.set(key, { ...watches[key]!, sendFailures: failures });
@@ -293,10 +311,15 @@ function httpStatus(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** A failed lookup that proves the thread is gone. Anything else (a timeout, a 503) proves nothing. */
+/**
+ * A failed call that proves the thread is gone: not found, or bb refusing it
+ * because it's archived ("HTTP 409: Thread is archived"). Anything else (a
+ * timeout, a 503) proves nothing.
+ */
 export function isGoneError(error: unknown): boolean {
   const status = httpStatus(error);
-  return status === 404 || status === 410;
+  if (status === 404 || status === 410) return true;
+  return status === 409 && /\b(archived|deleted)\b/i.test(String((error as { message?: unknown } | null)?.message ?? error));
 }
 
 /** Whether a thread is known to be gone. */

@@ -25,7 +25,20 @@ export type WakeDeps<R extends SnoozeRecord> = {
   restore: (threadId: string, record: R) => Promise<void>;
   sendNote: (threadId: string, note: string) => Promise<void>;
   warn: (message: string) => void;
+  /** Longest wait for one thread's lookup, so one slow thread can't hold up the rest. */
+  lookupTimeoutMs?: number;
 };
+
+/** Default for `lookupTimeoutMs`. */
+export const LOOKUP_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 export type WakeResult = {
   /** Thread id → the snoozedAt of the record to remove. */
@@ -40,7 +53,7 @@ export async function wakeDueSnoozes<R extends SnoozeRecord>(snoozes: Record<str
   for (const [threadId, record] of Object.entries(snoozes)) {
     let thread: { sectionId: string | null; archivedAt: number | null };
     try {
-      thread = await deps.getThread(threadId);
+      thread = await withTimeout(deps.getThread(threadId), deps.lookupTimeoutMs ?? LOOKUP_TIMEOUT_MS, "thread lookup");
     } catch (error) {
       // Only a thread that's really gone ends its snooze; a failed lookup is tried again next minute.
       if (deps.isGoneError(error)) result.done.set(threadId, record.snoozedAt);
