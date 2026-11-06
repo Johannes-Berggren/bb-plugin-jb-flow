@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
-import { createAwaiting, waitsOnOthers } from "./awaiting";
+import { createAwaiting } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { nextAfter, nowQueue, reasonLabel, serverNowThread } from "./now-model";
@@ -252,7 +252,8 @@ export const rpcContract = defineRpcContract({
     }),
   },
   thread_reply: {
-    input: z.object({ threadId: z.string(), text: z.string().min(1).max(2000) }),
+    // Room for a long status report prompt; bb takes far longer messages than this.
+    input: z.object({ threadId: z.string(), text: z.string().min(1).max(20_000) }),
     output: z.object({ ok: z.boolean() }),
   },
   your_move: {
@@ -593,21 +594,25 @@ export default async function plugin(bb: BbPluginApi) {
     return record;
   }
 
-  async function wake(threadId: string, record: Snooze, reason: "due" | "manual"): Promise<void> {
-    const sections = await bb.sdk.threadSections.list();
-    let restoreTo =
-      record.fromSectionId !== null &&
-      sections.some((section) => section.id === record.fromSectionId)
-        ? record.fromSectionId
-        : null;
+  /** What a wake needs to know about sections and hand-backs; read once per pass. */
+  type WakeContext = { sectionIds: Set<string>; waitingSectionId: string | null; waitingOthers: Record<string, number> };
+  async function wakeContext(reason: "due" | "manual"): Promise<WakeContext> {
+    const [sections, lanes, waitingOthers] = await Promise.all([
+      bb.sdk.threadSections.list(),
+      reason === "due" ? laneSections(bb) : Promise.resolve({ waiting: undefined }),
+      reason === "due" ? awaiting.waitingOthers() : Promise.resolve({}),
+    ]);
+    return { sectionIds: new Set(sections.map((section) => section.id)), waitingSectionId: lanes.waiting ?? null, waitingOthers };
+  }
+
+  async function wake(threadId: string, record: Snooze, reason: "due" | "manual", context?: WakeContext): Promise<void> {
+    const { sectionIds, waitingSectionId, waitingOthers } = context ?? (await wakeContext(reason));
+    let restoreTo = record.fromSectionId !== null && sectionIds.has(record.fromSectionId) ? record.fromSectionId : null;
     // Snoozed while waiting on someone ("when it wakes, I'll check for Sam's
-    // reply"): wake into Waiting for others instead of the old section.
+    // reply"): wake into Waiting for others instead of the old section. The
+    // flag is set when the thread went idle, from its last reply.
     // Only for a snooze that ran out; cancelling one puts the thread back where it was.
-    const { waiting } = reason === "due" ? await laneSections(bb) : { waiting: null };
-    if (waiting) {
-      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      if (waitsOnOthers(output.output ?? "")) restoreTo = waiting;
-    }
+    if (reason === "due" && waitingSectionId !== null && threadId in waitingOthers) restoreTo = waitingSectionId;
     await bb.sdk.threads.update({ threadId, sectionId: restoreTo });
     if (reason === "due") await bb.sdk.threads.markUnread({ threadId });
   }
@@ -625,20 +630,41 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
 
-  async function wakeDue(): Promise<number> {
+  // Single flight: the check runs every minute, and a slow one (bb busy) must
+  // not overlap the next and send a snooze note twice.
+  let wakeRun: Promise<number> | null = null;
+  const wakeDue = () => (wakeRun ??= wakeDueNow().finally(() => (wakeRun = null)));
+
+  async function wakeDueNow(): Promise<number> {
     const snoozes = await getSnoozes();
     if (Object.keys(snoozes).length === 0) return 0;
+    // No section (never created, or deleted): nothing can be in it.
+    const snoozedSectionId = await findSnoozedSection();
+    // One list of what's in Snoozed instead of a lookup per snoozed thread each
+    // minute; only threads that left it are looked up one by one.
+    const inSnoozed = new Map(
+      snoozedSectionId === null
+        ? []
+        : (await listLiveThreads(bb, { sectionId: snoozedSectionId }).catch(() => [])).map((thread) => [thread.id, thread]),
+    );
+    let context: Promise<WakeContext> | null = null;
     const { done, noteFailures, woken } = await wakeDueSnoozes(snoozes, {
       now: () => Date.now(),
-      // No section (never created, or deleted): nothing can be in it.
-      snoozedSectionId: await findSnoozedSection(),
-      getThread: (threadId) => bb.sdk.threads.get({ threadId }),
+      snoozedSectionId,
+      getThread: async (threadId) => inSnoozed.get(threadId) ?? bb.sdk.threads.get({ threadId }),
       isGoneError,
       markStarted: (threadId, record) =>
         updateSnoozes((all) => {
           if (all[threadId]?.snoozedAt === record.snoozedAt) all[threadId] = { ...all[threadId]!, wakeStarted: true };
         }),
-      restore: (threadId, record) => wake(threadId, record, "due"),
+      restore: async (threadId, record) => {
+        // A failed read isn't kept: the next thread in this pass tries again.
+        context ??= wakeContext("due").catch((error: unknown) => {
+          context = null;
+          throw error;
+        });
+        await wake(threadId, record, "due", await context);
+      },
       sendNote: async (threadId, note) => {
         await bb.sdk.threads.send({
           threadId,
@@ -846,25 +872,59 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
 
   let stateBuild: Promise<FlowState> | null = null;
   async function buildState(): Promise<FlowState> {
+    // Independent reads; one round trip instead of seventeen in a row.
+    const [
+      awaitingAll,
+      promised,
+      waitingOthers,
+      readyToGo,
+      sectionOrder,
+      sectionProjects,
+      lanes,
+      machineMap,
+      threadPrs,
+      watching,
+      snoozedSectionId,
+      snoozes,
+      tags,
+      focused,
+      due,
+    ] = await Promise.all([
+      awaiting.all(),
+      awaiting.promised(),
+      awaiting.waitingOthers(),
+      awaiting.readyToGo(),
+      bb.storage.kv.get<string[]>("sectionOrder"),
+      bb.storage.kv.get<Record<string, string>>("sectionProjects"),
+      laneSections(bb),
+      machines.read(),
+      prTracker.byThread(),
+      watchingByThread(),
+      findSnoozedSection(),
+      getSnoozes(),
+      getTags(),
+      nowStore.all(),
+      nowStore.dueAll(),
+    ]);
     return {
-      awaiting: await awaiting.all(),
-      promised: await awaiting.promised(),
-      waitingOthers: await awaiting.waitingOthers(),
-      readyToGo: await awaiting.readyToGo(),
-      sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
-      sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
-      laneSections: await laneSections(bb),
-      machines: await machines.read(),
-      threadPrs: await prTracker.byThread(),
+      awaiting: awaitingAll,
+      promised,
+      waitingOthers,
+      readyToGo,
+      sectionOrder: sectionOrder ?? [],
+      sectionProjects: sectionProjects ?? {},
+      laneSections: lanes,
+      machines: machineMap,
+      threadPrs,
       running: activity.snapshot(),
-      watching: await watchingByThread(),
+      watching,
       projectShortNames: localConfig.projectShortNames,
       stripProjectPrefixes: localConfig.stripProjectPrefixes,
-      snoozedSectionId: await findSnoozedSection(),
-      snoozes: await getSnoozes(),
-      tags: await getTags(),
-      focused: await nowStore.all(),
-      due: await nowStore.dueAll(),
+      snoozedSectionId,
+      snoozes,
+      tags,
+      focused,
+      due,
     };
   }
 
@@ -1151,12 +1211,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     instructions:
       "To check the state of this thread's PRs, call pr_status (one call, all repos) instead of gh pr view / gh pr checks. Use gh only to read full review comments or logs.",
     parameters: z.object({
-      refresh: z.boolean().optional().describe("Fetch live state first (one batched GitHub query)"),
+      refresh: z.boolean().optional().describe("Fetch this thread's PRs live first (one batched GitHub query)"),
     }),
     async execute({ refresh }, ctx) {
       if (refresh) {
-        await prTracker.scan(ctx.threadId);
-        await prTracker.refresh();
+        await prTracker.refreshThread(ctx.threadId);
       }
       const prs = (await prTracker.byThread())[ctx.threadId] ?? [];
       if (prs.length === 0) return "No PRs linked to this thread. PRs opened with gh pr create are linked automatically; others via `bb jb-flow pr-link <url> --self`.";
@@ -1517,8 +1576,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
           case "prs": {
             const threadId = resolveThread(args[0] ?? "--self");
             if (threadId === undefined) break;
-            await prTracker.scan(threadId);
-            await prTracker.refresh();
+            await prTracker.refreshThread(threadId);
             const prs = (await prTracker.byThread())[threadId] ?? [];
             if (json) return { exitCode: 0, stdout: JSON.stringify(prs) };
             const lines = prs.map(

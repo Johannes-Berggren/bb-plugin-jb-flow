@@ -572,8 +572,9 @@ export function ActivityCard({
     setStatusError(null);
     try {
       await onRequestStatus();
-    } catch {
-      setStatusError("Could not request status. Try again.");
+    } catch (cause) {
+      const reason = cause instanceof Error && cause.message ? cause.message.slice(0, 160) : "";
+      setStatusError(`Could not request status${reason ? `: ${reason}` : ""}. Try again.`);
     } finally {
       setRequesting(false);
     }

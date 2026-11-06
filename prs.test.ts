@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createdPrs, orderStack, refsToRefreshAfterTurn, type PrStatus } from "./prs.ts";
+import { createdPrs, orderStack, refsToRefreshAfterTurn, shown, type PrStatus } from "./prs.ts";
 
 const pr = (number: number, base: string, head: string, repo = "o/a"): PrStatus => ({
   repo, number, title: `#${number}`, url: "", state: "open", attention: "review_requested",
@@ -53,4 +53,13 @@ test("a PR the thread already had is re-checked when its turn ends", () => {
   const refs = refsToRefreshAfterTurn(linked, status, created).map((ref) => `${ref.repo}#${ref.number}`).sort();
   assert.deepEqual(refs, ["acme/billing-api#4", "acme/web-app#12", "acme/web-app#30", "acme/web-app#31"]);
   assert.deepEqual(refsToRefreshAfterTurn([{ repo: "acme/web-app", number: 9 }], status, []), []);
+});
+
+test("a refresh that only moved checkedAt shows nothing new", () => {
+  const pr: PrStatus = {
+    repo: "acme/web-app", number: 7, title: "Faster exports", url: "https://github.com/acme/web-app/pull/7",
+    state: "open", attention: "checks_pending", base: "main", head: "exports", stackedOn: null, checkedAt: 1,
+  };
+  assert.equal(shown({ "acme/web-app#7": pr }), shown({ "acme/web-app#7": { ...pr, checkedAt: 2 } }));
+  assert.notEqual(shown({ "acme/web-app#7": pr }), shown({ "acme/web-app#7": { ...pr, attention: "ready_to_merge" } }));
 });

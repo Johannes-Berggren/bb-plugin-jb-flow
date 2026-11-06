@@ -7,7 +7,7 @@
 // "Merge pull request #123" merges), with details from one GraphQL query.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { gh, ghGraphql } from "./prs.ts";
+import { gh, ghGraphql } from "./gh.ts";
 
 export const unreleasedSchema = z.object({
   repo: z.string().nullable(),
@@ -42,7 +42,7 @@ export function prFromSubject(subject: string): number | "skip" | null {
   return squash ? Number(squash[1]) : null;
 }
 
-const api = async <T>(path: string): Promise<T> => JSON.parse(await gh(["api", path])) as T;
+const api = async <T>(path: string): Promise<T> => JSON.parse(await gh(["api", path], { timeout: 60_000 })) as T;
 const exists = (path: string) => api<{ name?: string }>(path).then((value) => value, () => null);
 
 async function findBase(repo: string, head: string): Promise<{ base: string; baseKind: "branch" | "tag" } | null> {
@@ -72,7 +72,7 @@ async function prDetails(repo: string, numbers: number[]): Promise<GqlPr[]> {
     const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${fields} } }`;
     // An issue number in a commit subject ("(#123)") resolves to null with an
     // error; the PRs around it still come back.
-    const data = await ghGraphql<{ repository?: Record<string, GqlPr | null> }>(query);
+    const data = await ghGraphql<{ repository?: Record<string, GqlPr | null> }>(query, { timeout: 60_000 });
     out.push(...Object.values(data.repository ?? {}).filter((pr): pr is GqlPr => pr !== null));
   }
   return out;
