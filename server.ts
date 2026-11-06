@@ -420,7 +420,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Copy buttons on code",
       description: "Hovering an inline code snippet in a chat message shows a button that copies it.",
-      default: true,
+      default: false,
     },
     advancedConfig: {
       type: "string",

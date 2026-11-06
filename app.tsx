@@ -464,7 +464,7 @@ function CatchUpWithFlow({ onClose }: { onClose: () => void }) {
 function CommandHost() {
   const settings = useSettings().values;
   const expandPlans = settings?.expandPlans === true;
-  const copyCode = settings?.copyCode !== false;
+  const copyCode = settings?.copyCode === true;
   const nowOn = settings?.nowQueue === true;
   const focusLimit = focusLimitOf(settings?.focusLimit);
   useEffect(() => {
