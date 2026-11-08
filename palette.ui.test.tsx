@@ -477,6 +477,36 @@ describe("palette scopes and memory", () => {
   });
 });
 
+describe("palette keyboard", () => {
+  it("focuses the search field on open, even when something grabs focus first", async () => {
+    const slot = await mount();
+    const input = await openPalette(slot);
+    // What the compact drawer does: focus its own panel after the palette mounted.
+    (input.closest("[role=dialog]") as HTMLElement | null)?.focus();
+    await waitFor(() => expect(document.activeElement).toBe(input));
+  });
+
+  it("arrow keys and Enter work when focus is elsewhere in the palette, and typing goes to the search field", async () => {
+    const slot = await mount();
+    const input = await openPalette(slot);
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    const list = slot.getByRole("listbox", { name: "Results" });
+    list.tabIndex = -1;
+    list.focus();
+    fireEvent.keyDown(list, { key: "ArrowDown" });
+    fireEvent.keyDown(list, { key: "Enter" });
+    await waitFor(() => expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "b" }));
+
+    const again = await openPalette(slot);
+    await waitFor(() => expect(document.activeElement).toBe(again));
+    const results = slot.getByRole("listbox", { name: "Results" });
+    results.tabIndex = -1;
+    results.focus();
+    fireEvent.keyDown(results, { key: "w" });
+    expect(document.activeElement).toBe(again);
+  });
+});
+
 describe("palette preview", () => {
   it("previews the selected thread beside the results on wide windows", async () => {
     // Last in this file: the media-query store caches the stub.

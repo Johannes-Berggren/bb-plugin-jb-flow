@@ -395,6 +395,26 @@ export function Palette({
   const [frecency, setFrecency] = useState<Frecency>(() => readJson<Frecency>(FRECENCY_KEY, {}));
   const recent = useMemo(() => readJson<string[]>(RECENT_KEY, []), []);
   const inputRef = useRef<HTMLInputElement>(null);
+  // The search field has focus when the palette opens. The dialog's own focus
+  // handling runs after this component's effects (the compact drawer focuses
+  // its panel), so wait a frame, and once more for a late focus grab.
+  useEffect(() => {
+    const focusField = () => {
+      const field = inputRef.current;
+      if (field === null || field.ownerDocument.activeElement === field) return;
+      field.focus({ preventScroll: true });
+      if (restored) field.select();
+    };
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      focusField();
+      second = requestAnimationFrame(focusField);
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [restored]);
   const listId = useId();
   const level = levels.at(-1) ?? null;
   // Closing without running keeps the top-level query for REOPEN_MS.
@@ -949,11 +969,25 @@ export function Palette({
     setActiveId(null);
   };
 
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+  // On the whole palette, not just the search field: arrows and Enter work
+  // wherever focus is inside it, and typing anywhere goes to the search field.
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.nativeEvent.isComposing) return;
-    const field = event.currentTarget;
-    const caretAtEnd = field.selectionStart === field.value.length && field.selectionEnd === field.value.length;
-    const caretAtStart = field.selectionStart === 0 && field.selectionEnd === 0;
+    const field = inputRef.current;
+    if (field === null) return;
+    const inField = event.target === field;
+    if (!inField) {
+      // Leave buttons and links their own Enter and Space.
+      const control = event.target instanceof HTMLElement && event.target.closest("button, a, [role=button]") !== null;
+      if (control && (event.key === "Enter" || event.key === " ")) return;
+      // A printable key lands in the search field.
+      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        field.focus();
+        return;
+      }
+    }
+    const caretAtEnd = !inField || (field.selectionStart === field.value.length && field.selectionEnd === field.value.length);
+    const caretAtStart = !inField || (field.selectionStart === 0 && field.selectionEnd === 0);
     const move = (delta: number) => {
       event.preventDefault();
       if (rows.length === 0) return;
@@ -994,6 +1028,10 @@ export function Palette({
         }
         return;
       case "Backspace":
+        if (!inField) {
+          field.focus();
+          return;
+        }
         if (field.value === "" && (level !== null || scope !== "all")) {
           event.preventDefault();
           if (!back()) setScope("all");
@@ -1028,6 +1066,7 @@ export function Palette({
       <DialogContent
         hideCloseButton
         className={cn("jf-palette top-[12%] translate-y-0 gap-0 overflow-hidden p-0 sm:rounded-xl", wide ? "max-w-[1000px]" : "max-w-[680px]")}
+        onKeyDown={onKeyDown}
         onEscapeKeyDown={(event) => {
           if (levels.length > 0) event.preventDefault();
         }}
@@ -1071,7 +1110,6 @@ export function Palette({
             spellCheck={false}
             autoComplete="off"
             onChange={(event) => onQuery(event.target.value)}
-            onKeyDown={onKeyDown}
           />
           {shortcut ? <kbd className="jf-palette-kbd" title="Closes the palette">{shortcutLabel(shortcut, platform)}</kbd> : null}
         </div>
