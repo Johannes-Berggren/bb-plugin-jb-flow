@@ -198,6 +198,11 @@ test("the sidebar's thread maps onto the queue's shape", () => {
   assert.equal(sidebarNowThread({ ...base, status: "stopping" }, true).busy, true);
   assert.equal(sidebarNowThread(base, true).snoozed, true);
   assert.equal(sidebarNowThread(base, false).attentionAt, 5);
+  // A reply waiting in the queue: the next move is the agent's, not yours.
+  assert.equal(sidebarNowThread({ ...base, queuedWork: "waiting" }, false).busy, true);
+  assert.equal(sidebarNowThread({ ...base, queuedWork: "failed" }, false).busy, false);
+  assert.equal(serverNowThread({ id: "t", status: "idle", hasPendingInteraction: false, latestAttentionAt: 5, lastReadAt: 1, createdAt: 0, queuedWork: "waiting" }, false).busy, true);
+  assert.equal(ballState(sidebarNowThread({ ...base, queuedWork: "waiting" }, false), flow({ awaiting: { t: 1 } }), NOW), "running");
 });
 
 const due = (at: number) => ({ at, reason: null, source: "agent" as const, setAt: 0 });

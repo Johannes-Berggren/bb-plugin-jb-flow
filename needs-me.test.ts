@@ -30,3 +30,11 @@ test("an ask you've read, or one on a thread still working, doesn't", () => {
   assert.equal(needsMe(thread(), { t: 1 }), false);
   assert.equal(needsMe(thread({ isUnread: true, status: "active" }), { t: 1 }), false);
 });
+
+test("an ask you've already answered with a queued message doesn't", () => {
+  assert.equal(needsMe(thread({ isUnread: true, queuedWork: "waiting" }), { t: 1 }), false);
+  // A queued message doesn't answer a prompt or a permission request.
+  assert.equal(needsMe(thread({ hasPendingInteraction: true, queuedWork: "waiting" }), { t: 1 }), true);
+  // A message that failed to send leaves the ask with you.
+  assert.equal(needsMe(thread({ isUnread: true, queuedWork: "failed" }), { t: 1 }), true);
+});
