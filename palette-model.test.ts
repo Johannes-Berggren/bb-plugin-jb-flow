@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   frecencyBoost,
   home,
+  onlyInWorkspace,
   matchToken,
   matchesShortcut,
   parseQuery,
@@ -366,3 +367,42 @@ test("threads come first, then message matches, ahead of PRs and places that mat
   assert.ok(noTitle.indexOf("prs") > 0 && noTitle.indexOf("places") > 0);
 });
 
+
+test("inside a workspace, only its threads, their messages and their PRs are searched", () => {
+  const all = input({
+    threads: [thread("t1", "Fix exports"), thread("t2", "Fix invoices", { projectId: "p2" })],
+    workspaces: [{ id: "web", name: "Web" }],
+    selectedWorkspace: "web",
+    recent: ["t2", "t1"],
+    flow: {
+      ...input().flow!,
+      threadPrs: { t1: [pr(1, "checks_failed", { title: "Fix exports" })], t2: [pr(2, "checks_failed", { title: "Fix invoices" })] },
+    },
+    server: [
+      { threadId: "t2", title: "Fix invoices", projectId: "p2", archived: false, updatedAt: NOW, snippet: null },
+      { threadId: "old1", title: "Fix exports, take one", projectId: "p1", archived: true, updatedAt: NOW, snippet: null },
+      { threadId: "old2", title: "Fix invoices, take one", projectId: "p2", archived: true, updatedAt: NOW, snippet: null },
+    ],
+  });
+  // Web owns project p1.
+  const scoped = onlyInWorkspace(all, (_threadId, projectId) => projectId === "p1");
+  assert.deepEqual(scoped.threads.map((t) => t.id), ["t1"]);
+  assert.deepEqual(scoped.recent, ["t1"]);
+  assert.deepEqual(Object.keys(scoped.flow!.threadPrs), ["t1"]);
+  assert.deepEqual(scoped.server!.map((hit) => hit.threadId), ["old1"]);
+
+  const found = search(scoped, "all", "fix").flatMap((section) => section.items.map((item) => item.id));
+  assert.equal(found.some((id) => id.includes("t2") || id.includes("/pull/2")), false);
+  assert.equal(found.includes("thread:t1"), true);
+});
+
+test("a loaded thread moved out of the workspace stays out, even when its project belongs", () => {
+  const all = input({
+    threads: [thread("t1", "Fix exports")],
+    server: [{ threadId: "t1", title: "Fix exports", projectId: "p1", archived: false, updatedAt: NOW, snippet: null }],
+  });
+  // t1 was moved to another workspace by hand: belongs says no for it, yes for its project.
+  const scoped = onlyInWorkspace(all, (threadId, projectId) => threadId !== "t1" && projectId === "p1");
+  assert.deepEqual(scoped.threads, []);
+  assert.deepEqual(scoped.server, []);
+});

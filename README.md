@@ -72,10 +72,13 @@ again or Escape to close it.
 - **An empty query shows your triage.** Sections: *Now* (with **Now and Focus** on, in the sidebar's order), *Needs you* (oldest first),
   *Running*, *PRs to act on* (failing checks, changes requested, conflicts, ready to
   merge), *Recent* (the threads you visited) and *This thread*.
+- **Inside a workspace tab, the palette searches that workspace.** Its threads, their
+  messages (archived ones too) and their PRs; threads in other workspaces stay out, as in
+  the sidebar. Workspaces, projects and actions are still listed, so you can switch. On
+  *All* it searches everything.
 - **Typing searches everything at once.**
   - Threads match on their title, project, branch, PR numbers and titles, tags,
-    workspace and section. Threads in your current workspace, the ones you pick often
-    and the ones waiting on you rank first.
+    workspace and section. The ones you pick often and the ones waiting on you rank first.
   - BB's full-text search adds message matches, with snippets, and archived threads.
   - Pull requests, workspaces, projects and actions are ranked into the same list,
     below the threads: thread title matches first, then message matches.

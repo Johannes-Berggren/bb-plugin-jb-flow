@@ -46,6 +46,7 @@ import {
   type Section,
   type ServerHit,
   type Shortcut,
+  onlyInWorkspace,
 } from "./palette-model";
 import { resolveLanes } from "./lanes";
 import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
@@ -416,6 +417,19 @@ export function Palette({
     [threads, workspaceState],
   );
   const workspaces = workspacesOn ? workspaceState.workspaces : [];
+  // Inside a workspace tab the palette searches that workspace, as the sidebar shows it.
+  const scopeWorkspace = workspacesOn ? selectedWorkspace : null;
+  const scopeName =
+    scopeWorkspace === null
+      ? null
+      : scopeWorkspace === "unassigned"
+        ? "No workspace"
+        : (workspaces.find((workspace) => workspace.id === scopeWorkspace)?.name ?? null);
+  const belongs = useCallback(
+    (threadId: string, projectId: string) =>
+      inWorkspace(threadsById.get(threadId) ?? { id: threadId, projectId, sectionId: null, parentThreadId: null }, scopeWorkspace, workspaceState, threads),
+    [threadsById, scopeWorkspace, workspaceState, threads],
+  );
   const lanes = useMemo(() => resolveLanes(threadSections, flow?.laneSections), [threadSections, flow?.laneSections]);
   const current = context.threadId ? (threadsById.get(context.threadId) ?? null) : null;
   const parsed = parseQuery(query);
@@ -763,7 +777,7 @@ export function Palette({
         ? threadEntries(level.mode.thread, modeReplies, modeHostActions, query)
         : level.mode.entries;
   const entriesById = new Map<string, Entry>((levelEntries ?? appEntries).map((entry) => [entry.id, entry]));
-  const input: PaletteInput = {
+  const everything: PaletteInput = {
     threads,
     projects,
     sections: threadSections,
@@ -780,6 +794,7 @@ export function Palette({
     files,
     now,
   };
+  const input = scopeWorkspace === null ? everything : onlyInWorkspace(everything, belongs);
   let sections: Section[];
   if (levelEntries !== null) {
     const pinned = levelEntries.filter((entry) => entry.pinned);
@@ -1002,7 +1017,9 @@ export function Palette({
         : scope === "files"
           ? "Search files in this thread's checkout…"
           : scope === "all"
-          ? "Search threads, messages, PRs, workspaces and actions…"
+          ? scopeName !== null
+            ? `Search ${scopeName}: threads, messages, PRs and actions…`
+            : "Search threads, messages, PRs, workspaces and actions…"
           : `Search ${SCOPE_LABEL[scope].toLowerCase()}…`;
   const hint = rowHint(active, entriesById, mod);
 
