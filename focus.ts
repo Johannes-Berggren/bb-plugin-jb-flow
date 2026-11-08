@@ -6,6 +6,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { listLiveThreads } from "./thread-list";
+import { replyQueued } from "./needs-me";
 
 export const focusReportSchema = z.object({
   clientId: z.string().min(1).max(64),
@@ -34,6 +35,7 @@ export function needsAttention(thread: Thread, awaiting: Record<string, number>)
     thread.hasPendingInteraction ||
     (thread.status === "idle" &&
       awaiting[thread.id] !== undefined &&
+      !replyQueued(thread) &&
       thread.latestAttentionAt !== null &&
       (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt))
   );

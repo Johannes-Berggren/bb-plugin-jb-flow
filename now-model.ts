@@ -4,6 +4,7 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
 import { formatDue } from "./when.ts";
+import { replyQueued } from "./needs-me.ts";
 
 /** Who holds the thread. Checked in this order, see `ballState`. */
 export type BallState =
@@ -235,12 +236,13 @@ function holderLabel(entry: NowEntry, flow: NowFlow, now: number): string {
 
 /** The sidebar's view of a thread, in the shape the queue reads. */
 export function sidebarNowThread(
-  thread: Pick<PluginSidebarThread, "id" | "status" | "indicator" | "hasPendingInteraction" | "isUnread" | "latestAttentionAt">,
+  thread: Pick<PluginSidebarThread, "id" | "status" | "indicator" | "hasPendingInteraction" | "isUnread" | "latestAttentionAt"> & { queuedWork?: string },
   snoozed: boolean,
 ): NowThread {
   return {
     id: thread.id,
-    busy: thread.status === "active" || thread.status === "starting" || thread.status === "stopping",
+    // A reply waiting in the queue counts as running: the next move is the agent's.
+    busy: thread.status === "active" || thread.status === "starting" || thread.status === "stopping" || replyQueued(thread),
     blocked:
       thread.hasPendingInteraction || thread.indicator === "waiting-for-input"
         ? "input"
@@ -255,12 +257,12 @@ export function sidebarNowThread(
 
 /** The server's view of a thread, which has read times rather than an unread flag. */
 export function serverNowThread(
-  thread: { id: string; status: string; hasPendingInteraction: boolean; latestAttentionAt: number | null; lastReadAt: number | null; createdAt: number },
+  thread: { id: string; status: string; hasPendingInteraction: boolean; latestAttentionAt: number | null; lastReadAt: number | null; createdAt: number; queuedWork?: string },
   snoozed: boolean,
 ): NowThread {
   return {
     id: thread.id,
-    busy: thread.status === "active" || thread.status === "starting" || thread.status === "stopping",
+    busy: thread.status === "active" || thread.status === "starting" || thread.status === "stopping" || replyQueued(thread),
     blocked: thread.hasPendingInteraction ? "input" : thread.status === "error" ? "failed" : null,
     isUnread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
     snoozed,

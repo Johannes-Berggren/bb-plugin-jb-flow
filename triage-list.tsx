@@ -11,7 +11,7 @@ import { useSidebarThreadActions } from "./thread-actions";
 import { allSettled, threadPrs, useNow } from "./ui-extras";
 import { groupBySection, quietFor, sortRows } from "./sidebar-groups";
 import { resolveLanes, sectionNames } from "./lanes";
-import { needsMe } from "./needs-me";
+import { needsMe, replyQueued } from "./needs-me";
 import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Glyph } from "@/components/ui/glyph";
@@ -377,6 +377,7 @@ export function TriageThreadList({
     // Promised to report back, but nothing is running and nothing is watching for it.
     const isStalled = (thread: PluginSidebarThread) =>
       !busy(thread) &&
+      !replyQueued(thread) &&
       state?.promised[thread.id] !== undefined &&
       state?.watching[thread.id] === undefined &&
       quietFor(thread, Date.now()) > STALLED_AFTER_MS;
@@ -385,8 +386,8 @@ export function TriageThreadList({
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
       needs,
       stalled: (thread) => isStalled(thread),
-      yourMove: (thread) => !busy(thread) && !needs(thread) && state?.awaiting[thread.id] !== undefined,
-      readyToGo: (thread) => !busy(thread) && !needs(thread) && state?.readyToGo?.[thread.id] !== undefined,
+      yourMove: (thread) => !busy(thread) && !replyQueued(thread) && !needs(thread) && state?.awaiting[thread.id] !== undefined,
+      readyToGo: (thread) => !busy(thread) && !replyQueued(thread) && !needs(thread) && state?.readyToGo?.[thread.id] !== undefined,
       running: busy,
       prAction: (thread) =>
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),

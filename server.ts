@@ -30,6 +30,7 @@ import { wakeDueSnoozes } from "./snooze-wake";
 import { quietFor, staleThreads } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
+import { replyQueued } from "./needs-me";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
 const CHANGED = "jb-flow-changed";
@@ -836,7 +837,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const byId = new Map((await listAllActiveThreads()).map((thread) => [thread.id, thread]));
     const candidates = Object.entries(waiting).flatMap(([threadId, since]) => {
       const thread = byId.get(threadId);
-      if (!thread || thread.status !== "idle" || (snoozedSection !== null && thread.sectionId === snoozedSection)) return [];
+      if (!thread || thread.status !== "idle" || replyQueued(thread) || (snoozedSection !== null && thread.sectionId === snoozedSection)) return [];
       return [{ thread, since }];
     });
     const asks = new Map<string, string>();
