@@ -174,7 +174,7 @@ describe("Catch up", () => {
     expect(title()).toBe("Fix billing export");
     expect(deck().textContent).toContain("1 of 3");
     expect(deck().textContent).toContain("Needs your input");
-    expect(deck().textContent).toContain("Since you looked");
+    expect(deck().textContent).toContain("since ");
   });
 
   it("→ marks read and moves on; ← keeps it unread; z undoes", async () => {
@@ -200,7 +200,7 @@ describe("Catch up", () => {
     expect(chat().getAttribute("data-thread-id")).toBe("a");
     expect(chat().getAttribute("data-variant")).toBe("compact");
     expect(chat().getAttribute("data-focus-request")).toBe("0");
-    expect(deck().textContent).toContain("Since you looked 2h ago: 2 turns · 1 prompt from you");
+    expect(deck().textContent).toContain("2 turns · 1 prompt from you since 2h ago");
     press("r");
     await waitFor(() => expect(chat().getAttribute("data-focus-request")).toBe("1"));
     press("u");

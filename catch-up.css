@@ -22,7 +22,7 @@
   height: 100%;
   max-width: 900px;
   margin: 0 auto;
-  padding: 12px 20px 16px;
+  padding: 6px 12px 8px;
 }
 .jf-catchup-page > .jf-catchup-empty {
   padding: 48px 0;
@@ -35,11 +35,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 .jf-catchup[data-variant="page"] .jf-catchup-bar {
-  padding: 4px 0 12px;
+  padding: 0 0 6px;
 }
 .jf-catchup-heading {
   display: flex;
@@ -95,8 +95,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 9px;
   border-radius: 7px;
   font-size: 12px;
   white-space: nowrap;
@@ -114,9 +114,14 @@
 .jf-catchup-chip:hover {
   background: var(--accent);
 }
+.jf-catchup-tools .jf-catchup-tool,
+.jf-catchup-tools .jf-catchup-chip {
+  height: 24px;
+  padding: 0 8px;
+}
 .jf-catchup-icon {
   justify-content: center;
-  width: 28px;
+  width: 26px;
   padding: 0;
   color: var(--muted-foreground);
 }
@@ -154,6 +159,11 @@
   outline-offset: 1px;
 }
 
+/* Icons stand in for labels on phones. */
+.jf-catchup-narrow {
+  display: none;
+}
+
 /* --- stage and card --- */
 .jf-catchup-stage {
   display: flex;
@@ -162,10 +172,10 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px 14px;
+  padding: 8px 12px;
 }
 .jf-catchup[data-variant="page"] .jf-catchup-stage {
-  padding: 12px 0;
+  padding: 6px 0;
 }
 .jf-catchup-card {
   position: relative;
@@ -179,6 +189,25 @@
   background: var(--card, var(--background));
   animation: jf-catchup-deal 160ms ease-out;
   transition: transform 160ms ease-out;
+}
+/* On the page the card is the page: no box around the thread's own boxes. */
+.jf-catchup[data-variant="page"] .jf-catchup-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.jf-catchup[data-variant="page"] .jf-catchup-card[data-tier="0"],
+.jf-catchup[data-variant="page"] .jf-catchup-card[data-tier="1"] {
+  border-left: 2px solid var(--warning-text, var(--primary));
+}
+.jf-catchup[data-variant="page"] .jf-catchup-card[data-tier="1"] {
+  border-left-color: var(--destructive-text);
+}
+.jf-catchup[data-variant="page"] .jf-catchup-summary {
+  padding: 2px 4px 6px 10px;
+}
+.jf-catchup[data-variant="page"] .jf-catchup-chat {
+  border-top: 0;
 }
 .jf-catchup-card[data-swiping] {
   transition: none;
@@ -213,7 +242,7 @@
   flex-shrink: 0;
   max-height: 45%;
   overflow-y: auto;
-  padding: 12px 16px 10px;
+  padding: 8px 12px 6px;
   touch-action: pan-y;
 }
 .jf-catchup-chat {
@@ -228,21 +257,13 @@
   min-height: 0;
 }
 .jf-catchup-card-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-.jf-catchup-card-head > :first-child {
-  margin-top: 3px;
-}
-.jf-catchup-titles {
   min-width: 0;
-  flex: 1;
 }
 .jf-catchup-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  align-items: center;
+  gap: 2px 8px;
   color: var(--muted-foreground);
   font-size: 11.5px;
 }
@@ -253,27 +274,22 @@
   color: var(--warning-text, var(--primary));
 }
 .jf-catchup-title {
-  margin: 2px 0 0;
-  font-size: 15px;
+  margin: 1px 0 0;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
-.jf-catchup-since {
-  margin: 8px 0 0;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
 .jf-catchup-notice {
-  margin: 8px 0 0;
-  padding: 6px 10px;
+  margin: 6px 0 0;
+  padding: 4px 8px;
   border-radius: 8px;
   background: var(--accent);
   font-size: 12px;
 }
 .jf-catchup-callout {
-  margin: 10px 0 0;
-  padding: 8px 10px;
+  margin: 6px 0 0;
+  padding: 4px 8px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--warning-text, var(--primary)) 12%, transparent);
   font-size: 12.5px;
@@ -282,7 +298,7 @@
   background: color-mix(in srgb, var(--destructive-text) 12%, transparent);
 }
 .jf-catchup-muted {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--muted-foreground);
   font-size: 12px;
 }
@@ -290,12 +306,18 @@
 
 
 .jf-catchup-prs {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.jf-catchup-prs > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 .jf-catchup-link {
-  margin-top: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
   color: var(--muted-foreground);
   font-size: 11.5px;
   cursor: pointer;
@@ -375,12 +397,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 10px 14px;
+  gap: 6px;
+  padding: 6px 10px;
   border-top: 1px solid var(--border);
 }
 .jf-catchup[data-variant="page"] .jf-catchup-actions {
-  padding: 12px 0 0;
+  padding: 6px 0 0;
 }
 .jf-catchup-actions-middle {
   display: flex;
@@ -407,7 +429,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 14px;
+  padding: 5px 12px;
   border-top: 1px solid var(--border);
   background: var(--accent);
   font-size: 12px;
@@ -497,16 +519,32 @@
   .jf-catchup[data-variant="overlay"] {
     height: 92dvh;
   }
-  .jf-catchup-actions {
-    flex-wrap: wrap;
+  .jf-catchup-page {
+    padding: 4px 8px 6px;
   }
   .jf-catchup-actions kbd,
-  .jf-catchup-tools .jf-catchup-icon[aria-label="Keyboard shortcuts"] {
+  .jf-catchup-tools .jf-catchup-icon[aria-label="Keyboard shortcuts"],
+  .jf-catchup-wide {
     display: none;
   }
+  .jf-catchup-narrow {
+    display: inline-block;
+  }
+  .jf-catchup-actions .jf-catchup-action:not(.jf-catchup-done),
+  .jf-catchup-tools .jf-catchup-tool[aria-label="Mark all read"] {
+    justify-content: center;
+    min-width: 34px;
+    padding: 0 8px;
+  }
   .jf-catchup-actions-middle {
-    order: 3;
-    width: 100%;
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  .jf-catchup-summary {
+    max-height: 35%;
+  }
+  .jf-catchup-chat {
+    min-height: 160px;
   }
   .jf-catchup-custom {
     margin-left: 0;
