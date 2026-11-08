@@ -373,6 +373,30 @@ function threadFields(thread: PaletteThread, input: PaletteInput, index: ReturnT
   ];
 }
 
+/**
+ * The palette inside a workspace: only its threads, their messages and their
+ * PRs. Workspaces, projects and actions stay, so you can still switch.
+ * `belongs` decides for a thread this window may not have loaded (an archived
+ * one found by full-text search) from its id and project.
+ */
+export function onlyInWorkspace(input: PaletteInput, belongs: (threadId: string, projectId: string) => boolean): PaletteInput {
+  const threads = input.threads.filter((thread) => belongs(thread.id, thread.projectId));
+  const loaded = new Set(input.threads.map((thread) => thread.id));
+  const kept = new Set(threads.map((thread) => thread.id));
+  const keeps = (threadId: string, projectId: string) => (loaded.has(threadId) ? kept.has(threadId) : belongs(threadId, projectId));
+  const flow =
+    input.flow === null
+      ? null
+      : { ...input.flow, threadPrs: Object.fromEntries(Object.entries(input.flow.threadPrs).filter(([threadId]) => kept.has(threadId))) };
+  return {
+    ...input,
+    threads,
+    flow,
+    recent: input.recent.filter((id) => kept.has(id)),
+    server: input.server?.filter((hit) => keeps(hit.threadId, hit.projectId)) ?? null,
+  };
+}
+
 /** Ranking nudges on top of the text match: what you use, where you are, what's waiting. */
 function threadBoost(thread: PaletteThread, input: PaletteInput): number {
   let boost = frecencyBoost(input.frecency[`thread:${thread.id}`], input.now);
