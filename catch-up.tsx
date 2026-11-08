@@ -614,8 +614,12 @@ function CatchUpDeck({
     >
       <header className="jf-catchup-bar">
         <div className="jf-catchup-heading">
-          <Icon name="MailOpen" className="size-4" />
-          <span className="jf-catchup-name">Catch up</span>
+          {variant === "overlay" ? (
+            <>
+              <Icon name="MailOpen" className="size-4" />
+              <span className="jf-catchup-name">Catch up</span>
+            </>
+          ) : null}
           {position && position.of > 0 && item ? (
             <span className="jf-catchup-count" aria-live="polite">
               {position.at} of {position.of}
@@ -641,8 +645,15 @@ function CatchUpDeck({
             </button>
           ) : null}
           {readable.length > 0 && item ? (
-            <button type="button" className="jf-catchup-tool" onClick={() => setMode(mode === "confirm-all" ? "card" : "confirm-all")}>
-              Mark all read
+            <button
+              type="button"
+              className="jf-catchup-tool"
+              aria-label="Mark all read"
+              title="Mark all read"
+              onClick={() => setMode(mode === "confirm-all" ? "card" : "confirm-all")}
+            >
+              <Icon name="CheckCheck" fallback="Check" className="jf-catchup-narrow size-3.5" aria-hidden />
+              <span className="jf-catchup-wide">Mark all read</span>
             </button>
           ) : null}
           <button type="button" className="jf-catchup-icon" aria-label="Keyboard shortcuts" title="Keys (?)" onClick={() => setMode(mode === "help" ? "card" : "help")}>
@@ -747,22 +758,12 @@ function CatchUpDeck({
 
       {item && thread ? (
         <footer className="jf-catchup-actions">
-          <button type="button" className="jf-catchup-action" onClick={keep} title="Keep unread and go on (← or U)">
-            <kbd>←</kbd> Keep unread
-          </button>
+          <ActionButton label="Keep unread" keyHint="←" icon="ArrowLeft" fallback="RotateCcw" onClick={keep} title="Keep unread and go on (← or U)" />
           <span className="jf-catchup-actions-middle">
-            <button type="button" className="jf-catchup-action" onClick={() => setMode(mode === "snooze" ? "card" : "snooze")} title="Snooze (S, or long-press)">
-              <kbd>S</kbd> Snooze
-            </button>
-            <button type="button" className="jf-catchup-action" onClick={archive} title="Archive (E)">
-              <kbd>E</kbd> Archive
-            </button>
-            <button type="button" className="jf-catchup-action" onClick={() => setFocusComposer((count) => count + 1)} title="Write in the thread (R)">
-              <kbd>R</kbd> Reply
-            </button>
-            <button type="button" className="jf-catchup-action" onClick={() => open(false)} title="Open the thread (O; ⇧O in a split)">
-              <kbd>O</kbd> Open
-            </button>
+            <ActionButton label="Snooze" keyHint="S" icon="Clock" fallback="Square" onClick={() => setMode(mode === "snooze" ? "card" : "snooze")} title="Snooze (S, or long-press)" />
+            <ActionButton label="Archive" keyHint="E" icon="Archive" onClick={archive} title="Archive (E)" />
+            <ActionButton label="Reply" keyHint="R" icon="CornerDownLeft" onClick={() => setFocusComposer((count) => count + 1)} title="Write in the thread (R)" />
+            <ActionButton label="Open" keyHint="O" icon="ExternalLink" fallback="PanelRight" onClick={() => open(false)} title="Open the thread (O; ⇧O in a split)" />
           </span>
           <button type="button" className="jf-catchup-action jf-catchup-done" onClick={done} title="Mark read and go on (→ or D)">
             Done <kbd>→</kbd>
@@ -784,6 +785,31 @@ function CatchUpDeck({
   );
 }
 
+/** Text and key hint on wide screens, an icon on phones; the label stays the accessible name. */
+function ActionButton({
+  label,
+  keyHint,
+  icon,
+  fallback,
+  title,
+  onClick,
+}: {
+  label: string;
+  keyHint: string;
+  icon: string;
+  fallback?: string;
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className="jf-catchup-action" aria-label={label} title={title} onClick={onClick}>
+      <kbd>{keyHint}</kbd>
+      <Icon name={icon} fallback={fallback} className="jf-catchup-narrow size-4" aria-hidden />
+      <span className="jf-catchup-wide">{label}</span>
+    </button>
+  );
+}
+
 const staysLine = (count: number) =>
   count === 0 ? "" : count === 1 ? " The thread that needs you stays." : ` The ${count} that need you stay.`;
 const pendingNeedsYou = (active: Session) => active.items.filter((entry) => entry.outcome === null && needsYou(entry.tier)).length;
@@ -795,15 +821,15 @@ async function inChunks(ids: readonly string[], run: (id: string) => Promise<unk
 // --- one card ------------------------------------------------------------------------
 
 function sinceLine(item: CatchUpItem, since: Since | undefined, now: number): string {
-  if (item.since === null) return "New: you haven't opened this thread yet";
-  const head = `Since you looked ${ago(item.since, now)}`;
-  if (since === undefined) return head;
+  if (item.since === null) return "New to you";
+  const head = `since ${ago(item.since, now)}`;
+  if (since === undefined) return `Updated ${head}`;
   const parts: string[] = [];
   const more = since.more ? "+" : "";
   if (since.turns > 0) parts.push(`${since.turns}${more} turn${since.turns === 1 && !more ? "" : "s"}`);
   if (since.yourPrompts > 0) parts.push(`${plural(since.yourPrompts, "prompt")} from you`);
   if (since.otherPrompts > 0) parts.push(`${since.otherPrompts} automated`);
-  return parts.length > 0 ? `${head}: ${parts.join(" · ")}` : head;
+  return parts.length > 0 ? `${parts.join(" · ")} ${head}` : `Updated ${head}`;
 }
 
 function CardView({
@@ -847,20 +873,18 @@ function CardView({
       {/* Swipes start on the summary; the thread below scrolls and selects as usual. */}
       <div className="jf-catchup-summary" {...swipe.handlers}>
         <header className="jf-catchup-card-head">
-          <StatusIcon status={status} />
-          <div className="jf-catchup-titles">
-            <div className="jf-catchup-meta">
-              <span className={cn("jf-catchup-tier", needsYou(item.tier) && "jf-catchup-tier-needs")}>{TIER_LABEL[item.tier]}</span>
-              {project ? <span>{project}</span> : null}
-              <span>{ago(thread.latestAttentionAt, now)}</span>
-            </div>
-            <h2 className="jf-catchup-title">{thread.displayTitle}</h2>
+          <div className="jf-catchup-meta">
+            <StatusIcon status={status} />
+            <span className={cn("jf-catchup-tier", needsYou(item.tier) && "jf-catchup-tier-needs")}>{TIER_LABEL[item.tier]}</span>
+            {project ? <span>{project}</span> : null}
+            <span>{ago(thread.latestAttentionAt, now)}</span>
+            <span className="jf-catchup-since">
+              {sinceLine(item, since, now)}
+              {merged.length > 0 ? ` · ${merged.map((pr) => `#${pr.number} merged`).join(" · ")}` : ""}
+            </span>
           </div>
+          <h2 className="jf-catchup-title">{thread.displayTitle}</h2>
         </header>
-        <p className="jf-catchup-since">
-          {sinceLine(item, since, now)}
-          {merged.length > 0 ? ` · ${merged.map((pr) => `#${pr.number} merged`).join(" · ")}` : ""}
-        </p>
         {sentHere ? (
           <p className="jf-catchup-notice" role="status">
             Sent. <kbd>→</kbd> marks it read and moves on; the agent keeps working.
@@ -874,8 +898,13 @@ function CardView({
           <div className="jf-catchup-prs">
             {shownPrs.length > 0 ? <PrList prs={shownPrs} compact /> : null}
             {prs.length > open.length ? (
-              <button type="button" className="jf-catchup-link" onClick={() => setAllPrs((value) => !value)}>
-                {allPrs ? "Only open PRs" : `${plural(prs.length - open.length, "merged or closed PR")}`}
+              <button
+                type="button"
+                className="jf-catchup-link"
+                aria-label={allPrs ? "Only open PRs" : plural(prs.length - open.length, "merged or closed PR")}
+                onClick={() => setAllPrs((value) => !value)}
+              >
+                {allPrs ? "Only open" : `+${prs.length - open.length} closed`}
               </button>
             ) : null}
           </div>
