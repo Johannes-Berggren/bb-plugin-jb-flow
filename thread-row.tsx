@@ -1,6 +1,7 @@
 // One row of the Triage thread list, and the group headers between rows.
 import type { WorkspaceState } from "./workspaces";
 import { useContext } from "react";
+import { toast } from "sonner";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { ThreadTitle, useRpc, useSdk, experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest, experimental_useSidebarThreadSplit as useSidebarThreadSplit, useSidebarThreadShortcut } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarProject, PluginSidebarSection, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
@@ -156,6 +157,12 @@ export function ThreadRow({
         .then(() => focusRowSoon(next));
     } else if (event.key === "e") {
       event.preventDefault();
+      // A clicked row keeps the keyboard, so a stray "e" typed before clicking into the composer
+      // would archive the thread. Pinned threads are the ones people keep working in: no single key archives them.
+      if (thread.isPinned) {
+        toast("Pinned threads aren't archived with E. Unpin it first, or archive from the right-click menu.");
+        return;
+      }
       focusRowSoon(neighbourRowId(event.currentTarget));
       actions.archive(thread.id);
     } else if (event.key === "s") {

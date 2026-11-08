@@ -315,7 +315,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `t` tag
   - `f` add to or remove from Focus
   - `d` set or clear a due date
-  - `e` archive
+  - `e` archive (pinned threads are skipped)
   - `u` toggle unread
   - `j`/`k` move up and down
 - **Right-click menu:**
@@ -380,7 +380,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   | Alt+Shift+S | Snooze this thread |
   | Alt+Shift+N | Open the next thread that needs me. With **Now and Focus** on, it steps through Now in order from the thread you're on, across every workspace, because threads stay in Now after you read them |
   | Alt+Shift+F | Add this thread to Focus, or remove it |
-  | Alt+Shift+E | Archive and open the next one |
+  | Alt+Shift+E | Archive and open the next one (a pinned thread is left as is) |
   | Alt+Shift+D | Start dev servers |
   | Alt+Shift+P | Show pull requests |
   | Alt+Shift+W | Watch CI |

@@ -1066,7 +1066,9 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     next_needs_me: async ({ archiveThreadId }) => {
       // Worked out before archiving: the archived thread's place says where "next" is.
       const nextId = await nextThread(archiveThreadId ?? focus.focusedThreadId(), archiveThreadId);
-      if (archiveThreadId !== null) await bb.sdk.threads.archive({ threadId: archiveThreadId });
+      // Pinned threads are kept on purpose: a shortcut moves on from them but never archives them.
+      const pinned = archiveThreadId !== null && (await bb.sdk.threads.get({ threadId: archiveThreadId }).catch(() => null))?.pinnedAt;
+      if (archiveThreadId !== null && !pinned) await bb.sdk.threads.archive({ threadId: archiveThreadId });
       if (nextId === null) return { opened: null };
       await bb.sdk.threads.open({ threadId: nextId, file: null });
       return { opened: nextId };
