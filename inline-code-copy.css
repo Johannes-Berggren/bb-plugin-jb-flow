@@ -1,0 +1,29 @@
+/* The floating copy button beside a hovered inline code chip. */
+.jf-code-copy {
+  position: fixed;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 10%, transparent);
+  cursor: pointer;
+}
+.jf-code-copy[hidden] { display: none; }
+.jf-code-copy:hover { color: var(--foreground); }
+.jf-code-copy[data-copied="true"] { color: var(--primary); }
+.jf-code-copy svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

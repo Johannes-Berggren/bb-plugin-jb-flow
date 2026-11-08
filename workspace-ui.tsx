@@ -90,17 +90,19 @@ function NavItem({
   );
 }
 
+type SnoozeInfo = { snoozes?: Record<string, unknown>; snoozedSectionId?: string | null };
+
 /** The bar and all workspace filtering only run with the Workspaces setting on. */
-export function WorkspaceTopBar({ flow = null }: { flow?: NowFlow | null }) {
+export function WorkspaceTopBar({ flow = null }: { flow?: (NowFlow & SnoozeInfo) | null }) {
   const { values, isLoading } = useSettings();
   const enabled = values?.workspaces === true;
   useEffect(() => {
     if (!isLoading) setWorkspacesEnabled(enabled);
   }, [enabled, isLoading]);
-  return enabled ? <WorkspaceTopBarInner flow={values?.nowQueue === true ? flow : null} /> : null;
+  return enabled ? <WorkspaceTopBarInner flow={values?.nowQueue === true ? flow : null} snoozeInfo={values?.countSnoozedInTabs === true ? null : flow} /> : null;
 }
 
-function WorkspaceTopBarInner({ flow }: { flow: (NowFlow & { snoozedSectionId?: string | null }) | null }) {
+function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInfo) | null; snoozeInfo: SnoozeInfo | null }) {
   const { state, ready, error, refresh } = useWorkspaces();
   const selected = useSelectedWorkspace();
   const { threads, projects } = useSidebarThreads();
@@ -146,6 +148,9 @@ function WorkspaceTopBarInner({ flow }: { flow: (NowFlow & { snoozedSectionId?: 
       (thread) =>
         !thread.isArchived &&
         !thread.isHidden &&
+        // A snoozed thread is parked until it wakes, so it isn't counted (unless a setting says so).
+        snoozeInfo?.snoozes?.[thread.id] === undefined &&
+        !(snoozeInfo?.snoozedSectionId != null && thread.sectionId === snoozeInfo.snoozedSectionId) &&
         (thread.parentThreadId === null ||
           !scoped.some((parent) => parent.id === thread.parentThreadId)),
     );
@@ -335,7 +340,7 @@ export function useWorkspaceSwipe() {
   const track = useMemo(() => createSwipeTracker(), []);
   return useCallback(
     (event: ReactWheelEvent<HTMLElement>) => {
-      if (values?.workspaces !== true || !ready || state.workspaces.length === 0) return;
+      if (values?.workspaces !== true || values?.workspaceSwipe !== true || !ready || state.workspaces.length === 0) return;
       const direction = track(event);
       if (direction === 0) return;
       const target = swipeTarget(workspaceTabOrder(state.workspaces), selected, direction);
@@ -344,7 +349,7 @@ export function useWorkspaceSwipe() {
         switchWorkspace(target, { state, threads, projects, currentThreadId: context.threadId, navigate }),
       );
     },
-    [values?.workspaces, ready, state, selected, threads, projects, context.threadId, navigate, track],
+    [values?.workspaces, values?.workspaceSwipe, ready, state, selected, threads, projects, context.threadId, navigate, track],
   );
 }
 

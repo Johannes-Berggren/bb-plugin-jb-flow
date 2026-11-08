@@ -77,7 +77,8 @@ again or Escape to close it.
     workspace and section. Threads in your current workspace, the ones you pick often
     and the ones waiting on you rank first.
   - BB's full-text search adds message matches, with snippets, and archived threads.
-  - Pull requests, workspaces, projects and actions are ranked into the same list.
+  - Pull requests, workspaces, projects and actions are ranked into the same list,
+    below the threads: thread title matches first, then message matches.
   - The last row always starts a new thread with what you typed. Press Tab on it to
     pick the project.
 - **Narrow the scope.**
@@ -219,9 +220,11 @@ styling. Reduced-motion preferences disable decorative animation.
 ### Persistent thread monitor
 
 On by default (**Thread monitor** in the plugin settings). The activity card stays visible when the agent is idle,
-as a quiet summary of the agent's last status report: **Done**, **Next**, **Goal** and **Blocked**, with milestone
-bars and context use under **Details**. When the report is out of date (the agent replied since, it's over 6 hours
-old, or there is none), the header says so and offers **Update status**; otherwise a small **Refresh** does the same.
+as a quiet summary of the agent's last status report: **Done**, **Next**, **Blocked** and **Goal**, with milestone
+bars and context use under **Details** in the footer. When the report is out of date (the agent replied since, it's
+over 6 hours old, or there is none), a call-out at the top of the report says why and offers a large **Update status**
+button, and the old report is dimmed (Blocked stays readable). When it's current, the caption says "up to date" and a
+small refresh icon in the header does the same.
 
 If the report ends with numbered **Next steps** (the built-in prompt asks for a recommended path forward in a callout),
 they appear in **Your next move** above the monitor (see Decision buttons), and a **Doing now** line shows what the
@@ -409,6 +412,7 @@ Under **Settings → JB Flow**:
 - **Polish the entire BB interface**: restyles bb and folds finished commands behind *Show trace* (on by default).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
+- **Swipe between workspaces**: a two-finger sideways swipe on the sidebar moves to the next or previous workspace tab, and the sidebar slides as the workspace changes (off by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).
 - **Now and Focus**: the ranked Now group, the Focus mark and due dates, including the `set_thread_due` agent tool (on by default). Off restores Needs me.
@@ -419,6 +423,7 @@ Under **Settings → JB Flow**:
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).
 - **Expand plan reviews**: expanded, resizable plan reviews (on by default).
+- **Copy buttons on code**: hovering an inline code snippet in a chat message shows a copy button (off by default). Fenced code blocks already have BB's own *Copy code*.
 - **Advanced config (JSON)**: see below.
 - **Triage lanes**, **Repo commands** and **Area tags** have their own sections.
 

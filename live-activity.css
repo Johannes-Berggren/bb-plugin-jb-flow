@@ -926,6 +926,115 @@
   font-size: 11px;
 }
 
+/* Out of date: one call-out at the top of the report, with the big Update button. */
+.jf-monitor-outdated {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--warning) 55%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--warning) 14%, transparent);
+}
+.jf-monitor-outdated > svg {
+  flex-shrink: 0;
+  color: var(--warning-text);
+}
+.jf-monitor-outdated-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.jf-monitor-outdated-copy > strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.jf-monitor-outdated-copy > span {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.jf-monitor-update.jf-monitor-update-hero {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .jf-monitor-outdated {
+    flex-wrap: wrap;
+  }
+  .jf-monitor-update.jf-monitor-update-hero {
+    flex-basis: 100%;
+    min-height: 44px;
+  }
+}
+/* The stale report reads as stale; Blocked stays fully visible. */
+.jf-monitor-report[data-outdated="true"] .jf-monitor-step:not([data-field="Blocked"]) > * {
+  opacity: 0.62;
+}
+
+/* Current: a small refresh icon, and "up to date" beside the caption. */
+.jf-monitor-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.jf-monitor-refresh:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.jf-monitor-refresh:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.jf-monitor-refresh:disabled {
+  cursor: wait;
+}
+.jf-monitor-refresh[data-requesting="true"] > svg {
+  animation: jf-monitor-spin 0.9s linear infinite;
+}
+@keyframes jf-monitor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-monitor-refresh[data-requesting="true"] > svg {
+    animation: none;
+  }
+}
+@media (max-width: 640px) {
+  .jf-monitor-refresh {
+    width: 44px;
+    height: 44px;
+  }
+}
+.jf-monitor-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: pre;
+  color: var(--success, var(--muted-foreground));
+}
+
 /* --- quiet monitor ------------------------------------------------------- */
 .jf-live-card[data-active="false"] .jf-live-orbit {
   display: none;
@@ -942,25 +1051,10 @@
   color: var(--foreground);
   background: var(--accent);
 }
-.jf-monitor-stale {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--warning-text);
-}
 .jf-live-heading .jf-monitor-update {
   flex-shrink: 0;
   padding: 3px 10px;
   font-size: 11.5px;
-}
-.jf-monitor-update-quiet {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--muted-foreground);
-  font-weight: 500;
-}
-.jf-monitor-update.jf-monitor-update-quiet:hover {
-  background: var(--accent);
-  color: var(--foreground);
 }
 .jf-monitor-report {
   margin-top: 10px;
@@ -982,6 +1076,21 @@
   padding: 10px 0 11px;
   margin-top: 10px;
   border-top: 1px solid var(--border);
+  gap: 5px 9px;
+}
+/* Idle: PRs, summary, Details and Auto-prompt share one wrapping line. */
+.jf-live-card[data-active="false"] .jf-live-badges {
+  display: contents;
+}
+.jf-live-footer .jf-live-details-toggle {
+  border-color: transparent;
+  padding: 2px 6px;
+  font-size: 10.5px;
+}
+@media (max-width: 640px) {
+  .jf-live-footer .jf-live-details-toggle {
+    min-height: 32px;
+  }
 }
 .jf-live-card[data-active="false"] .jf-live-pr {
   border-color: transparent;
@@ -994,9 +1103,6 @@
   background: none;
   font-size: 10.5px;
   color: var(--muted-foreground);
-}
-.jf-monitor-stale {
-  color: var(--warning-text);
 }
 .jf-monitor-error {
   color: var(--destructive-text);

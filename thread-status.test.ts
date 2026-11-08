@@ -189,3 +189,12 @@ describe("the status prompt's Due line", () => {
   });
 });
 
+
+describe("sending a status report prompt", () => {
+  it("accepts a long prompt of your own, not only the short built-in one", async () => {
+    const { rpcContract } = await import("./server");
+    const input = (rpcContract as unknown as Record<string, { input: { safeParse(value: unknown): { success: boolean } } }>).thread_reply!.input;
+    expect(input.safeParse({ threadId: "t", text: statusPrompt("x".repeat(6000), true) }).success).toBe(true);
+    expect(input.safeParse({ threadId: "t", text: "" }).success).toBe(false);
+  });
+});
