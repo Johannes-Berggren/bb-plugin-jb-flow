@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   useComposer,
   useRpc,
@@ -527,7 +527,17 @@ export function ActivityCard({
   branchPrUrl?: string;
   onClearGoal?: () => Promise<void>;
 }) {
-  const { collapsed, toggle: toggleCollapsed } = useMonitorCollapse();
+  const shared = useMonitorCollapse();
+  // Inside Catch up the card starts collapsed so the thread gets the room; opening it
+  // there is for this card only and leaves the device preference alone.
+  const cardRef = useRef<HTMLElement>(null);
+  const [inCatchUp, setInCatchUp] = useState(false);
+  const [catchUpCollapsed, setCatchUpCollapsed] = useState(true);
+  useLayoutEffect(() => {
+    setInCatchUp(cardRef.current?.closest(".jf-catchup-chat") != null);
+  }, []);
+  const collapsed = inCatchUp ? catchUpCollapsed : shared.collapsed;
+  const toggleCollapsed = inCatchUp ? () => setCatchUpCollapsed((value) => !value) : shared.toggle;
   const bodyId = useId();
   const [expanded, setExpanded] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -602,6 +612,7 @@ export function ActivityCard({
               : "Agent idle"));
   return (
     <section
+      ref={cardRef}
       className="jf-live-card"
       aria-label="Agent activity"
       data-jb-flow-live-activity={hasLiveData ? "" : undefined}

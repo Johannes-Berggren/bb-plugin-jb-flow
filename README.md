@@ -146,7 +146,7 @@ Settings → Keyboard), from ⌘K, or from the *Catch up · N unread* line on th
   what happened since you last read it (turns, prompts from you, automated prompts
   such as CI results and snooze reminders, PRs merged since) and its open PRs, with
   merged and closed ones folded away. Below it is the thread itself, live, with its
-  composer: read the conversation, answer a prompt or permission, pick from *Your
+  composer (the thread monitor starts collapsed here, to leave room for the thread): read the conversation, answer a prompt or permission, pick from *Your
   next move*, or write a reply, as in the thread view. Showing a card doesn't mark
   the thread read; writing in its composer does, as anywhere in bb.
 - **Keys:**
@@ -266,6 +266,9 @@ list scrolls inside a capped box instead of pushing the composer. Choosing
 one sends only its number, with visible sending/sent feedback. Duplicate clicks
 are blocked; failed sends show an error and allow retry. Choices reset when the
 thread or source reply changes. Motion respects reduced-motion preferences.
+While the choices show, the same numbered list in the agent's message is hidden and
+each choice shows its full text (turn off with **Hide options the reply buttons
+repeat**).
 
 ### Triage sidebar
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
@@ -426,6 +429,7 @@ Under **Settings → JB Flow**:
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).
 - **Expand plan reviews**: expanded, resizable plan reviews (on by default).
+- **Hide options the reply buttons repeat**: while the reply choices show, hide the same numbered list in the agent's message (on by default).
 - **Copy buttons on code**: hovering an inline code snippet in a chat message shows a copy button (off by default). Fenced code blocks already have BB's own *Copy code*.
 - **Advanced config (JSON)**: see below.
 - **Triage lanes**, **Repo commands** and **Area tags** have their own sections.
