@@ -338,6 +338,12 @@ export default async function plugin(bb: BbPluginApi) {
         "Tabs across the top of BB that group projects, threads, sections and plugin tools. Off shows everything as before.",
       default: true,
     },
+    workspaceSwipe: {
+      type: "boolean",
+      label: "Swipe between workspaces",
+      description: "Swipe sideways with two fingers on the sidebar to move to the next or previous workspace tab. The sidebar slides as the workspace changes.",
+      default: false,
+    },
     countSnoozedInTabs: {
       type: "boolean",
       label: "Count snoozed threads in workspace tabs",

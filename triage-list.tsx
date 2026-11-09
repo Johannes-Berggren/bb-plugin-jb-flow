@@ -1,15 +1,16 @@
 // The Triage thread list: the sidebar that replaces bb's own when its setting is on.
 import { toast } from "sonner";
-import { useWorkspaces, useSelectedWorkspace } from "./workspace-client";
+import { useWorkspaces, useSelectedWorkspace, switchWorkspace } from "./workspace-client";
+import { useWorkspaceSwipe, sidebarBlock, slideIn, tabDirection } from "./workspace-ui";
 import { inWorkspace } from "./workspaces";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { experimental_useSidebarThreads as useSidebarThreads, useSdk, useSettings } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads as useSidebarThreads, useBbNavigate, useSdk, useSettings } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread, PluginThreadListProps } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
 import { useSidebarThreadActions } from "./thread-actions";
 import { allSettled, threadPrs, useNow } from "./ui-extras";
-import { groupBySection, quietFor, sortRows } from "./sidebar-groups";
+import { groupByProject, groupBySection, quietFor, sortRows } from "./sidebar-groups";
 import { resolveLanes, sectionNames } from "./lanes";
 import { needsMe, replyQueued } from "./needs-me";
 import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { useFlowState, errorText } from "./flow-state";
 import { SnoozeDialog, TagDialog, RenameDialog, SectionNameDialog, ConfirmDialog, DueDialog, FocusLimitDialog } from "./dialogs";
 import { Group, ThreadRow, GroupHeader, machineLabel } from "./thread-row";
-import { DROP_ATTR, DragContext, useThreadDrag, SECTION_ATTR, sectionKey, mergeOrder, useSectionDrag } from "./drag";
+import { ACTIVE_DROP, DROP_ATTR, DragContext, useThreadDrag, SECTION_ATTR, sectionKey, mergeOrder, useSectionDrag } from "./drag";
 import { MissingLanesHint } from "./settings-panels";
 /** Sent by "Nudge" on a stalled thread. */
 const NUDGE =
@@ -186,6 +187,20 @@ export function TriageThreadList({
     [sdk],
   );
   const drag = useThreadDrag(onDrop);
+  const navigate = useBbNavigate();
+  const swipeOn = useSettings().values?.workspaceSwipe === true;
+  const onSwipe = useWorkspaceSwipe();
+  // Whatever switched the workspace (a swipe or a tab click), slide the new one in.
+  const listRef = useRef<HTMLElement>(null);
+  const shownWorkspace = useRef(selectedWorkspace);
+  useLayoutEffect(() => {
+    const before = shownWorkspace.current;
+    shownWorkspace.current = selectedWorkspace;
+    if (!listRef.current || !swipeOn) return;
+    // A list that remounts mid-swipe never sees the change: don't leave the sidebar hidden.
+    if (before === selectedWorkspace) return void sidebarBlock(listRef.current).getAnimations?.().forEach((animation) => animation.cancel());
+    slideIn(sidebarBlock(listRef.current), tabDirection(workspaceState.workspaces, before, selectedWorkspace));
+  }, [selectedWorkspace]);
 
   // Lanes and your own sections share one order, so any section can sit anywhere.
   const sectionKeys = useMemo(
@@ -310,6 +325,51 @@ export function TriageThreadList({
       </>
     );
   };
+
+  // Only a project this workspace owns, and not its last one, can move out. A
+  // thread can be here through a section or by hand while its project lives elsewhere.
+  const canMakeWorkspace = (projectId: string) =>
+    workspace !== undefined && workspace.projectIds.length > 1 && workspace.projectIds.includes(projectId) && projectById.has(projectId);
+
+  // Moves a project out of this workspace into a new one of its own, then shows it.
+  // Saving a project into one workspace removes it from every other.
+  const makeWorkspace = (project: { id: string; name: string }) => {
+    // Workspace names are unique, and one is often named after its main project.
+    const taken = new Set(workspaceState.workspaces.map((item) => item.name.toLowerCase()));
+    let name = project.name;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${project.name} ${n}`;
+    void workspaceRpc
+      .call("workspace_save", { id: null, name, projectIds: [project.id], sectionIds: [], pluginIds: [], sectionOrder: [] })
+      .then(async (saved) => {
+        await refreshWorkspaces();
+        const next = {
+          ...workspaceState,
+          workspaces: [
+            ...workspaceState.workspaces.map((item) => ({ ...item, projectIds: item.projectIds.filter((id) => id !== project.id) })),
+            saved,
+          ],
+        };
+        switchWorkspace(saved.id, { state: next, threads: allThreads, projects, currentThreadId: activeThreadId ?? null, navigate });
+        toast.success(`${project.name} is now its own workspace`);
+      })
+      .catch((cause) => toast.error(errorText(cause)));
+  };
+
+  const projectMenu = (project: { id: string; name: string }) =>
+    projectById.has(project.id) ? (
+      <>
+        <ContextMenuItem onSelect={() => actions.openNewThread({ projectId: project.id, focusPrompt: true })}>
+          <Icon name="Plus" className="size-4" />
+          <span className="truncate">New thread in {project.name}</span>
+        </ContextMenuItem>
+        {canMakeWorkspace(project.id) ? (
+          <ContextMenuItem onSelect={() => makeWorkspace(project)}>
+            <Icon name="Layers" className="size-4" />
+            <span className="truncate">Make {project.name} its own workspace</span>
+          </ContextMenuItem>
+        ) : null}
+      </>
+    ) : null;
 
   const settingValues = useSettings().values;
   const createdOrder = settingValues?.createdRowOrder === true;
@@ -490,6 +550,7 @@ export function TriageThreadList({
       return open.length > 0 && open.every((pr) => pr.attention === "review_requested");
     };
     const waitingLane = lanes.find((lane) => lane.id === "waiting");
+    const inActive = (thread: PluginSidebarThread) => thread.sectionId === null && !(waitingLane && waitsOnOthers(thread));
     // With Now on, its groups claim their rows; with it off, Needs me does.
     const claimed = (thread: PluginSidebarThread) => (queue ? nowEntries.has(thread.id) : needs(thread));
     const stalled = awake.filter((thread) => !thread.isPinned && !claimed(thread) && isStalled(thread));
@@ -522,6 +583,25 @@ export function TriageThreadList({
     }
     for (const key of sectionKeys) {
       const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
+      // A workspace grouped by project shows its unfiled threads one project at a time.
+      // With none, the plain Active lane stays, so there's still somewhere to drop.
+      const unfiled = lane?.id === "active" && workspace?.groupByProject ? rest.filter(inActive) : [];
+      if (unfiled.length > 0) {
+        for (const { projectId, threads: members } of groupByProject(unfiled)) {
+          const project = { id: projectId, name: projectById.get(projectId)?.name ?? "Other" };
+          result.push({
+            id: `project:${projectId}`,
+            title: project.name,
+            threads: members,
+            limit: 15,
+            project,
+            action: canMakeWorkspace(projectId)
+              ? { label: "Make workspace", run: () => makeWorkspace(project) }
+              : undefined,
+          });
+        }
+        continue;
+      }
       if (lane) {
         result.push({
           id: `lane:${lane.id}`,
@@ -531,7 +611,7 @@ export function TriageThreadList({
             lane.id === "waiting"
               ? thread.sectionId === lane.sectionId || waitsOnOthers(thread)
               : lane.id === "active"
-                ? thread.sectionId === null && !(waitingLane && waitsOnOthers(thread))
+                ? inActive(thread)
                 : thread.sectionId === lane.sectionId,
           ),
           ...(lane.id === "waiting" ? { auto: true } : {}),
@@ -570,7 +650,7 @@ export function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts, machineCounts };
-  }, [threads, liveRows, queue, nowEntries, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder]);
+  }, [threads, liveRows, queue, nowEntries, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById, workspaceState, allThreads, projects, navigate]);
 
   const defaults = useMemo(
     () =>
@@ -593,6 +673,8 @@ export function TriageThreadList({
     <DragContext.Provider value={drag}>
     <nav
       aria-label="Triage"
+      ref={listRef}
+      onWheel={swipeOn ? onSwipe : undefined}
       className="jf-triage flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >
       <div className="jf-triage-heading"><span>Threads</span>
@@ -670,10 +752,10 @@ export function TriageThreadList({
         return (
           <section
             key={group.id}
-            {...(group.section ? { [DROP_ATTR]: sectionKey(group.section.id), [SECTION_ATTR]: sectionKey(group.section.id) } : {})}
+            {...(group.section ? { [DROP_ATTR]: sectionKey(group.section.id), [SECTION_ATTR]: sectionKey(group.section.id) } : group.project ? { [DROP_ATTR]: ACTIVE_DROP } : {})}
             className={cn(
               "relative rounded-md transition-colors",
-              group.section && drag.dragging && drag.dragging.over === sectionKey(group.section.id) && "bg-accent/70 ring-1 ring-ring/40",
+              drag.dragging && drag.dragging.over === (group.section ? sectionKey(group.section.id) : group.project ? ACTIVE_DROP : undefined) && "bg-accent/70 ring-1 ring-ring/40",
               group.section && sectionDrag.dragging?.key === sectionKey(group.section.id) && "opacity-40",
             )}
           >
@@ -708,7 +790,7 @@ export function TriageThreadList({
               action={group.action}
               hint={group.hint}
               dynamic={group.dynamic}
-              menu={sectionMenu(group)}
+              menu={group.project ? projectMenu(group.project) : sectionMenu(group)}
               auto={group.auto}
               {...(group.section && !smart ? { onDragStart: (event: ReactPointerEvent<HTMLElement>) => sectionDrag.start(sectionKey(group.section!.id), event) } : {})}
             />

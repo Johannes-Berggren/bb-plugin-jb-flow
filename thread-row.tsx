@@ -59,6 +59,8 @@ export type Group = {
   auto?: boolean;
   /** Your section behind this group (null = the unsectioned Active lane). */
   section?: { id: string | null; name: string; isLane: boolean };
+  /** One project's share of the Active lane, in a workspace grouped by project. */
+  project?: { id: string; name: string };
 };
 
 export function ThreadRow({

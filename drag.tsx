@@ -8,7 +8,7 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 // and bb's split gesture takes over.
 
 export const DROP_ATTR = "data-jb-drop-section";
-const ACTIVE_DROP = "__active";
+export const ACTIVE_DROP = "__active";
 
 type DragState = { threadId: string; title: string; x: number; y: number; over: string | null };
 export const DragContext = createContext<{
