@@ -430,6 +430,13 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Plans awaiting approval open expanded. Drag the handle under a plan to set its height.",
       default: true,
     },
+    hideRepeatedChoices: {
+      type: "boolean",
+      label: "Hide options the reply buttons repeat",
+      description:
+        "When the reply buttons above the composer list the agent's numbered options, hide the same list in the agent's message. Off shows both.",
+      default: true,
+    },
     copyCode: {
       type: "boolean",
       label: "Copy buttons on code",

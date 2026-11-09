@@ -760,3 +760,22 @@ it("lists watches in the auto-prompt menu and stops one when unticked", async ()
   await waitFor(() => expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ kind: "release", key: "t1@web-app" })));
   slot.lifecycle.unmount();
 });
+
+it("starts collapsed inside Catch up and opens there without changing the device preference", () => {
+  localStorage.setItem(MONITOR_COLLAPSE_KEY, "false");
+  const InCatchUp = (props: Parameters<typeof ActivityCard>[0]) => (
+    <div className="jf-catchup-chat">
+      <ActivityCard {...props} />
+    </div>
+  );
+  const slot = renderSlot(
+    { component: InCatchUp },
+    { data, running: false, startedAt: null, now: 2000, updatedAt: 2000, connected: true },
+  );
+  const region = slot.getByRole("region", { name: "Agent activity" });
+  expect(region.getAttribute("data-collapsed")).toBe("true");
+  fireEvent.click(slot.getByRole("button", { name: "Expand monitor" }));
+  expect(region.getAttribute("data-collapsed")).toBe("false");
+  expect(localStorage.getItem(MONITOR_COLLAPSE_KEY)).toBe("false");
+  slot.lifecycle.unmount();
+});

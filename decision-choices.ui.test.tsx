@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { DecisionChips } from "./decision-choices";
+import { DecisionChips, REPEATED_LIST_ATTR, repeatedList } from "./decision-choices";
 
 afterEach(cleanup);
 const options = [
@@ -135,4 +135,45 @@ it("lets a failed Go be retried", async () => {
   await slot.findByText("Sent “go”");
   expect(reply).toHaveBeenCalledTimes(2);
   slot.lifecycle.unmount();
+});
+
+function messageWithList(items: string[]) {
+  const row = document.createElement("div");
+  row.dataset.timelineRowId = "r1";
+  row.innerHTML = `<p>Pick one:</p><ol>${items.map((item) => `<li>${item}</li>`).join("")}</ol><p>Reply with the number.</p>`;
+  document.body.append(row);
+  return row;
+}
+
+it("hides the message's copy of the options while the buttons show, and restores it after", async () => {
+  const row = messageWithList([`<strong>Build step 3</strong> for builds and pre-choruses, keeping the existing measurement and full validation intact (recommended)`, options[1].text]);
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ options }) } },
+  );
+  const section = await slot.findByRole("region", { name: "Reply choices" });
+  await waitFor(() => expect(row.querySelector("ol")!.hasAttribute(REPEATED_LIST_ATTR)).toBe(true));
+  expect(section.hasAttribute("data-full")).toBe(true);
+  slot.lifecycle.unmount();
+  expect(row.querySelector("ol")!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  row.remove();
+});
+
+it("leaves lists alone that don't match, and everything when the setting is off", async () => {
+  const other = messageWithList(["Something else", "Another thing"]);
+  expect(repeatedList(document.body, options)).toBeNull();
+  other.remove();
+  const row = messageWithList(options.map((option) => option.text));
+  expect(repeatedList(document.body, options)).toBe(row.querySelector("ol"));
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ options }) }, settings: { hideRepeatedChoices: false } },
+  );
+  const section = await slot.findByRole("region", { name: "Reply choices" });
+  expect(row.querySelector("ol")!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  expect(section.hasAttribute("data-full")).toBe(false);
+  slot.lifecycle.unmount();
+  row.remove();
 });

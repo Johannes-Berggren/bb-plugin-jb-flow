@@ -178,3 +178,12 @@
     outline-offset: -1px;
   }
 }
+
+/* The message's own copy of these options is hidden, so show each option in full. */
+.jf-choices[data-full] .jf-choice-text {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+[data-jf-choices-repeated] {
+  display: none !important;
+}

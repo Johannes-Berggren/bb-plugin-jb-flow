@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
+import type { RefObject } from "react";
+import { useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { DecisionMode, DecisionOption } from "./decisions";
 import { Icon } from "@/components/ui/icon";
@@ -19,8 +20,74 @@ export function DecisionChips({
   ) : null;
 }
 
+/** Marks the agent's numbered list that these buttons repeat. CSS hides it. */
+export const REPEATED_LIST_ATTR = "data-jf-choices-repeated";
+
+const comparable = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** The ordered list in the latest message whose items are these options, if any. */
+export function repeatedList(scope: Element, options: readonly DecisionOption[]): HTMLOListElement | null {
+  const rows = scope.querySelectorAll("[data-timeline-row-id]");
+  const last = rows[rows.length - 1];
+  if (!last || options.length === 0) return null;
+  const lists = Array.from(last.querySelectorAll("ol")).reverse();
+  return (
+    lists.find((list) => {
+      const items = Array.from(list.children).filter((child) => child.tagName === "LI");
+      if (items.length !== options.length) return false;
+      return items.every((item, index) => {
+        const want = comparable(options[index]!.text).slice(0, 32);
+        return want.length > 0 && comparable(item.textContent ?? "").includes(want);
+      });
+    }) ?? null
+  );
+}
+
+/** The nearest ancestor of the buttons that holds the thread's messages. */
+function messageScope(from: Element | null): Element | null {
+  for (let node = from?.parentElement ?? null; node; node = node.parentElement) {
+    if (node.querySelector("[data-timeline-row-id]")) return node;
+  }
+  return null;
+}
+
+/** While the buttons show, hide the same list in the message above them. */
+function useHideRepeatedList(section: RefObject<HTMLElement | null>, options: readonly DecisionOption[], enabled: boolean) {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    if (!enabled || options.length === 0) return;
+    const scope = messageScope(section.current);
+    if (!scope) return;
+    let marked: Element | null = null;
+    const apply = () => {
+      const list = repeatedList(scope, options);
+      if (list === marked) return;
+      marked?.removeAttribute(REPEATED_LIST_ATTR);
+      list?.setAttribute(REPEATED_LIST_ATTR, "");
+      marked = list;
+      setHidden(list !== null);
+    };
+    apply();
+    let frame = 0;
+    const observer = new MutationObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(apply);
+    });
+    observer.observe(scope, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      marked?.removeAttribute(REPEATED_LIST_ATTR);
+      setHidden(false);
+    };
+  }, [section, options, enabled]);
+  return hidden;
+}
+
 function Choices({ threadId }: { threadId: string }) {
   const rpc = useRpc<typeof rpcContract>();
+  const hideRepeated = useSettings().values?.hideRepeatedChoices !== false;
+  const sectionRef = useRef<HTMLElement>(null);
   const [move, setMove] = useState<{ mode?: DecisionMode; options: DecisionOption[] }>({ options: [] });
   const [picked, setPicked] = useState<number[]>([]);
   const [pending, setPending] = useState<string | null>(null);
@@ -45,6 +112,7 @@ function Choices({ threadId }: { threadId: string }) {
     };
   }, [rpc, threadId]);
   const { options } = move;
+  const listHidden = useHideRepeatedList(sectionRef, options, hideRepeated);
   if (!options.length) return null;
   // A go-list: tick steps, then Go sends "go" (all) or "go 1,3".
   const go = move.mode === "go";
@@ -71,7 +139,7 @@ function Choices({ threadId }: { threadId: string }) {
   };
   const busy = pending !== null || sent !== null;
   return (
-    <section className="jf-choices" aria-label="Reply choices" data-mode={go ? "go" : "choice"}>
+    <section ref={sectionRef} className="jf-choices" aria-label="Reply choices" data-mode={go ? "go" : "choice"} data-full={listHidden || undefined}>
       <div className="jf-choices-heading">
         <Icon name="MessageCircle" className="size-3.5" />
         <span>YOUR NEXT MOVE</span>
