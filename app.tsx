@@ -32,6 +32,7 @@ import { TriageThreadList } from "./triage-list";
 import { DigestSection } from "./digest";
 import { LaneSettings, MigrationSettings } from "./settings-panels";
 import { EXPAND_PLANS_FLAG, mountPlanExpander } from "./plan-expander";
+import { PlanModelPicker } from "./plan-model-picker";
 
 // --- thread header: status strip + Pull requests panel ------------------------------
 
@@ -246,6 +247,7 @@ export default definePluginApp((app) => {
   });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
+  app.slots.experimental_appOverlay({ id: "plan-model-picker", component: PlanModelPicker });
   app.slots.experimental_sidebarNavigation({
     id: "workspaces", title: "JB Flow workspaces", placement: "list",
     description: "Workspace tabs with projects, threads, sections and tools.",

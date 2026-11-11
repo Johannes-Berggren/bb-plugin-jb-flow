@@ -353,6 +353,13 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - Drag the handle on top of a plan to make it taller or shorter; double-click it to reset. The height is remembered in this browser.
 - This is a content script, so it depends on bb's plan-banner markup.
 
+### Approve a plan with another model
+- On by default (**Model choice on plan approval** in the plugin settings).
+- A menu next to **Approve plan** lists the thread's models, from whichever provider the thread uses. Pick one to approve the plan and have it implemented on that model, e.g. plan on a strong reasoning model and build on a faster one.
+- The approval sets the thread's model, then steers the running turn with it (the switch happens through a short steer message), so the implementation itself runs on the new model and later turns stay on it.
+- The last choice is remembered on this device and shown as a one-click **Approve with …** button. Picking the current model clears it.
+- The menu attaches when one plan card is on screen and the open thread has the plan waiting. It depends on bb's plan-banner markup.
+
 ### Multi-PR threads (stacked and cross-repo)
 - Every PR a thread opens with `gh pr create` is linked automatically, in any repo. You can also link PRs manually.
 - One batched GitHub GraphQL query every 3 minutes keeps their state current: checks, review, conflicts, draft or merged.
@@ -446,6 +453,7 @@ Under **Settings → JB Flow**:
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).
 - **Expand plan reviews**: expanded, resizable plan reviews (on by default).
+- **Model choice on plan approval**: a model menu next to *Approve plan* to implement on another of the thread's models (on by default).
 - **Hide options the reply buttons repeat**: while the reply choices show, hide the same numbered list and its "Reply with…" line in the agent's message (on by default).
 - **Copy buttons on code**: hovering an inline code snippet in a chat message shows a copy button (off by default). Fenced code blocks already have BB's own *Copy code*.
 - **Advanced config (JSON)**: see below.
