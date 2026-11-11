@@ -40,6 +40,12 @@
   color: var(--cd-kind, var(--cd-decision));
   background: color-mix(in oklch, var(--cd-kind, var(--cd-decision)) 14%, transparent);
 }
+button.jf-brief-icon {
+  cursor: pointer;
+}
+button.jf-brief-icon:hover {
+  background: color-mix(in oklch, var(--cd-kind, var(--cd-decision)) 24%, transparent);
+}
 .jf-brief-icon [data-icon-root] {
   width: 13px;
   height: 13px;
@@ -178,4 +184,35 @@
 .jf-feed-undo:hover,
 .jf-feed-more:hover {
   color: var(--foreground);
+}
+.jf-feed-conductors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0 0 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-feed-conductors button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.jf-feed-conductors button:hover {
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+.jf-feed-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--cd-decision) 18%, transparent);
+  color: var(--cd-decision);
+  font-size: 11px;
+  text-align: center;
 }

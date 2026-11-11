@@ -45,6 +45,17 @@ describe("the conductor where you already work", () => {
     await waitFor(() => expect(slot.container.textContent).not.toContain("Pick a chart library"));
   });
 
+  it("its icon opens the conductor, for the whole briefing and conversation", async () => {
+    const slot = renderSlot({ component: () => <ConductorBriefStrip threadId="thr_b" /> }, {}, {
+      settings: { conductor: true },
+      rpc: { conductor_briefs: () => ({ briefs: [brief] }) } as never,
+      realtimeConnectionState: "connected",
+    });
+    await waitFor(() => expect(slot.container.textContent).toContain("Pick a chart library"));
+    fireEvent.click(slot.getByRole("button", { name: "Open the conductor" }));
+    expect(slot.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "conductor", options: { subPath: "ws" } });
+  });
+
   it("shows nothing for a thread without a brief, or with the conductor off", async () => {
     const other = renderSlot({ component: () => <ConductorBriefStrip threadId="thr_x" /> }, {}, {
       settings: { conductor: true },
@@ -67,12 +78,26 @@ describe("the conductor where you already work", () => {
   it("lists what autopilot did today on the home page, with what it spared and an undo", async () => {
     const slot = renderSlot({ component: DoneForYouSection }, {}, {
       settings: { conductor: true },
-      rpc: { conductor_feed: () => feed } as never,
+      rpc: {
+        conductor_feed: () => feed,
+        conductor_list: () => ({
+          enabled: true,
+          conductors: [
+            { workspaceId: "ws", name: "Web", enabled: true, active: true, threadId: "thr_c", open: 0, undelivered: 0, needsYou: 3 },
+            { workspaceId: "off", name: "Api", enabled: false, active: false, threadId: "thr_d", open: 0, undelivered: 0, needsYou: 0 },
+          ],
+        }),
+      } as never,
       sdk: { threads: { unarchive: (async () => ({})) as never } },
       realtimeConnectionState: "connected",
     });
     await waitFor(() => expect(slot.container.textContent).toContain("2 merged · 1 archived · 5 wake-ups spared (≈7.4M tokens)"));
     expect(slot.container.textContent).toContain("Merged web-app#12 once it was green.");
+    // Running conductors are a click away, with what each still needs from you.
+    await waitFor(() => expect(slot.getByRole("button", { name: "Web3" })).toBeTruthy());
+    expect(slot.queryByRole("button", { name: /Api/ })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Web3" }));
+    expect(slot.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "conductor", options: { subPath: "ws" } });
     fireEvent.click(slot.getByRole("button", { name: "Unarchive" }));
     await waitFor(() => expect(slot.sdkCalls.some((call) => call.method === "threads.unarchive")).toBe(true));
     fireEvent.click(slot.getAllByRole("button", { name: "Fix billing export" })[0]!);

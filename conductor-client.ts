@@ -2,7 +2,7 @@
 // thread monitor stays out of a conductor's own conversation).
 import { useCallback, useEffect, useState } from "react";
 import { useRealtime, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
-import type { ConductorBrief, ConductorFeed, rpcContract } from "./server";
+import type { ConductorBrief, ConductorFeed, ConductorStatus, rpcContract } from "./server";
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -73,4 +73,21 @@ export function tokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count >= 10_000_000 ? 0 : 1)}M`;
   if (count >= 1_000) return `${Math.round(count / 1_000)}k`;
   return String(count);
+}
+
+/** Every conductor's status (running or not, what its briefing still needs from you), kept current. */
+export function useConductorList(): ConductorStatus[] {
+  const enabled = useSettings().values?.conductor === true;
+  const rpc = useRpc<typeof rpcContract>();
+  const [list, setList] = useState<ConductorStatus[]>([]);
+  const load = useCallback(() => {
+    if (!enabled) {
+      setList([]);
+      return;
+    }
+    rpc.call("conductor_list", null).then((result) => setList(result.conductors), () => undefined);
+  }, [enabled, rpc]);
+  useEffect(load, [load]);
+  useRealtime("jb-flow-changed", load);
+  return list;
 }

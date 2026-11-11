@@ -424,7 +424,7 @@ A conductor is a permanent agent thread that looks after one workspace. Its work
 - **Briefing.** Every turn ends with a briefing: one item per thread that needs you (summary, recommendation, the exact reply for the worker), plus what it handled. Reply in the conductor with `2 go, 4 snooze 3d, 5: use option B`: it sends each reply, snoozes or archives, and marks those threads read. `bb jb-flow conductor briefing <workspace-id>` prints it.
 - **Permanent.** The thread is hidden from the thread list. Archiving it brings it straight back, and a deleted one is started again at the next wake-up. Preferences you state ("always merge dependency bumps") are kept with its `conductor_memory` tool and included in its instructions.
 - **Only its own workspace.** Its tools (`conductor_inbox`, `fleet_status`, `thread_brief`, `merge_pr`, `rerun_failed`, `forward_to_thread`, `thread_action`, `post_briefing`, `conductor_memory`) are given to conductor threads only. They act only on threads and PRs of its workspace.
-- **The Conductor page.** Each conductor has its own page (*Conductor* in the navigation, badged with what its briefing still needs from you). It opens on the selected workspace tab.
+- **The Conductor page.** Each conductor has its own page, reached from the conductors listed in *Done for you*, from the icon on a Catch up strip, or under *More tools* (JB Flow's sidebar doesn't list it, since the conductor comes to you).
   - **Briefing cards.** Each card has the summary, the recommendation and the reply it would send:
     - **Go** sends that reply to the worker as yours.
     - **Reply…** sends your own text.

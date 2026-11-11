@@ -6,7 +6,7 @@ import { useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import type { ConductorFeed, rpcContract } from "./server";
 import { Icon } from "@/components/ui/icon";
 import { headlineOf } from "./conductor-model";
-import { tokens, useConductorBriefs, useConductorFeed } from "./conductor-client";
+import { tokens, useConductorBriefs, useConductorFeed, useConductorList } from "./conductor-client";
 import { errorText } from "./flow-state";
 
 const shortReply = (text: string) => {
@@ -18,6 +18,7 @@ const shortReply = (text: string) => {
 export function ConductorBriefStrip({ threadId }: { threadId: string }) {
   const brief = useConductorBriefs().get(threadId);
   const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
   if (!brief || state === "sent") return null;
@@ -35,9 +36,15 @@ export function ConductorBriefStrip({ threadId }: { threadId: string }) {
   };
   return (
     <div className="jf-brief" data-kind={item.kind} role="note" aria-label="The conductor's brief">
-      <span className="jf-brief-icon">
+      <button
+        type="button"
+        className="jf-brief-icon"
+        title="Open the conductor: its whole briefing and conversation"
+        aria-label="Open the conductor"
+        onClick={() => navigate.toPluginPanel("conductor", { subPath: brief.workspaceId })}
+      >
         <Icon name="Workflow" />
-      </span>
+      </button>
       <div className="jf-brief-main">
         <p className="jf-brief-headline">{headlineOf(item, 120)}</p>
         {item.recommendation && <p className="jf-brief-rec">{item.recommendation}</p>}
@@ -81,6 +88,7 @@ export function feedSummary(feed: Pick<ConductorFeed, "merged" | "archived" | "w
 /** Home page: what autopilot did for you today, with undo for archives. */
 export function DoneForYouSection() {
   const feed = useConductorFeed();
+  const conductors = useConductorList().filter((entry) => entry.active && entry.threadId);
   const sdk = useSdk();
   const navigate = useBbNavigate();
   const [showAll, setShowAll] = useState(false);
@@ -94,6 +102,17 @@ export function DoneForYouSection() {
         <span>{feedSummary(feed)}</span>
         {feed.refused > 0 && <span className="jf-feed-refused">{feed.refused} couldn't merge: see the conductor</span>}
       </p>
+      {conductors.length > 0 && (
+        <p className="jf-feed-conductors">
+          <span>Conductors</span>
+          {conductors.map((entry) => (
+            <button key={entry.workspaceId} type="button" onClick={() => navigate.toPluginPanel("conductor", { subPath: entry.workspaceId })}>
+              {entry.name}
+              {entry.needsYou > 0 ? <span className="jf-feed-count">{entry.needsYou}</span> : null}
+            </button>
+          ))}
+        </p>
+      )}
       {shown.length > 0 && (
         <ol className="jf-feed-list">
           {shown.map((entry) => {
