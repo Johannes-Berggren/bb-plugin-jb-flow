@@ -28,7 +28,7 @@ import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when
 import { isGoneError } from "./ci-watch";
 import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
-import { briefingSchema } from "./conductor-model";
+import { briefingContextSchema, briefingSchema } from "./conductor-model";
 import { createConductorStore } from "./conductor-store";
 import { migrate } from "./migrations";
 import { wakeDueSnoozes } from "./snooze-wake";
@@ -159,6 +159,7 @@ const conductorStatusSchema = z.object({
 export type ConductorStatus = z.infer<typeof conductorStatusSchema>;
 const conductorPageSchema = z.object({
   workspaceId: z.string(),
+  contexts: z.record(z.string(), briefingContextSchema),
   threadId: z.string().nullable(),
   threadStatus: z.string().nullable(),
   active: z.boolean(),

@@ -94,12 +94,41 @@ const page: ConductorPage = {
     at: NOW - 60_000,
     items: [
       { threadId: "thr_a", kind: "ready", summary: "CI is green; it waits for your go to deploy.", recommendation: "Deploy", reply: "go" },
-      { threadId: "thr_b", kind: "decision", summary: "Pick a chart library.", recommendation: "Option 2: smaller bundle", reply: "2" },
+      { threadId: "thr_b", kind: "decision", headline: "Pick a chart library", summary: "The dashboard needs charts; two libraries fit.", recommendation: "Option 2: smaller bundle", reply: "2" },
       { threadId: "thr_c", kind: "fyi", summary: "Already dealt with." },
     ],
     handled: [{ threadId: "thr_a", what: "Merged acme/web-app#12" }],
   },
   resolved: ["thr_c"],
+  contexts: {
+    thr_a: {
+      status: "idle",
+      waitingSince: NOW - 2 * 3_600_000,
+      dueAt: null,
+      dueReason: null,
+      goal: "Ship the billing export",
+      next: "Deploy once you say go",
+      blocked: null,
+      prs: [{ repo: "acme/web-app", number: 12, attention: "ready_to_merge", url: "https://github.com/acme/web-app/pull/12", title: "Fix export" }],
+      options: [],
+      optionsMode: null,
+    },
+    thr_b: {
+      status: "idle",
+      waitingSince: NOW - 3 * 86_400_000,
+      dueAt: NOW + 86_400_000 * 1.5,
+      dueReason: "Design review",
+      goal: "Charts for the dashboard",
+      next: null,
+      blocked: null,
+      prs: [],
+      options: [
+        { n: 1, text: "Recharts: familiar, larger bundle", recommended: false },
+        { n: 2, text: "uPlot: smaller bundle", recommended: true },
+      ],
+      optionsMode: "choice",
+    },
+  },
   log: [{ id: 1, at: NOW - 30_000, kind: "merged", threadId: "thr_a", text: "Merged acme/web-app#12." }],
   open: 2,
   lastWakeAt: NOW - 120_000,
@@ -130,84 +159,95 @@ async function mountPanel(options: { settings?: Record<string, boolean>; subPath
   );
 }
 
-const cards = () => Array.from(document.querySelectorAll<HTMLElement>(".jf-cd-card"));
+const items = () => Array.from(document.querySelectorAll<HTMLElement>(".jf-cd-item"));
+const cardCalls = (slot: { rpcCalls: Array<{ method: string; input: unknown }> }) =>
+  slot.rpcCalls.filter((call) => call.method === "conductor_card").map((call) => call.input);
 
 afterEach(() => cleanup());
 
 describe("Conductor page", () => {
-  it("shows the briefing as cards grouped by kind, leaving out the ones you've dealt with", async () => {
+  it("lists the briefing as lines to scan, decisions first, with the selected one open", async () => {
     const slot = await mountPanel();
-    await waitFor(() => expect(cards()).toHaveLength(2));
+    await waitFor(() => expect(items()).toHaveLength(2));
     expect(slot.getByRole("tab", { name: /Briefing/ }).textContent).toBe("Briefing2");
-    // Decisions come before what's ready to go.
-    expect(cards()[0]!.textContent).toContain("Chart library");
-    expect(cards()[0]!.textContent).toContain("Option 2: smaller bundle");
-    expect(cards()[1]!.textContent).toContain("Fix billing export");
+    // Decisions come before what's ready to go; each line is its headline.
+    expect(items()[0]!.querySelector(".jf-cd-headline")!.textContent).toBe("Pick a chart library");
+    expect(items()[1]!.querySelector(".jf-cd-headline")!.textContent).toBe("CI is green; it waits for your go to deploy.");
+    expect(items()[0]!.textContent).toContain("due");
+    expect(items()[0]!.textContent).toContain("3d");
+    // The first is open with its context; the others are one line.
+    expect(items()[0]!.textContent).toContain("Charts for the dashboard");
+    expect(items()[1]!.textContent).not.toContain("Ship the billing export");
     expect(slot.container.textContent).toContain("2 waiting in its inbox");
     fireEvent.click(slot.getByRole("button", { name: /Handled by the conductor · 1/ }));
     expect(slot.container.textContent).toContain("Merged acme/web-app#12");
   });
 
-  it("filters the briefing by kind", async () => {
-    const slot = await mountPanel();
-    await waitFor(() => expect(cards()).toHaveLength(2));
-    fireEvent.click(within(slot.getByRole("group", { name: "Show" })).getByRole("button", { name: /Decisions/ }));
-    expect(cards()).toHaveLength(1);
-    expect(cards()[0]!.textContent).toContain("Chart library");
+  it("opens another line with its context, PRs included", async () => {
+    await mountPanel();
+    await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(items()[1]!.querySelector(".jf-cd-row")!);
+    expect(items()[1]!.textContent).toContain("Ship the billing export");
+    expect(items()[1]!.textContent).toContain("web-app#12 · ready to merge");
+    expect(items()[0]!.textContent).not.toContain("Charts for the dashboard");
   });
 
-  it("sends the suggested reply untouched as a go", async () => {
+  it("filters the briefing by kind", async () => {
     const slot = await mountPanel();
-    await waitFor(() => expect(cards()).toHaveLength(2));
-    fireEvent.click(within(cards()[0]!).getByRole("button", { name: /Send suggested reply/ }));
+    await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(within(slot.getByRole("group", { name: "Show" })).getByRole("button", { name: /Decisions/ }));
+    expect(items()).toHaveLength(1);
+  });
+
+  it("answers with one of the thread's own options", async () => {
+    const slot = await mountPanel();
+    await waitFor(() => expect(items()).toHaveLength(2));
+    const options = within(items()[0]!).getByRole("group", { name: "The thread's options" });
+    expect(within(options).getByRole("button", { name: /uPlot/ }).textContent).toContain("Recommended");
+    fireEvent.click(within(options).getByRole("button", { name: /Recharts/ }));
     await waitFor(() =>
-      expect(slot.rpcCalls.find((call) => call.method === "conductor_card")?.input).toEqual({ workspaceId: "ws", threadId: "thr_b", action: "go" }),
+      expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_b", action: "reply", text: "1" }),
     );
+  });
+
+  it("sends the suggestion as a go, from the open item or straight from a line", async () => {
+    const slot = await mountPanel();
+    await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(within(items()[0]!).getByRole("button", { name: /Send suggested reply/ }));
+    await waitFor(() => expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_b", action: "go" }));
+    fireEvent.click(within(items()[1]!).getByRole("button", { name: "Send “go”" }));
+    await waitFor(() => expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_a", action: "go" }));
   });
 
   it("an edited suggestion goes out as your own reply", async () => {
     const slot = await mountPanel();
-    await waitFor(() => expect(cards()).toHaveLength(2));
-    fireEvent.change(within(cards()[1]!).getByRole("textbox"), { target: { value: "Deploy after lunch" } });
-    fireEvent.click(within(cards()[1]!).getByRole("button", { name: /^Send/ }));
+    await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(items()[1]!.querySelector(".jf-cd-row")!);
+    fireEvent.change(within(items()[1]!).getByRole("textbox"), { target: { value: "Deploy after lunch" } });
+    fireEvent.click(within(items()[1]!).getByRole("button", { name: /^Send/ }));
     await waitFor(() =>
-      expect(slot.rpcCalls.find((call) => call.method === "conductor_card")?.input).toEqual({
-        workspaceId: "ws",
-        threadId: "thr_a",
-        action: "reply",
-        text: "Deploy after lunch",
-      }),
+      expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_a", action: "reply", text: "Deploy after lunch" }),
     );
   });
 
-  it("snoozes from the clock button, and keys act on the selected card", async () => {
+  it("snoozes, opens the thread beside the page, and takes keys", async () => {
     const slot = await mountPanel();
-    await waitFor(() => expect(cards()).toHaveLength(2));
-    fireEvent.click(within(cards()[0]!).getByRole("button", { name: "Snooze" }));
-    fireEvent.click(within(cards()[0]!).getByRole("button", { name: "Tomorrow" }));
-    await waitFor(() =>
-      expect(slot.rpcCalls.filter((call) => call.method === "conductor_card").at(-1)?.input).toEqual({
-        workspaceId: "ws",
-        threadId: "thr_b",
-        action: "snooze",
-        until: "tomorrow",
-      }),
-    );
+    await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(within(items()[0]!).getByRole("button", { name: "Open the thread beside this" }));
+    expect(slot.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_b", options: { split: true } });
+    fireEvent.click(within(items()[0]!).getByRole("button", { name: "Snooze" }));
+    fireEvent.click(within(items()[0]!).getByRole("button", { name: "Tomorrow" }));
+    await waitFor(() => expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_b", action: "snooze", until: "tomorrow" }));
     const briefing = document.querySelector<HTMLElement>(".jf-cd-briefing")!;
     fireEvent.keyDown(briefing, { key: "j" });
+    await waitFor(() => expect(items()[1]!.textContent).toContain("Ship the billing export"));
     fireEvent.keyDown(briefing, { key: "e" });
-    await waitFor(() =>
-      expect(slot.rpcCalls.filter((call) => call.method === "conductor_card").at(-1)?.input).toEqual({
-        workspaceId: "ws",
-        threadId: "thr_a",
-        action: "dismiss",
-      }),
-    );
+    await waitFor(() => expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_a", action: "dismiss" }));
   });
 
   it("sends a line to the conductor itself and opens the conversation", async () => {
     const slot = await mountPanel({ rpc: { thread_reply: () => ({ ok: true }) } });
-    await waitFor(() => expect(cards()).toHaveLength(2));
+    await waitFor(() => expect(items()).toHaveLength(2));
     fireEvent.change(slot.getByRole("textbox", { name: "Tell the conductor" }), { target: { value: "2 go, 1 snooze 3d" } });
     fireEvent.click(slot.getByRole("button", { name: "Send to the conductor" }));
     await waitFor(() =>
@@ -218,7 +258,7 @@ describe("Conductor page", () => {
 
   it("wakes the conductor on request", async () => {
     const slot = await mountPanel();
-    await waitFor(() => expect(cards()).toHaveLength(2));
+    await waitFor(() => expect(items()).toHaveLength(2));
     fireEvent.click(slot.getByRole("button", { name: /Wake now/ }));
     await waitFor(() => expect(slot.container.textContent).toContain("Woken with its inbox"));
   });
@@ -231,10 +271,12 @@ describe("Conductor page", () => {
         ],
       },
     });
-    await waitFor(() => expect(cards()).toHaveLength(2));
+    await waitFor(() => expect(items()).toHaveLength(2));
     fireEvent.click(slot.getByRole("tab", { name: /Threads/ }));
     await waitFor(() => expect(slot.container.textContent).toContain("Needs you"));
     expect(slot.container.textContent).toContain("Next: Deploy");
+    fireEvent.click(slot.getByRole("button", { name: "Fix billing export" }));
+    expect(slot.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_a", options: { split: true } });
     fireEvent.click(slot.getByRole("tab", { name: "Activity" }));
     await waitFor(() => expect(slot.container.textContent).toContain("Merged acme/web-app#12."));
   });
@@ -249,7 +291,7 @@ describe("Conductor page", () => {
   it("says it's off while the setting is off", async () => {
     const slot = await mountPanel({ settings: { conductor: false } });
     await waitFor(() => expect(slot.container.textContent).toContain("Conductor is off"));
-    expect(cards()).toHaveLength(0);
+    expect(items()).toHaveLength(0);
   });
 
   it("badges the nav entry with what the running conductors' briefings still need from you", async () => {

@@ -28,6 +28,8 @@ export const BRIEFING_KINDS = ["decision", "ready", "blocked", "fyi"] as const;
 export const briefingItemSchema = z.object({
   threadId: z.string().min(1).max(200),
   kind: z.enum(BRIEFING_KINDS),
+  /** What you need from the user, in a few words: the line they scan. */
+  headline: z.string().max(120).optional(),
   /** What happened and what's needed, in a sentence or two. */
   summary: z.string().min(1).max(500),
   recommendation: z.string().max(300).optional(),
@@ -41,6 +43,29 @@ export const briefingSchema = z.object({
   note: z.string().max(1000).optional(),
 });
 export type BriefingItem = z.infer<typeof briefingItemSchema>;
+
+/** What the page shows around a briefing item, read from the thread itself. */
+export const briefingContextSchema = z.object({
+  status: z.string(),
+  /** Since when the thread has waited on the user (or last asked for attention). */
+  waitingSince: z.number().nullable(),
+  dueAt: z.number().nullable(),
+  dueReason: z.string().nullable(),
+  goal: z.string().nullable(),
+  next: z.string().nullable(),
+  blocked: z.string().nullable(),
+  prs: z.array(z.object({ repo: z.string(), number: z.number(), attention: z.string(), url: z.string(), title: z.string() })),
+  /** The numbered options the worker ended on, answered with a number ("choice") or "go 1,3" ("go"). */
+  options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
+  optionsMode: z.enum(["go", "choice"]).nullable(),
+});
+export type BriefingContext = z.infer<typeof briefingContextSchema>;
+
+/** The line a briefing item is scanned by: its headline, or the first sentence of its summary. */
+export function headlineOf(item: Pick<BriefingItem, "headline" | "summary">, max = 90): string {
+  const text = item.headline?.trim() || item.summary.split(/(?<=[.!?])\s/)[0]!.trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
 export type Briefing = z.infer<typeof briefingSchema>;
 
 /** Standing preferences the conductor keeps between sessions. */
@@ -141,7 +166,7 @@ Each time you're woken:
    - A PR merged or closed and its thread has nothing left (no other open PRs, no further steps): thread_action archive.
 3. Forward to a worker only what it must act on, with forward_to_thread: one clear instruction.
 4. Never decide product, scope or outward-facing questions for the user, and never bypass branch protection or required reviews.
-5. Acknowledge what you handled (conductor_inbox with ack), then end every turn with post_briefing: one item per thread that needs the user (summary, your recommendation, the exact reply for the worker) and what you handled.
+5. Acknowledge what you handled (conductor_inbox with ack), then end every turn with post_briefing: one item per thread that needs the user (a headline of what you need from them in at most 8 words, a one- or two-sentence summary, your recommendation, the exact reply for the worker) and what you handled.
 
 When the user writes to you:
 - A bare item number or "go" means: send that item's recommended reply to its worker (forward_to_thread with mark_read).

@@ -11,6 +11,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { handBack } from "./awaiting.ts";
+import { nextMove } from "./decisions.ts";
 import { isGoneError } from "./ci-watch.ts";
 import { gh as runGh } from "./gh.ts";
 import {
@@ -29,6 +30,7 @@ import {
   wakeDue,
   wakeMessage,
   type Briefing,
+  type BriefingContext,
   type ConductorRecord,
 } from "./conductor-model.ts";
 import type { ConductorInboxEvent, ConductorSink } from "./conductor-routing.ts";
@@ -622,7 +624,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
 
   tool(
     "post_briefing",
-    "Leave the user the current briefing; it replaces the previous one on the conductor page. items: every thread that needs the user now (not only new ones), each with a short summary, your recommendation and the exact reply to send its worker if they agree. handled: what you did since the last briefing.",
+    "Leave the user the current briefing; it replaces the previous one on the conductor page. items: every thread that needs the user now (not only new ones), each with a headline (what you need from them, at most 8 words, e.g. \"Pick a chart library\"), a one- or two-sentence summary, your recommendation and the exact reply to send its worker if they agree. The page already shows each thread's goal, PRs, its numbered options and how long it has waited, so don't repeat those. handled: what you did since the last briefing.",
     z.object({
       items: z.array(briefingItemSchema.extend({ kind: z.enum(BRIEFING_KINDS) })).max(40),
       handled: z.array(z.object({ threadId: z.string().max(200).nullable(), what: z.string().min(1).max(300) })).max(60).optional(),
@@ -731,6 +733,41 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     return done;
   }
 
+  // The options parse reads the thread's last reply; redo it only when the thread changed.
+  const optionsCache = new Map<string, { updatedAt: number; move: ReturnType<typeof nextMove> }>();
+  /** What the page shows around one briefing item, from the thread itself. */
+  async function contextFor(threadId: string, threads: ListedThread[], flow: NowFlow, prs: Record<string, PrStatus[]>): Promise<BriefingContext | null> {
+    const thread = threads.find((candidate) => candidate.id === threadId);
+    if (!thread) return null;
+    const status = await deps.threadStatus(threadId).catch(() => null);
+    let move: ReturnType<typeof nextMove> = { mode: "choice", options: [] };
+    if (thread.status === "idle") {
+      const cached = optionsCache.get(threadId);
+      if (cached?.updatedAt === thread.updatedAt) move = cached.move;
+      else {
+        const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+        move = nextMove(output.output ?? "");
+        optionsCache.set(threadId, { updatedAt: thread.updatedAt, move });
+      }
+    }
+    const due = flow.due[threadId];
+    const report = status?.report;
+    return {
+      status: thread.status,
+      waitingSince: flow.awaiting[threadId] ?? thread.latestAttentionAt ?? null,
+      dueAt: due?.at ?? null,
+      dueReason: due?.reason ?? null,
+      goal: report?.goal || null,
+      next: report?.next || null,
+      blocked: report?.blocked || null,
+      prs: (prs[threadId] ?? [])
+        .filter((pr) => pr.state === "open" || pr.state === "draft")
+        .map((pr) => ({ repo: pr.repo, number: pr.number, attention: pr.attention, url: pr.url, title: pr.title })),
+      options: move.options,
+      optionsMode: move.options.length > 0 ? move.mode : null,
+    };
+  }
+
   /** Everything the conductor page shows for one workspace. */
   async function page(workspaceId: string) {
     const record = records[workspaceId] ?? null;
@@ -739,13 +776,26 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
       resolved(workspaceId),
       record?.threadId ? bb.sdk.threads.get({ threadId: record.threadId }).catch(() => null) : Promise.resolve(null),
     ]);
+    const resolvedIds = current ? Object.keys(done).filter((id) => done[id] === current.at) : [];
+    const contexts: Record<string, BriefingContext> = {};
+    const openItems = (current?.items ?? []).filter((item) => !resolvedIds.includes(item.threadId));
+    if (openItems.length > 0) {
+      const [threads, flow, prs] = await Promise.all([deps.listThreads(), deps.flow(), deps.prsByThread()]);
+      await Promise.all(
+        openItems.map(async (item) => {
+          const context = await contextFor(item.threadId, threads, flow, prs).catch(() => null);
+          if (context) contexts[item.threadId] = context;
+        }),
+      );
+    }
     return {
       workspaceId,
+      contexts,
       threadId: record?.threadId ?? null,
       threadStatus: thread?.status ?? null,
       active: active(workspaceId),
       briefing: current,
-      resolved: current ? Object.keys(done).filter((id) => done[id] === current.at) : [],
+      resolved: resolvedIds,
       log: deps.store.recentLog(workspaceId, 60),
       open: deps.store.open(workspaceId, 500).filter((event) => event.kind !== USER_ACTION).length,
       lastWakeAt: record?.lastWakeAt ?? null,

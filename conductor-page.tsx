@@ -18,7 +18,7 @@ import {
   type PluginNavPanelProps,
   type PluginSettingsSectionProps,
 } from "@get-bb/plugin-sdk/app";
-import type { BriefingItem } from "./conductor-model";
+import { headlineOf, type BriefingContext, type BriefingItem } from "./conductor-model";
 import type { ConductorFleetRow, ConductorPage as PageState, ConductorStatus, rpcContract } from "./server";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -334,6 +334,29 @@ function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; stat
 
 // --- briefing ----------------------------------------------------------------
 
+/** Threads open beside the conductor, so the briefing stays in view. */
+function useOpenThread() {
+  const navigate = useBbNavigate();
+  return useCallback((threadId: string) => navigate.toThread(threadId, { split: true }), [navigate]);
+}
+
+function age(since: number | null): string | null {
+  if (!since) return null;
+  const minutes = Math.max(0, Math.round((Date.now() - since) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`;
+}
+
+function dueLabel(at: number | null): string | null {
+  if (!at) return null;
+  const days = Math.round((at - Date.now()) / 86_400_000);
+  if (at < Date.now()) return "overdue";
+  if (days < 1) return "due today";
+  if (days < 2) return "due tomorrow";
+  return `due ${new Date(at).toLocaleDateString([], { weekday: "short" })}`;
+}
+
 function Briefing({
   workspaceId,
   page,
@@ -353,8 +376,10 @@ function Briefing({
   }, [threads, projects]);
   const [filter, setFilter] = useState<Kind | "all">("all");
   const [selected, setSelected] = useState(0);
+  const [expanded, setExpanded] = useState(true);
   const [showHandled, setShowHandled] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const moved = useRef(false);
   const briefing = page.briefing;
 
   const open = useMemo(
@@ -370,36 +395,45 @@ function Briefing({
     for (const item of open) result.set(item.kind, (result.get(item.kind) ?? 0) + 1);
     return result;
   }, [open]);
+  const oldest = useMemo(() => {
+    const times = open.map((item) => page.contexts[item.threadId]?.waitingSince ?? null).filter((at): at is number => at !== null);
+    return times.length ? Math.min(...times) : null;
+  }, [open, page.contexts]);
   useEffect(() => {
     if (filter !== "all" && !counts.get(filter)) setFilter("all");
   }, [counts, filter]);
   useEffect(() => {
     setSelected((current) => Math.min(current, Math.max(0, visible.length - 1)));
   }, [visible.length]);
-
-  // Keys act on the selected card; each card listens for its own via this event.
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
-    const key = event.key;
-    if (key === "j" || key === "ArrowDown") {
-      moved.current = true;
-      setSelected((index) => Math.min(index + 1, visible.length - 1));
-    } else if (key === "k" || key === "ArrowUp") {
-      moved.current = true;
-      setSelected((index) => Math.max(index - 1, 0));
-    }
-    else if (["g", "r", "s", "o", "e"].includes(key) && visible[selected]) {
-      root.current?.querySelector<HTMLElement>(`[data-card="${visible[selected].threadId}"]`)?.dispatchEvent(new CustomEvent("jf-cd-key", { detail: key }));
-    } else return;
-    event.preventDefault();
-  };
   // Follow the selection with the scroll, but only when a key moved it.
-  const moved = useRef(false);
   useEffect(() => {
     if (!moved.current) return;
     moved.current = false;
-    root.current?.querySelector<HTMLElement>(`[data-card][data-selected]`)?.scrollIntoView?.({ block: "nearest" });
+    root.current?.querySelector<HTMLElement>(`[data-item][data-selected]`)?.scrollIntoView?.({ block: "nearest" });
   }, [selected]);
+
+  const select = (index: number) => {
+    if (index === selected) setExpanded(!expanded);
+    else {
+      setSelected(index);
+      setExpanded(true);
+    }
+  };
+  // Keys act on the selected item; each item listens for its own via this event.
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    const key = event.key;
+    if (key === "j" || key === "ArrowDown" || key === "k" || key === "ArrowUp") {
+      moved.current = true;
+      const down = key === "j" || key === "ArrowDown";
+      setSelected((index) => (down ? Math.min(index + 1, visible.length - 1) : Math.max(index - 1, 0)));
+      setExpanded(true);
+    } else if (key === "Enter") setExpanded((value) => !value);
+    else if (["g", "r", "s", "o", "e"].includes(key) && visible[selected]) {
+      root.current?.querySelector<HTMLElement>(`[data-item="${visible[selected].threadId}"]`)?.dispatchEvent(new CustomEvent("jf-cd-key", { detail: key }));
+    } else return;
+    event.preventDefault();
+  };
 
   if (!briefing) {
     return (
@@ -412,8 +446,22 @@ function Briefing({
   let index = 0;
   return (
     <div className="jf-cd-briefing" ref={root} tabIndex={-1} onKeyDown={onKeyDown}>
-      <div className="jf-cd-briefing-meta">
-        <span className="jf-cd-muted">Briefing from {formatWhen(briefing.at)}</span>
+      <div className="jf-cd-summary-strip">
+        <div className="jf-cd-stat">
+          <strong>{open.length}</strong>
+          <span>{open.length === 1 ? "needs you" : "need you"}</span>
+        </div>
+        {oldest && (
+          <div className="jf-cd-stat">
+            <strong>{age(oldest)}</strong>
+            <span>oldest wait</span>
+          </div>
+        )}
+        <div className="jf-cd-stat">
+          <strong>{briefing.handled.length}</strong>
+          <span>handled</span>
+        </div>
+        <span className="jf-cd-spacer" />
         {open.length > 0 && (
           <div className="jf-cd-filters" role="group" aria-label="Show">
             <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
@@ -430,10 +478,11 @@ function Briefing({
       </div>
 
       {briefing.note && (
-        <blockquote className="jf-cd-note">
+        <p className="jf-cd-note">
           <Icon name="Workflow" />
           <span>{briefing.note}</span>
-        </blockquote>
+          <span className="jf-cd-muted">{clock(briefing.at)}</span>
+        </p>
       )}
 
       {open.length === 0 ? (
@@ -444,24 +493,25 @@ function Briefing({
         KIND_ORDER.filter((kind) => visible.some((item) => item.kind === kind)).map((kind) => (
           <section key={kind} className="jf-cd-group" data-kind={kind}>
             <h2>
-              <span className="jf-cd-kind-dot" data-kind={kind} />
               {KIND[kind].plural}
               <span className="jf-cd-muted">{counts.get(kind)}</span>
             </h2>
-            <ol className="jf-cd-cards">
+            <ol className="jf-cd-list">
               {visible
                 .filter((item) => item.kind === kind)
                 .map((item) => {
                   const position = index++;
                   return (
-                    <BriefingCard
+                    <BriefingItemRow
                       key={item.threadId}
                       item={item}
+                      context={page.contexts[item.threadId] ?? null}
                       title={titles.get(item.threadId) ?? item.threadId}
                       project={projectOf.get(item.threadId) ?? null}
                       workspaceId={workspaceId}
                       selected={position === selected}
-                      onSelect={() => setSelected(position)}
+                      expanded={position === selected && expanded}
+                      onToggle={() => select(position)}
                     />
                   );
                 })}
@@ -492,7 +542,7 @@ function Briefing({
         </section>
       )}
 
-      {open.length > 0 && <p className="jf-cd-keys jf-cd-muted">j/k move · g send · r reply · s snooze · o open · e done</p>}
+      {open.length > 0 && <p className="jf-cd-keys jf-cd-muted">j/k move · ↵ open/close · g send · r reply · s snooze · o open thread · e done</p>}
 
       {conductorThreadId && <AskConductor threadId={conductorThreadId} onSent={onAsk} />}
     </div>
@@ -538,31 +588,40 @@ function AskConductor({ threadId, onSent }: { threadId: string; onSent: () => vo
   );
 }
 
-export function BriefingCard({
+const quote = (text: string, max = 18) => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+
+/** One briefing item: a line to scan, which opens into its context and the ways to answer. */
+export function BriefingItemRow({
   item,
+  context,
   title,
   project,
   workspaceId,
   selected = false,
-  onSelect,
+  expanded = false,
+  onToggle,
 }: {
   item: BriefingItem;
+  context: BriefingContext | null;
   title: string;
   project?: string | null;
   workspaceId: string;
   selected?: boolean;
-  onSelect?: () => void;
+  expanded?: boolean;
+  onToggle?: () => void;
 }) {
   const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
+  const openThread = useOpenThread();
   const suggested = item.reply ?? "";
   const [draft, setDraft] = useState(suggested);
   const [composing, setComposing] = useState(suggested !== "");
   const [snoozing, setSnoozing] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const card = useRef<HTMLLIElement>(null);
+  const row = useRef<HTMLLIElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
 
   const act = useCallback(
@@ -578,126 +637,216 @@ export function BriefingCard({
     },
     [rpc, workspaceId, item.threadId],
   );
-  const send = useCallback(() => {
-    const text = draft.trim();
-    if (!text) return;
-    // The conductor's own suggestion, untouched, is a "go"; anything else is your reply.
-    void (text === suggested.trim() ? act("go") : act("reply", { text }));
-  }, [draft, suggested, act]);
+  /** Sends text to the thread: the conductor's own suggestion, untouched, is a "go". */
+  const sendText = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      void (trimmed === suggested.trim() ? act("go") : act("reply", { text: trimmed }));
+    },
+    [suggested, act],
+  );
   const reply = useCallback(() => {
     setComposing(true);
     requestAnimationFrame(() => field.current?.focus());
   }, []);
 
   useEffect(() => {
-    const element = card.current;
+    const element = row.current;
     if (!element) return;
     const onKey = (event: Event) => {
       const key = (event as CustomEvent<string>).detail;
       if (key === "g" && suggested) void act("go");
       else if (key === "r") reply();
       else if (key === "s") setSnoozing(true);
-      else if (key === "o") navigate.toThread(item.threadId);
+      else if (key === "o") openThread(item.threadId);
       else if (key === "e") void act("dismiss");
     };
     element.addEventListener("jf-cd-key", onKey);
     return () => element.removeEventListener("jf-cd-key", onKey);
-  }, [act, reply, suggested, navigate, item.threadId]);
+  }, [act, reply, suggested, openThread, item.threadId]);
 
-  const long = item.summary.length > 220;
+  const waited = age(context?.waitingSince ?? null);
+  const due = dueLabel(context?.dueAt ?? null);
+  const options = context?.options ?? [];
+  const reportLines = context ? ([["Goal", context.goal], ["Blocked", context.blocked], ["Next", context.next]] as const).filter(([, value]) => value) : [];
+
   return (
     <li
-      ref={card}
-      className="jf-cd-card"
+      ref={row}
+      className="jf-cd-item"
       data-kind={item.kind}
-      data-card={item.threadId}
+      data-item={item.threadId}
       data-selected={selected || undefined}
+      data-expanded={expanded || undefined}
       data-busy={busy || undefined}
-      onClick={onSelect}
     >
-      <div className="jf-cd-card-head">
-        <button type="button" className="jf-cd-card-title" onClick={() => navigate.toThread(item.threadId)} title="Open the thread">
-          {title}
-        </button>
-        {project && <span className="jf-cd-chip">{project}</span>}
-      </div>
-      <p className="jf-cd-summary" data-clamped={long && !expanded ? true : undefined}>
-        {item.summary}
-      </p>
-      {long && (
-        <button type="button" className="jf-cd-more" onClick={() => setExpanded(!expanded)}>
-          {expanded ? "Less" : "More"}
-        </button>
-      )}
-      {item.recommendation && (
-        <p className="jf-cd-rec">
-          <Icon name="ArrowRight" />
-          <span>{item.recommendation}</span>
-        </p>
-      )}
-
-      {composing && !snoozing && (
-        <div className="jf-cd-composer">
-          <span className="jf-cd-composer-label">
-            {suggested && draft.trim() === suggested.trim() ? "Suggested reply to the thread" : "Your reply to the thread"}
-          </span>
-          <textarea
-            ref={field}
-            aria-label={`Reply to ${title}`}
-            value={draft}
-            placeholder="Write to the thread…"
-            rows={Math.min(5, Math.max(1, Math.ceil(draft.length / 70)))}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                send();
-              }
-              if (event.key === "Escape") {
-                event.currentTarget.blur();
-                if (!suggested) setComposing(false);
-              }
-            }}
-          />
-          {suggested && draft.trim() !== suggested.trim() && (
-            <button type="button" className="jf-cd-more" onClick={() => setDraft(suggested)}>
-              Use the suggestion
+      <div className="jf-cd-row" onClick={onToggle}>
+        <span className="jf-cd-kind-icon" title={KIND[item.kind].label}>
+          <Icon name={KIND[item.kind].icon} />
+        </span>
+        <div className="jf-cd-row-main">
+          <div className="jf-cd-row-top">
+            <span className="jf-cd-row-title">{title}</span>
+            {project && <span className="jf-cd-chip">{project}</span>}
+          </div>
+          <p className="jf-cd-headline">{headlineOf(item)}</p>
+        </div>
+        <div className="jf-cd-row-meta">
+          {due && <span className="jf-cd-due" data-overdue={due === "overdue" || undefined}>{due}</span>}
+          {waited && <span className="jf-cd-muted" title="Waiting on you for">{waited}</span>}
+          {context && context.prs.length > 0 && (
+            <span className="jf-cd-chip" title={context.prs.map((pr) => `${pr.repo}#${pr.number}: ${pr.title}`).join("\n")}>
+              <Icon name="GitPullRequest" />
+              {context.prs.length}
+            </span>
+          )}
+          {suggested && !expanded && (
+            <button
+              type="button"
+              className={`${buttonVariants({ variant: "outline", size: "sm" })} jf-cd-quick`}
+              title={`Send the suggested reply: ${suggested}`}
+              disabled={busy}
+              onClick={(event) => {
+                event.stopPropagation();
+                void act("go");
+              }}
+            >
+              Send “{quote(suggested)}”
             </button>
           )}
+          <Icon name="ChevronDown" className="jf-cd-chevron" />
         </div>
-      )}
+      </div>
 
-      {snoozing ? (
-        <div className="jf-cd-actions" role="group" aria-label="Snooze until">
-          <span className="jf-cd-muted">Snooze until</span>
-          {SNOOZE_CHOICES.map((choice) => (
-            <Button key={choice.when} size="sm" variant="outline" disabled={busy} onClick={() => void act("snooze", { until: choice.when })}>
-              {choice.label}
-            </Button>
-          ))}
-          <Button size="sm" variant="ghost" onClick={() => setSnoozing(false)}>
-            Cancel
-          </Button>
-        </div>
-      ) : (
-        <div className="jf-cd-actions">
-          {composing ? (
-            <Button size="sm" disabled={busy || !draft.trim()} onClick={send}>
-              {draft.trim() === suggested.trim() && suggested ? "Send suggested reply" : "Send"}
-              <kbd>⌘↵</kbd>
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" disabled={busy} onClick={reply}>
-              Reply…
-            </Button>
+      {expanded && (
+        <div className="jf-cd-detail">
+          <p className="jf-cd-summary">{item.summary}</p>
+
+          {(reportLines.length > 0 || (context?.prs.length ?? 0) > 0) && (
+            <dl className="jf-cd-context">
+              {reportLines.map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+              {context && context.prs.length > 0 && (
+                <div>
+                  <dt>PRs</dt>
+                  <dd className="jf-cd-prs">
+                    {context.prs.map((pr) => (
+                      <a key={`${pr.repo}#${pr.number}`} className="jf-cd-chip" href={pr.url} target="_blank" rel="noreferrer" data-attention={pr.attention} title={pr.title}>
+                        <Icon name="GitPullRequest" />
+                        {pr.repo.split("/")[1]}#{pr.number} · {pr.attention.replaceAll("_", " ")}
+                      </a>
+                    ))}
+                  </dd>
+                </div>
+              )}
+            </dl>
           )}
-          <span className="jf-cd-spacer" />
-          <IconButton icon="Clock" label="Snooze" hint="s" disabled={busy} onClick={() => setSnoozing(true)} />
-          <IconButton icon="ExternalLink" label="Open the thread" hint="o" onClick={() => navigate.toThread(item.threadId)} />
-          <IconButton icon="Check" label="Done: take it off the briefing" hint="e" disabled={busy} onClick={() => void act("dismiss")} />
+
+          {options.length > 0 && (
+            <div className="jf-cd-options" role="group" aria-label="The thread's options">
+              <span className="jf-cd-label">The thread asks</span>
+              {options.map((option) => (
+                <button
+                  key={option.n}
+                  type="button"
+                  className="jf-cd-option"
+                  data-recommended={option.recommended || undefined}
+                  disabled={busy}
+                  onClick={() => sendText(context?.optionsMode === "go" ? `go ${option.n}` : String(option.n))}
+                >
+                  <span className="jf-cd-option-n">{option.n}</span>
+                  <span className="jf-cd-option-text">{option.text}</span>
+                  {option.recommended && <span className="jf-cd-option-badge">Recommended</span>}
+                </button>
+              ))}
+              {context?.optionsMode === "go" && (
+                <button type="button" className="jf-cd-option" disabled={busy} onClick={() => sendText("go")}>
+                  <span className="jf-cd-option-n">
+                    <Icon name="Play" />
+                  </span>
+                  <span className="jf-cd-option-text">Go with all of them</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {item.recommendation && (
+            <p className="jf-cd-rec">
+              <Icon name="Workflow" />
+              <span>
+                <span className="jf-cd-label">Conductor recommends</span>
+                {item.recommendation}
+              </span>
+            </p>
+          )}
+
+          {composing && !snoozing && (
+            <div className="jf-cd-composer">
+              <span className="jf-cd-label">{suggested && draft.trim() === suggested.trim() ? "Suggested reply to the thread" : "Your reply to the thread"}</span>
+              <textarea
+                ref={field}
+                aria-label={`Reply to ${title}`}
+                value={draft}
+                placeholder="Write to the thread…"
+                rows={Math.min(5, Math.max(1, Math.ceil(draft.length / 70)))}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    sendText(draft);
+                  }
+                  if (event.key === "Escape") {
+                    event.currentTarget.blur();
+                    if (!suggested) setComposing(false);
+                  }
+                }}
+              />
+              {suggested && draft.trim() !== suggested.trim() && (
+                <button type="button" className="jf-cd-more" onClick={() => setDraft(suggested)}>
+                  Use the suggestion
+                </button>
+              )}
+            </div>
+          )}
+
+          {snoozing ? (
+            <div className="jf-cd-actions" role="group" aria-label="Snooze until">
+              <span className="jf-cd-muted">Snooze until</span>
+              {SNOOZE_CHOICES.map((choice) => (
+                <Button key={choice.when} size="sm" variant="outline" disabled={busy} onClick={() => void act("snooze", { until: choice.when })}>
+                  {choice.label}
+                </Button>
+              ))}
+              <Button size="sm" variant="ghost" onClick={() => setSnoozing(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <div className="jf-cd-actions">
+              {composing ? (
+                <Button size="sm" disabled={busy || !draft.trim()} onClick={() => sendText(draft)}>
+                  {draft.trim() === suggested.trim() && suggested ? "Send suggested reply" : "Send"}
+                  <kbd>⌘↵</kbd>
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" disabled={busy} onClick={reply}>
+                  Reply…
+                </Button>
+              )}
+              <span className="jf-cd-spacer" />
+              <IconButton icon="Clock" label="Snooze" hint="s" disabled={busy} onClick={() => setSnoozing(true)} />
+              <IconButton icon="Columns2" label="Open the thread beside this" hint="o" onClick={() => openThread(item.threadId)} />
+              <IconButton icon="Check" label="Done: take it off the briefing" hint="e" disabled={busy} onClick={() => void act("dismiss")} />
+            </div>
+          )}
+          {error && <p role="alert" className="jf-cd-error">{error}</p>}
         </div>
       )}
-      {error && <p role="alert" className="jf-cd-error">{error}</p>}
     </li>
   );
 }
@@ -724,7 +873,7 @@ function IconButton({ icon, label, hint, disabled, onClick }: { icon: string; la
 // --- threads and activity -------------------------------------------------------
 
 function Fleet({ rows }: { rows: ConductorFleetRow[] | null }) {
-  const navigate = useBbNavigate();
+  const openThread = useOpenThread();
   if (rows === null) return <p className="jf-cd-muted jf-cd-loading">Loading…</p>;
   if (rows.length === 0) return <EmptyNote icon="ListView" title="No threads in this workspace" />;
   const groups: Array<[string, ConductorFleetRow[]]> = [
@@ -745,7 +894,7 @@ function Fleet({ rows }: { rows: ConductorFleetRow[] | null }) {
                 <li key={row.threadId} data-needs-you={row.needsYou || undefined}>
                   <span className="jf-cd-dot" data-state={row.state} />
                   <div className="jf-cd-fleet-main">
-                    <button type="button" className="jf-cd-fleet-title" data-unread={row.unread || undefined} onClick={() => navigate.toThread(row.threadId)}>
+                    <button type="button" className="jf-cd-fleet-title" data-unread={row.unread || undefined} onClick={() => openThread(row.threadId)}>
                       {row.title}
                     </button>
                     {(row.blocked || row.next) && <span className="jf-cd-fleet-next">{row.blocked ? `Blocked: ${row.blocked}` : `Next: ${row.next}`}</span>}
