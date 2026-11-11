@@ -43,11 +43,13 @@ async function threadModels(sdk: Sdk, threadId: string): Promise<Omit<PlanModels
   const thread = await sdk.threads.get({ threadId });
   const [options, defaults] = await Promise.all([
     sdk.system
-      .executionOptions({
-        providerId: thread.providerId,
-        projectId: thread.projectId,
-        ...(thread.environmentId ? { environmentId: thread.environmentId } : {}),
-      })
+      // The environment when there is one, else the project: bb lists no
+      // models when given both.
+      .executionOptions(
+        thread.environmentId
+          ? { providerId: thread.providerId, environmentId: thread.environmentId }
+          : { providerId: thread.providerId, projectId: thread.projectId },
+      )
       .catch(() => null),
     sdk.threads.defaultExecutionOptions({ threadId }).catch(() => null),
   ]);

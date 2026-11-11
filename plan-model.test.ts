@@ -72,7 +72,6 @@ test("lists the thread provider's models while a plan waits", async () => {
   });
   assert.deepEqual(calls.find(([name]) => name === "system.executionOptions")?.[1], {
     providerId: "acme-agent",
-    projectId: "proj_1",
     environmentId: "env_1",
   });
 });
