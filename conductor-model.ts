@@ -55,9 +55,9 @@ export const briefingContextSchema = z.object({
   next: z.string().nullable(),
   blocked: z.string().nullable(),
   prs: z.array(z.object({ repo: z.string(), number: z.number(), attention: z.string(), url: z.string(), title: z.string() })),
-  /** The numbered options the worker ended on, answered with a number ("choice") or "go 1,3" ("go"). */
+  /** The numbered options the worker ended on: one number ("choice"), several ("multi") or "go 1,3" ("go"). */
   options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
-  optionsMode: z.enum(["go", "choice"]).nullable(),
+  optionsMode: z.enum(["go", "choice", "multi"]).nullable(),
 });
 export type BriefingContext = z.infer<typeof briefingContextSchema>;
 
