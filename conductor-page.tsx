@@ -267,7 +267,7 @@ function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; stat
 
   return (
     <div className="jf-cd">
-      <header className="jf-cd-head">
+      <header className="jf-cd-head jf-cd-frame">
         <span className="jf-cd-avatar" data-state={state} aria-hidden>
           <Icon name="Workflow" />
         </span>
@@ -295,6 +295,7 @@ function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; stat
       </header>
 
       <nav className="jf-cd-tabs" role="tablist" aria-label="Conductor">
+        <div className="jf-cd-frame jf-cd-tabs-inner">
         {TABS.map((entry) => {
           const count = entry.id === "briefing" ? open : entry.id === "threads" ? needsYou : null;
           return (
@@ -311,6 +312,7 @@ function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; stat
             </button>
           );
         })}
+        </div>
       </nav>
 
       {error && <p role="alert" className="jf-cd-error">{error}</p>}
@@ -636,6 +638,9 @@ export function BriefingCard({
 
       {composing && !snoozing && (
         <div className="jf-cd-composer">
+          <span className="jf-cd-composer-label">
+            {suggested && draft.trim() === suggested.trim() ? "Suggested reply to the thread" : "Your reply to the thread"}
+          </span>
           <textarea
             ref={field}
             aria-label={`Reply to ${title}`}
