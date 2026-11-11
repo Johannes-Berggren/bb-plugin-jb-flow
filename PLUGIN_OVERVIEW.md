@@ -1,7 +1,7 @@
 ## What you get
 
-- **Workspaces.** Your own workspace tabs across the top of BB group projects, threads, sections and plugin navigation; All and No workspace keep everything reachable. Move a thread from its context menu or manage membership in settings. Workspaces change what navigation shows, not what plugins run or can access.
-- **⌘K palette.** BB's Search threads key opens one search over threads, messages, PRs, workspaces, projects and actions. An empty query shows what needs you, what's running, PRs to act on and recent threads; wide windows preview the selected thread. Tab on any thread lists its actions: reply to a decision, snooze (`tomorrow`, `3d`), move, tag, watch CI or archive. `>`, `#`, `@` and `/` (files) narrow the scope and `is:needs` and `is:running` filter. Turn it off to give the key back to BB.
+- **Workspaces.** Your own workspace tabs across the top of BB group projects, threads, sections and plugin navigation; All and No workspace keep everything reachable. Group a workspace's threads by project, or give a project a workspace of its own. Move a thread from its context menu or manage membership in settings. Workspaces change what navigation shows, not what plugins run or can access.
+- **⌘K palette.** BB's Search threads key opens one search over threads, messages, PRs, workspaces, projects and actions; inside a workspace tab it searches that workspace. An empty query shows what needs you, what's running, PRs to act on and recent threads; wide windows preview the selected thread. Tab on any thread lists its actions: reply to a decision, snooze (`tomorrow`, `3d`), move, tag, watch CI or archive. `>`, `#`, `@` and `/` (files) narrow the scope and `is:needs` and `is:running` filter. Turn it off to give the key back to BB.
 - **Catch up.** Go through unread threads one card at a time: the *Catch up* page (with an unread count), ⌥⇧C, ⌘K or the home page. Each card shows what happened since you looked and the live thread with its composer, so you can read and reply in place. → marks read, ← keeps it unread; snooze or archive, with undo. Swipe on touch.
 - **Triage thread list.** A replacement sidebar. A ranked *Now* group on top holds what's blocked on you, threads you mark as Focus (`f`) and deadlines coming up (`d`, or set by agents). Reading one doesn't clear it. Below are numbered lanes (Priority, Active, Waiting for others, Pick up later, Low priority). Row keys: `1`–`5` lane, `s` snooze, `t` tag, `e` archive, `j`/`k` move.
 - **Waiting for others fills itself.** A thread whose agent says it is waiting on a person, or whose open PRs all wait on a reviewer, goes there and comes back to Active when its next turn no longer waits on anyone.
@@ -9,13 +9,15 @@
 - **Home page sections.** *Your move* lists threads that handed the next step to you, oldest first. *Stale threads* lists unfiled threads idle for 7+ days, with archive, keep and snooze in bulk. *Unreleased* lists merged PRs not yet released.
 - **PRs without polling.** Every PR a thread opens is linked to it, in any repo, and stacked PRs are shown as a stack. Agents call `wait_for_ci` and end their turn; the plugin checks GitHub every 2 minutes and messages the thread when checks finish (with the failed log), reviews arrive or the PR merges. `pr_status` gives an agent all of its PRs in one call.
 - **Scripts and dev servers.** A side panel lists the checkout's `package.json` scripts. Pinned commands get fallback ports for parallel worktrees.
+- **Status reports.** Agents end each reply that hands a thread back to you with a short report: goal, what was done, what's next and what's blocking, then the thread's PRs and deploys, progress bars, before/after architecture diagrams when the backend changed, and next steps you can start with **go**. A thread monitor keeps the latest report visible while the thread is idle, and the Now list, Your move and Waiting for others read it. Write your own report format in settings, or turn the hand-back reports off and ask with **Update status**.
 - **Decision buttons.** When an agent ends with numbered options, they appear as one-click replies above the composer. Tick several and send them together when the agent asks for more than one, or with **Pick several**.
 
 ## Optional
 
 Each can be switched in the plugin settings:
 
-- A restyled bb interface, a thread monitor with the agent's latest status report, and expanded, resizable plan reviews are on by default.
+- A restyled bb interface, the thread monitor, status reports at hand-back, and expanded, resizable plan reviews are on by default.
+- Swipe between workspaces with two fingers, and copy buttons on inline code in chat (off).
 - Send "continue" after a Claude Code usage limit resets: per thread in the thread monitor, with a default in settings (off).
 - Wake threads waiting for a release once a release PR merges and its workflows finish (per-project JSON config).
 
