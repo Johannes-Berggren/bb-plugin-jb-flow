@@ -32,7 +32,7 @@ import { TriageThreadList } from "./triage-list";
 import { DigestSection } from "./digest";
 import { LaneSettings, MigrationSettings } from "./settings-panels";
 import { EXPAND_PLANS_FLAG, mountPlanExpander } from "./plan-expander";
-import { CONDUCTOR_PANEL, ConductorActivityTab, ConductorFleetTab, ConductorPage, ConductorSettings, useConductorBadge } from "./conductor-page";
+import { CONDUCTOR_PANEL, ConductorPage, ConductorSettings, useConductorBadge } from "./conductor-page";
 
 // --- thread header: status strip + Pull requests panel ------------------------------
 
@@ -251,10 +251,6 @@ export default definePluginApp((app) => {
     icon: "Workflow",
     path: CONDUCTOR_PANEL,
     component: ConductorPage,
-    fixedTabs: [
-      { panelId: CONDUCTOR_PANEL, id: "fleet", title: "Fleet", icon: "ListView", component: ConductorFleetTab, layout: "flush" },
-      { panelId: CONDUCTOR_PANEL, id: "activity", title: "Activity", icon: "Clock", component: ConductorActivityTab, layout: "flush" },
-    ],
     experimental_useBadge: useConductorBadge,
   });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });

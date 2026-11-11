@@ -1,8 +1,9 @@
-// The Conductor page: one workspace's conductor, native to JB Flow. Its
-// briefing as cards you clear with one click, its conversation below, and in
-// the side panel the workspace's threads (Fleet) and what it did (Activity).
+// The Conductor page: one workspace's conductor, native to JB Flow.
+// Briefing (cards you clear with one click or a key), its Conversation, the
+// workspace's Threads and the conductor's Activity, as tabs inside the page.
 import "./conductor-page.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import {
   ThreadChat,
   experimental_ProviderModelPicker as ProviderModelPicker,
@@ -19,33 +20,54 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type { BriefingItem } from "./conductor-model";
 import type { ConductorFleetRow, ConductorPage as PageState, ConductorStatus, rpcContract } from "./server";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { errorText } from "./flow-state";
 import { useSelectedWorkspace, useWorkspaces } from "./workspace-client";
 import { formatWhen } from "./when";
 
 export const CONDUCTOR_PANEL = "conductor";
+
+type Kind = BriefingItem["kind"];
+/** Briefing order: what only you can decide first, what you only need to know last. */
+const KIND_ORDER: Kind[] = ["decision", "blocked", "ready", "fyi"];
+const KIND: Record<Kind, { label: string; plural: string; icon: string }> = {
+  decision: { label: "Decision", plural: "Decisions", icon: "CircleQuestion" },
+  blocked: { label: "Blocked on you", plural: "Blocked on you", icon: "AlertTriangle" },
+  ready: { label: "Ready to go", plural: "Ready to go", icon: "Play" },
+  fyi: { label: "FYI", plural: "FYI", icon: "Info" },
+};
 const SNOOZE_CHOICES = [
   { label: "2 hours", when: "2h" },
   { label: "Tomorrow", when: "tomorrow" },
   { label: "3 days", when: "3d" },
   { label: "Next week", when: "next-week" },
 ];
-const KIND_LABEL: Record<BriefingItem["kind"], string> = {
-  decision: "Decision",
-  ready: "Ready to go",
-  blocked: "Blocked",
-  fyi: "FYI",
-};
+type Tab = "briefing" | "conversation" | "threads" | "activity";
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "briefing", label: "Briefing" },
+  { id: "conversation", label: "Conversation" },
+  { id: "threads", label: "Threads" },
+  { id: "activity", label: "Activity" },
+];
 
-function ago(at: number | null | undefined): string {
-  if (!at) return "never";
-  const minutes = Math.round((Date.now() - at) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+function clock(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+
+function lastWoke(at: number | null | undefined): string {
+  if (!at) return "not woken yet";
+  const sameDay = new Date(at).toDateString() === new Date().toDateString();
+  return `last woke ${sameDay ? clock(at) : formatWhen(at)}`;
+}
+
+/** Typing in a field, or a menu open: page keys stay out of the way. */
+function typing(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  return !!element && (element.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName));
+}
+
+// --- data ------------------------------------------------------------------
 
 /** Every conductor's status, kept current over realtime. */
 export function useConductors() {
@@ -78,6 +100,18 @@ function useConductorPage(workspaceId: string | null) {
   return { page, error, reload: load };
 }
 
+function useFleet(workspaceId: string | null) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [rows, setRows] = useState<ConductorFleetRow[] | null>(null);
+  const load = useCallback(() => {
+    if (workspaceId === null) return;
+    rpc.call("conductor_fleet", { workspaceId }).then(setRows, () => setRows([]));
+  }, [rpc, workspaceId]);
+  useEffect(load, [load]);
+  useRealtime("jb-flow-changed", load);
+  return rows;
+}
+
 /** The workspace the page shows: its own path first, then the selected workspace tab. */
 function useTargetWorkspace(subPath: string): string | null {
   const selected = useSelectedWorkspace();
@@ -104,28 +138,42 @@ export function useConductorBadge(): ExperimentalBadge | null {
   return { count, tone: "critical", label: `${count} item${count === 1 ? "" : "s"} in your conductors' briefings` };
 }
 
+// --- the page --------------------------------------------------------------
+
 export function ConductorPage({ subPath }: PluginNavPanelProps) {
   const enabled = useSettings().values?.conductor === true;
   const workspaceId = useTargetWorkspace(subPath);
   const { state } = useConductors();
   if (!enabled) {
     return (
-      <div className="jf-conductor-page">
-        <p className="jf-conductor-empty">
-          Conductor is off. Turn it on under Settings → JB Flow, then start one for a workspace under Settings → Conductors.
-        </p>
+      <div className="jf-cd-page">
+        <EmptyNote icon="Workflow" title="Conductor is off">
+          Turn it on under Settings → JB Flow, then start one for a workspace under Settings → Conductors.
+        </EmptyNote>
       </div>
     );
   }
   const conductor = state?.conductors.find((entry) => entry.workspaceId === workspaceId);
   if (workspaceId === null || !conductor?.threadId) {
     return (
-      <div className="jf-conductor-page">
+      <div className="jf-cd-page">
         <ConductorOverview conductors={state?.conductors ?? []} workspaceId={workspaceId} />
       </div>
     );
   }
   return <ConductorWorkspace workspaceId={workspaceId} status={conductor} />;
+}
+
+function EmptyNote({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
+  return (
+    <div className="jf-cd-empty" role="status">
+      <span className="jf-cd-empty-icon">
+        <Icon name={icon} />
+      </span>
+      <p className="jf-cd-empty-title">{title}</p>
+      {children && <p className="jf-cd-muted">{children}</p>}
+    </div>
+  );
 }
 
 /** Shown when the page has no running conductor to show: every workspace, with a way to start one. */
@@ -148,27 +196,33 @@ function ConductorOverview({ conductors, workspaceId }: { conductors: ConductorS
     }
   };
   if (state.workspaces.length === 0) {
-    return <p className="jf-conductor-empty">A conductor looks after one workspace. Add a workspace under Settings → Workspaces first.</p>;
+    return (
+      <EmptyNote icon="Workflow" title="No workspaces yet">
+        A conductor looks after one workspace. Add a workspace under Settings → Workspaces first.
+      </EmptyNote>
+    );
   }
   return (
-    <div className="jf-conductor-overview">
-      <h2>Conductors</h2>
-      <p className="jf-conductor-muted">
+    <div className="jf-cd-overview">
+      <h1>Conductors</h1>
+      <p className="jf-cd-muted">
         {workspaceId
           ? "This workspace has no conductor yet."
           : "Pick a workspace. Each conductor takes its threads' routine news and leaves you one briefing."}
       </p>
-      {error && <p role="alert" className="jf-conductor-error">{error}</p>}
+      {error && <p role="alert" className="jf-cd-error">{error}</p>}
       <ul>
         {state.workspaces.map((workspace) => {
           const conductor = conductors.find((entry) => entry.workspaceId === workspace.id);
+          const running = conductor?.active === true && conductor.threadId !== null;
           return (
             <li key={workspace.id} data-current={workspace.id === workspaceId || undefined}>
-              <span className="jf-conductor-name">{workspace.name}</span>
-              <span className="jf-conductor-muted">
-                {conductor?.active ? `running · ${conductor.open} in its inbox` : conductor ? "stopped" : "no conductor"}
+              <span className="jf-cd-dot" data-state={running ? "idle" : "off"} />
+              <span className="jf-cd-overview-name">{workspace.name}</span>
+              <span className="jf-cd-muted">
+                {running ? (conductor!.needsYou ? `${conductor!.needsYou} need${conductor!.needsYou === 1 ? "s" : ""} you` : "all clear") : conductor ? "stopped" : "no conductor"}
               </span>
-              {conductor?.active && conductor.threadId ? (
+              {running ? (
                 <Button size="sm" variant="outline" onClick={() => navigate.toPluginPanel(CONDUCTOR_PANEL, { subPath: workspace.id })}>
                   Open
                 </Button>
@@ -187,18 +241,22 @@ function ConductorOverview({ conductors, workspaceId }: { conductors: ConductorS
 
 function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; status: ConductorStatus }) {
   const { page, error, reload } = useConductorPage(workspaceId);
+  const fleet = useFleet(workspaceId);
   const rpc = useRpc<typeof rpcContract>();
+  const [tab, setTab] = useState<Tab>("briefing");
   const [waking, setWaking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const threadId = page?.threadId ?? status.threadId;
   const working = page?.threadStatus === "active" || page?.threadStatus === "starting";
+  const state = !status.active ? "off" : working ? "working" : "idle";
+  const open = page?.briefing ? page.briefing.items.filter((item) => !page.resolved.includes(item.threadId)).length : 0;
+  const needsYou = fleet?.filter((row) => row.needsYou).length ?? null;
+
   const wake = async () => {
     setWaking(true);
     try {
       const { result } = await rpc.call("conductor_wake", { workspaceId });
-      setNotice(
-        result === "woken" ? "Woken with its inbox." : result === "busy" ? "It's busy; it'll get the news when it's done." : "Nothing new for it.",
-      );
+      setNotice(result === "woken" ? "Woken with its inbox" : result === "busy" ? "Busy; it gets the news when it's done" : "Nothing new for it");
       reload();
     } catch (cause) {
       setNotice(errorText(cause));
@@ -206,267 +264,576 @@ function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; stat
       setWaking(false);
     }
   };
+
   return (
-    <div className="jf-conductor">
-      <header className="jf-conductor-bar">
-        <div className="jf-conductor-heading">
-          <span className="jf-conductor-name">Conductor · {status.name}</span>
-          <span className="jf-conductor-chip" data-state={!status.active ? "off" : working ? "working" : "idle"}>
-            {!status.active ? "Stopped" : working ? "Working" : "Idle"}
-          </span>
-          <span className="jf-conductor-muted">
-            {page ? `${page.open} in its inbox · woken ${ago(page.lastWakeAt)}` : "Loading…"}
-          </span>
+    <div className="jf-cd">
+      <header className="jf-cd-head">
+        <span className="jf-cd-avatar" data-state={state} aria-hidden>
+          <Icon name="Workflow" />
+        </span>
+        <div className="jf-cd-identity">
+          <h1>{status.name}</h1>
+          <p className="jf-cd-muted">
+            <span className="jf-cd-dot" data-state={state} />
+            {state === "off" ? "Stopped" : working ? "Working" : "Idle"}
+            {" · "}
+            {lastWoke(page?.lastWakeAt)}
+            {page && page.open > 0 ? ` · ${page.open} waiting in its inbox` : ""}
+          </p>
         </div>
-        <div className="jf-conductor-tools">
-          {notice && <span className="jf-conductor-muted" role="status">{notice}</span>}
+        <div className="jf-cd-head-actions">
+          {notice && (
+            <span className="jf-cd-muted" role="status">
+              {notice}
+            </span>
+          )}
           <Button size="sm" variant="ghost" disabled={waking || !status.active} onClick={() => void wake()}>
+            <Icon name="Zap" />
             {waking ? "Waking…" : "Wake now"}
           </Button>
         </div>
       </header>
-      {error && <p role="alert" className="jf-conductor-error">{error}</p>}
-      <section className="jf-conductor-briefing" aria-label="Briefing">
-        {page && <Briefing workspaceId={workspaceId} page={page} />}
-      </section>
-      {threadId && (
-        <section className="jf-conductor-chat" aria-label="Conversation with the conductor">
-          <ThreadChat threadId={threadId} variant="full" layout="contained" />
-        </section>
-      )}
+
+      <nav className="jf-cd-tabs" role="tablist" aria-label="Conductor">
+        {TABS.map((entry) => {
+          const count = entry.id === "briefing" ? open : entry.id === "threads" ? needsYou : null;
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === entry.id}
+              className="jf-cd-tab"
+              onClick={() => setTab(entry.id)}
+            >
+              {entry.label}
+              {count ? <span className="jf-cd-count">{count}</span> : null}
+            </button>
+          );
+        })}
+      </nav>
+
+      {error && <p role="alert" className="jf-cd-error">{error}</p>}
+
+      <div className="jf-cd-body" data-tab={tab}>
+        {tab === "briefing" &&
+          (page ? (
+            <Briefing workspaceId={workspaceId} page={page} onAsk={() => setTab("conversation")} conductorThreadId={threadId} />
+          ) : (
+            <p className="jf-cd-muted jf-cd-loading">Loading…</p>
+          ))}
+        {tab === "conversation" && threadId && <ThreadChat threadId={threadId} variant="full" layout="contained" />}
+        {tab === "threads" && <Fleet rows={fleet} />}
+        {tab === "activity" && <Activity page={page} />}
+      </div>
     </div>
   );
 }
 
-function Briefing({ workspaceId, page }: { workspaceId: string; page: PageState }) {
-  const { threads } = useSidebarThreads();
+// --- briefing ----------------------------------------------------------------
+
+function Briefing({
+  workspaceId,
+  page,
+  conductorThreadId,
+  onAsk,
+}: {
+  workspaceId: string;
+  page: PageState;
+  conductorThreadId: string | null;
+  onAsk: () => void;
+}) {
+  const { threads, projects } = useSidebarThreads();
   const titles = useMemo(() => new Map(threads.map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? "Untitled"])), [threads]);
+  const projectOf = useMemo(() => {
+    const names = new Map(projects.map((project) => [project.id, project.name]));
+    return new Map(threads.map((thread) => [thread.id, names.get(thread.projectId) ?? null]));
+  }, [threads, projects]);
+  const [filter, setFilter] = useState<Kind | "all">("all");
+  const [selected, setSelected] = useState(0);
   const [showHandled, setShowHandled] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
   const briefing = page.briefing;
+
+  const open = useMemo(
+    () =>
+      (briefing?.items ?? [])
+        .filter((item) => !page.resolved.includes(item.threadId))
+        .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind)),
+    [briefing, page.resolved],
+  );
+  const visible = filter === "all" ? open : open.filter((item) => item.kind === filter);
+  const counts = useMemo(() => {
+    const result = new Map<Kind, number>();
+    for (const item of open) result.set(item.kind, (result.get(item.kind) ?? 0) + 1);
+    return result;
+  }, [open]);
+  useEffect(() => {
+    if (filter !== "all" && !counts.get(filter)) setFilter("all");
+  }, [counts, filter]);
+  useEffect(() => {
+    setSelected((current) => Math.min(current, Math.max(0, visible.length - 1)));
+  }, [visible.length]);
+
+  // Keys act on the selected card; each card listens for its own via this event.
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    const key = event.key;
+    if (key === "j" || key === "ArrowDown") {
+      moved.current = true;
+      setSelected((index) => Math.min(index + 1, visible.length - 1));
+    } else if (key === "k" || key === "ArrowUp") {
+      moved.current = true;
+      setSelected((index) => Math.max(index - 1, 0));
+    }
+    else if (["g", "r", "s", "o", "e"].includes(key) && visible[selected]) {
+      root.current?.querySelector<HTMLElement>(`[data-card="${visible[selected].threadId}"]`)?.dispatchEvent(new CustomEvent("jf-cd-key", { detail: key }));
+    } else return;
+    event.preventDefault();
+  };
+  // Follow the selection with the scroll, but only when a key moved it.
+  const moved = useRef(false);
+  useEffect(() => {
+    if (!moved.current) return;
+    moved.current = false;
+    root.current?.querySelector<HTMLElement>(`[data-card][data-selected]`)?.scrollIntoView?.({ block: "nearest" });
+  }, [selected]);
+
   if (!briefing) {
-    return <p className="jf-conductor-empty">No briefing yet. The conductor leaves one at the end of every turn.</p>;
+    return (
+      <EmptyNote icon="Workflow" title="No briefing yet">
+        The conductor leaves one at the end of every turn. Wake it, or ask it something in the conversation.
+      </EmptyNote>
+    );
   }
-  const open = briefing.items.filter((item) => !page.resolved.includes(item.threadId));
+
+  let index = 0;
   return (
-    <>
-      <div className="jf-conductor-briefing-head">
-        <h2>{open.length === 0 ? "Nothing needs you" : `Needs you · ${open.length}`}</h2>
-        <span className="jf-conductor-muted">Briefing from {formatWhen(briefing.at)}</span>
+    <div className="jf-cd-briefing" ref={root} tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="jf-cd-briefing-meta">
+        <span className="jf-cd-muted">Briefing from {formatWhen(briefing.at)}</span>
+        {open.length > 0 && (
+          <div className="jf-cd-filters" role="group" aria-label="Show">
+            <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
+              All <span>{open.length}</span>
+            </button>
+            {KIND_ORDER.filter((kind) => counts.get(kind)).map((kind) => (
+              <button key={kind} type="button" data-kind={kind} aria-pressed={filter === kind} onClick={() => setFilter(kind)}>
+                <span className="jf-cd-kind-dot" data-kind={kind} />
+                {KIND[kind].plural} <span>{counts.get(kind)}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      {briefing.note && <p className="jf-conductor-note">{briefing.note}</p>}
-      <ol className="jf-conductor-cards">
-        {open.map((item, index) => (
-          <BriefingCard key={item.threadId} index={index + 1} item={item} title={titles.get(item.threadId) ?? item.threadId} workspaceId={workspaceId} />
-        ))}
-      </ol>
+
+      {briefing.note && (
+        <blockquote className="jf-cd-note">
+          <Icon name="Workflow" />
+          <span>{briefing.note}</span>
+        </blockquote>
+      )}
+
+      {open.length === 0 ? (
+        <EmptyNote icon="CircleCheck" title="Nothing needs you">
+          The conductor will brief you when something does.
+        </EmptyNote>
+      ) : (
+        KIND_ORDER.filter((kind) => visible.some((item) => item.kind === kind)).map((kind) => (
+          <section key={kind} className="jf-cd-group" data-kind={kind}>
+            <h2>
+              <span className="jf-cd-kind-dot" data-kind={kind} />
+              {KIND[kind].plural}
+              <span className="jf-cd-muted">{counts.get(kind)}</span>
+            </h2>
+            <ol className="jf-cd-cards">
+              {visible
+                .filter((item) => item.kind === kind)
+                .map((item) => {
+                  const position = index++;
+                  return (
+                    <BriefingCard
+                      key={item.threadId}
+                      item={item}
+                      title={titles.get(item.threadId) ?? item.threadId}
+                      project={projectOf.get(item.threadId) ?? null}
+                      workspaceId={workspaceId}
+                      selected={position === selected}
+                      onSelect={() => setSelected(position)}
+                    />
+                  );
+                })}
+            </ol>
+          </section>
+        ))
+      )}
+
       {briefing.handled.length > 0 && (
-        <div className="jf-conductor-handled">
+        <section className="jf-cd-handled">
           <button type="button" aria-expanded={showHandled} onClick={() => setShowHandled(!showHandled)}>
-            Handled · {briefing.handled.length}
+            <Icon name="ChevronDown" />
+            Handled by the conductor · {briefing.handled.length}
           </button>
           {showHandled && (
             <ul>
-              {briefing.handled.map((entry, index) => (
-                <li key={index}>
-                  {entry.what}
-                  {entry.threadId && titles.has(entry.threadId) ? <span className="jf-conductor-muted"> · {titles.get(entry.threadId)}</span> : null}
+              {briefing.handled.map((entry, position) => (
+                <li key={position}>
+                  <Icon name="Check" />
+                  <span>
+                    {entry.what}
+                    {entry.threadId && titles.has(entry.threadId) ? <span className="jf-cd-muted"> · {titles.get(entry.threadId)}</span> : null}
+                  </span>
                 </li>
               ))}
             </ul>
           )}
-        </div>
+        </section>
       )}
-    </>
+
+      {open.length > 0 && <p className="jf-cd-keys jf-cd-muted">j/k move · g send · r reply · s snooze · o open · e done</p>}
+
+      {conductorThreadId && <AskConductor threadId={conductorThreadId} onSent={onAsk} />}
+    </div>
   );
 }
 
-export function BriefingCard({ index, item, title, workspaceId }: { index: number; item: BriefingItem; title: string; workspaceId: string }) {
+/** One line to the conductor itself ("2 go, 4 snooze 3d"), then on to the conversation. */
+function AskConductor({ threadId, onSent }: { threadId: string; onSent: () => void }) {
   const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
-  const [mode, setMode] = useState<"idle" | "reply" | "snooze">("idle");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const act = async (action: "go" | "reply" | "snooze" | "dismiss", options: { text?: string; until?: string } = {}) => {
+  const send = async () => {
+    if (!text.trim()) return;
     setBusy(true);
-    setError(null);
     try {
-      await rpc.call("conductor_card", { workspaceId, threadId: item.threadId, action, ...options });
-    } catch (cause) {
-      setError(errorText(cause));
+      await rpc.call("thread_reply", { threadId, text: text.trim() });
+      setText("");
+      onSent();
+    } finally {
       setBusy(false);
     }
   };
   return (
-    <li className="jf-conductor-card" data-kind={item.kind}>
-      <div className="jf-conductor-card-head">
-        <span className="jf-conductor-index">{index}</span>
-        <span className="jf-conductor-kind">{KIND_LABEL[item.kind]}</span>
-        <button type="button" className="jf-conductor-title" onClick={() => navigate.toThread(item.threadId)}>
+    <form
+      className="jf-cd-ask"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void send();
+      }}
+    >
+      <Icon name="Workflow" />
+      <input
+        aria-label="Tell the conductor"
+        placeholder="Tell the conductor… e.g. “2 go, 4 snooze 3d”"
+        value={text}
+        disabled={busy}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <Button size="sm" variant="ghost" type="submit" disabled={busy || !text.trim()} aria-label="Send to the conductor">
+        <Icon name="CornerDownLeft" />
+      </Button>
+    </form>
+  );
+}
+
+export function BriefingCard({
+  item,
+  title,
+  project,
+  workspaceId,
+  selected = false,
+  onSelect,
+}: {
+  item: BriefingItem;
+  title: string;
+  project?: string | null;
+  workspaceId: string;
+  selected?: boolean;
+  onSelect?: () => void;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  const suggested = item.reply ?? "";
+  const [draft, setDraft] = useState(suggested);
+  const [composing, setComposing] = useState(suggested !== "");
+  const [snoozing, setSnoozing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const card = useRef<HTMLLIElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
+
+  const act = useCallback(
+    async (action: "go" | "reply" | "snooze" | "dismiss", options: { text?: string; until?: string } = {}) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await rpc.call("conductor_card", { workspaceId, threadId: item.threadId, action, ...options });
+      } catch (cause) {
+        setError(errorText(cause));
+        setBusy(false);
+      }
+    },
+    [rpc, workspaceId, item.threadId],
+  );
+  const send = useCallback(() => {
+    const text = draft.trim();
+    if (!text) return;
+    // The conductor's own suggestion, untouched, is a "go"; anything else is your reply.
+    void (text === suggested.trim() ? act("go") : act("reply", { text }));
+  }, [draft, suggested, act]);
+  const reply = useCallback(() => {
+    setComposing(true);
+    requestAnimationFrame(() => field.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    const element = card.current;
+    if (!element) return;
+    const onKey = (event: Event) => {
+      const key = (event as CustomEvent<string>).detail;
+      if (key === "g" && suggested) void act("go");
+      else if (key === "r") reply();
+      else if (key === "s") setSnoozing(true);
+      else if (key === "o") navigate.toThread(item.threadId);
+      else if (key === "e") void act("dismiss");
+    };
+    element.addEventListener("jf-cd-key", onKey);
+    return () => element.removeEventListener("jf-cd-key", onKey);
+  }, [act, reply, suggested, navigate, item.threadId]);
+
+  const long = item.summary.length > 220;
+  return (
+    <li
+      ref={card}
+      className="jf-cd-card"
+      data-kind={item.kind}
+      data-card={item.threadId}
+      data-selected={selected || undefined}
+      data-busy={busy || undefined}
+      onClick={onSelect}
+    >
+      <div className="jf-cd-card-head">
+        <button type="button" className="jf-cd-card-title" onClick={() => navigate.toThread(item.threadId)} title="Open the thread">
           {title}
         </button>
+        {project && <span className="jf-cd-chip">{project}</span>}
       </div>
-      <p className="jf-conductor-summary">{item.summary}</p>
+      <p className="jf-cd-summary" data-clamped={long && !expanded ? true : undefined}>
+        {item.summary}
+      </p>
+      {long && (
+        <button type="button" className="jf-cd-more" onClick={() => setExpanded(!expanded)}>
+          {expanded ? "Less" : "More"}
+        </button>
+      )}
       {item.recommendation && (
-        <p className="jf-conductor-recommendation">
-          <span className="jf-conductor-muted">Recommends:</span> {item.recommendation}
+        <p className="jf-cd-rec">
+          <Icon name="ArrowRight" />
+          <span>{item.recommendation}</span>
         </p>
       )}
-      {item.reply && mode === "idle" && <blockquote className="jf-conductor-reply" title="Sent to the thread on Go">{item.reply}</blockquote>}
-      {mode === "reply" && (
-        <form
-          className="jf-conductor-reply-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void act("reply", { text });
-          }}
-        >
+
+      {composing && !snoozing && (
+        <div className="jf-cd-composer">
           <textarea
+            ref={field}
             aria-label={`Reply to ${title}`}
-            value={text}
-            autoFocus
-            rows={3}
-            onChange={(event) => setText(event.target.value)}
+            value={draft}
+            placeholder="Write to the thread…"
+            rows={Math.min(5, Math.max(1, Math.ceil(draft.length / 70)))}
+            onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
-                void act("reply", { text });
+                send();
               }
-              if (event.key === "Escape") setMode("idle");
+              if (event.key === "Escape") {
+                event.currentTarget.blur();
+                if (!suggested) setComposing(false);
+              }
             }}
           />
-          <div className="jf-conductor-actions">
-            <Button size="sm" type="submit" disabled={busy || !text.trim()}>
-              Send
-            </Button>
-            <Button size="sm" variant="ghost" type="button" onClick={() => setMode("idle")}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+          {suggested && draft.trim() !== suggested.trim() && (
+            <button type="button" className="jf-cd-more" onClick={() => setDraft(suggested)}>
+              Use the suggestion
+            </button>
+          )}
+        </div>
       )}
-      {mode === "snooze" && (
-        <div className="jf-conductor-actions" role="group" aria-label="Snooze until">
+
+      {snoozing ? (
+        <div className="jf-cd-actions" role="group" aria-label="Snooze until">
+          <span className="jf-cd-muted">Snooze until</span>
           {SNOOZE_CHOICES.map((choice) => (
             <Button key={choice.when} size="sm" variant="outline" disabled={busy} onClick={() => void act("snooze", { until: choice.when })}>
               {choice.label}
             </Button>
           ))}
-          <Button size="sm" variant="ghost" onClick={() => setMode("idle")}>
+          <Button size="sm" variant="ghost" onClick={() => setSnoozing(false)}>
             Cancel
           </Button>
         </div>
-      )}
-      {mode === "idle" && (
-        <div className="jf-conductor-actions">
-          {item.reply && (
-            <Button size="sm" disabled={busy} onClick={() => void act("go")}>
-              Go
+      ) : (
+        <div className="jf-cd-actions">
+          {composing ? (
+            <Button size="sm" disabled={busy || !draft.trim()} onClick={send}>
+              {draft.trim() === suggested.trim() && suggested ? "Send suggested reply" : "Send"}
+              <kbd>⌘↵</kbd>
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" disabled={busy} onClick={reply}>
+              Reply…
             </Button>
           )}
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => setMode("reply")}>
-            Reply…
-          </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setMode("snooze")}>
-            Snooze
-          </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => navigate.toThread(item.threadId)}>
-            Open
-          </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act("dismiss")}>
-            Dismiss
-          </Button>
+          <span className="jf-cd-spacer" />
+          <IconButton icon="Clock" label="Snooze" hint="s" disabled={busy} onClick={() => setSnoozing(true)} />
+          <IconButton icon="ExternalLink" label="Open the thread" hint="o" onClick={() => navigate.toThread(item.threadId)} />
+          <IconButton icon="Check" label="Done: take it off the briefing" hint="e" disabled={busy} onClick={() => void act("dismiss")} />
         </div>
       )}
-      {error && <p role="alert" className="jf-conductor-error">{error}</p>}
+      {error && <p role="alert" className="jf-cd-error">{error}</p>}
     </li>
   );
 }
 
-/** Side-panel tab: every thread in the workspace, those that need you first. */
-export function ConductorFleetTab({ subPath }: PluginNavPanelProps) {
-  const workspaceId = useTargetWorkspace(subPath);
-  const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
-  const [rows, setRows] = useState<ConductorFleetRow[] | null>(null);
-  const load = useCallback(() => {
-    if (workspaceId === null) return;
-    rpc.call("conductor_fleet", { workspaceId }).then(setRows, () => setRows([]));
-  }, [rpc, workspaceId]);
-  useEffect(load, [load]);
-  useRealtime("jb-flow-changed", load);
-  if (workspaceId === null) return <p className="jf-conductor-empty">Pick a workspace.</p>;
-  if (rows === null) return <p className="jf-conductor-empty">Loading…</p>;
-  if (rows.length === 0) return <p className="jf-conductor-empty">No threads in this workspace.</p>;
+/** A quiet icon action with a tooltip naming it and its key. */
+function IconButton({ icon, label, hint, disabled, onClick }: { icon: string; label: string; hint: string; disabled?: boolean; onClick: () => void }) {
   return (
-    <ul className="jf-conductor-fleet">
-      {rows.map((row) => (
-        <li key={row.threadId} data-needs-you={row.needsYou || undefined}>
-          <button type="button" className="jf-conductor-title" onClick={() => navigate.toThread(row.threadId)}>
-            {row.unread && <span className="jf-conductor-dot" aria-label="unread" />}
-            {row.title}
-          </button>
-          <span className="jf-conductor-muted">{row.reason}</span>
-          {row.prs.length > 0 && (
-            <span className="jf-conductor-prs">
-              {row.prs.map((pr) => (
-                <a key={`${pr.repo}#${pr.number}`} href={pr.url} target="_blank" rel="noreferrer" data-attention={pr.attention}>
-                  {pr.repo.split("/")[1]}#{pr.number}
-                </a>
-              ))}
-            </span>
-          )}
-          {(row.blocked || row.next) && <span className="jf-conductor-next">{row.blocked ? `Blocked: ${row.blocked}` : `Next: ${row.next}`}</span>}
-        </li>
-      ))}
-    </ul>
+    <button
+      type="button"
+      className={`${buttonVariants({ variant: "ghost", size: "icon" })} jf-cd-icon`}
+      title={`${label} (${hint})`}
+      aria-label={label}
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <Icon name={icon} />
+    </button>
   );
 }
 
-const LOG_LABEL: Record<string, string> = {
-  merged: "Merged",
-  "merge-refused": "Merge refused",
-  rerun: "Reran",
-  forwarded: "Forwarded",
-  archive: "Archived",
-  snooze: "Snoozed",
-  briefing: "Briefing",
-  woken: "Woken",
-  started: "Started",
-  stopped: "Stopped",
-  restored: "Restored",
-  memory: "Memory",
+// --- threads and activity -------------------------------------------------------
+
+function Fleet({ rows }: { rows: ConductorFleetRow[] | null }) {
+  const navigate = useBbNavigate();
+  if (rows === null) return <p className="jf-cd-muted jf-cd-loading">Loading…</p>;
+  if (rows.length === 0) return <EmptyNote icon="ListView" title="No threads in this workspace" />;
+  const groups: Array<[string, ConductorFleetRow[]]> = [
+    ["Needs you", rows.filter((row) => row.needsYou)],
+    ["Everything else", rows.filter((row) => !row.needsYou)],
+  ];
+  return (
+    <div className="jf-cd-fleet">
+      {groups
+        .filter(([, list]) => list.length > 0)
+        .map(([label, list]) => (
+          <section key={label}>
+            <h2>
+              {label} <span className="jf-cd-muted">{list.length}</span>
+            </h2>
+            <ul>
+              {list.map((row) => (
+                <li key={row.threadId} data-needs-you={row.needsYou || undefined}>
+                  <span className="jf-cd-dot" data-state={row.state} />
+                  <div className="jf-cd-fleet-main">
+                    <button type="button" className="jf-cd-fleet-title" data-unread={row.unread || undefined} onClick={() => navigate.toThread(row.threadId)}>
+                      {row.title}
+                    </button>
+                    {(row.blocked || row.next) && <span className="jf-cd-fleet-next">{row.blocked ? `Blocked: ${row.blocked}` : `Next: ${row.next}`}</span>}
+                  </div>
+                  <div className="jf-cd-fleet-side">
+                    <span className="jf-cd-muted">{row.reason}</span>
+                    {row.prs.map((pr) => (
+                      <a key={`${pr.repo}#${pr.number}`} className="jf-cd-chip" href={pr.url} target="_blank" rel="noreferrer" data-attention={pr.attention}>
+                        <Icon name="GitPullRequest" />
+                        {pr.repo.split("/")[1]}#{pr.number}
+                      </a>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+    </div>
+  );
+}
+
+const LOG: Record<string, { label: string; icon: string }> = {
+  merged: { label: "Merged", icon: "GitMerge" },
+  "merge-refused": { label: "Merge refused", icon: "AlertTriangle" },
+  rerun: { label: "Reran", icon: "Repeat" },
+  forwarded: { label: "Forwarded", icon: "Sent" },
+  archive: { label: "Archived", icon: "Archive" },
+  unarchive: { label: "Unarchived", icon: "ArchiveRestore" },
+  snooze: { label: "Snoozed", icon: "Clock" },
+  briefing: { label: "Briefing", icon: "ListView" },
+  woken: { label: "Woken", icon: "Zap" },
+  started: { label: "Started", icon: "Play" },
+  stopped: { label: "Stopped", icon: "Pause" },
+  restored: { label: "Restored", icon: "ArchiveRestore" },
+  deleted: { label: "Deleted", icon: "AlertTriangle" },
+  memory: { label: "Memory", icon: "Brain" },
 };
 
-/** Side-panel tab: what the conductor did, newest first. */
-export function ConductorActivityTab({ subPath }: PluginNavPanelProps) {
-  const workspaceId = useTargetWorkspace(subPath);
-  const { page } = useConductorPage(workspaceId);
-  if (workspaceId === null) return <p className="jf-conductor-empty">Pick a workspace.</p>;
-  if (!page) return <p className="jf-conductor-empty">Loading…</p>;
-  if (page.log.length === 0) return <p className="jf-conductor-empty">Nothing yet.</p>;
+function Activity({ page }: { page: PageState | null }) {
+  const { threads } = useSidebarThreads();
+  const titles = useMemo(() => new Map(threads.map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""])), [threads]);
+  if (!page) return <p className="jf-cd-muted jf-cd-loading">Loading…</p>;
+  if (page.log.length === 0) return <EmptyNote icon="Clock" title="Nothing yet" />;
+  const days = new Map<string, typeof page.log>();
+  for (const entry of page.log) {
+    const day = new Date(entry.at).toDateString() === new Date().toDateString() ? "Today" : new Date(entry.at).toLocaleDateString([], { weekday: "long", day: "numeric", month: "short" });
+    days.set(day, [...(days.get(day) ?? []), entry]);
+  }
   return (
-    <ol className="jf-conductor-log">
-      {page.log.map((entry) => (
-        <li key={entry.id} data-kind={entry.kind}>
-          <span className="jf-conductor-muted">{formatWhen(entry.at)}</span>
-          <span className="jf-conductor-log-kind">{LOG_LABEL[entry.kind] ?? (entry.kind.startsWith("you-") ? "You" : entry.kind)}</span>
-          <span>{entry.text}</span>
-        </li>
+    <div className="jf-cd-activity">
+      {[...days.entries()].map(([day, entries]) => (
+        <section key={day}>
+          <h2>{day}</h2>
+          <ol>
+            {entries.map((entry) => {
+              const yours = entry.kind.startsWith("you-");
+              const meta = LOG[entry.kind] ?? { label: yours ? "You" : entry.kind, icon: yours ? "UserRound" : "Circle" };
+              return (
+                <li key={entry.id} data-kind={entry.kind} data-yours={yours || undefined}>
+                  <span className="jf-cd-activity-icon">
+                    <Icon name={meta.icon} />
+                  </span>
+                  <div>
+                    <p>
+                      <strong>{meta.label}</strong> {entry.text}
+                    </p>
+                    <p className="jf-cd-muted">
+                      {clock(entry.at)}
+                      {entry.threadId && titles.get(entry.threadId) ? ` · ${titles.get(entry.threadId)}` : ""}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
       ))}
-    </ol>
+    </div>
   );
 }
+
+// --- settings --------------------------------------------------------------------
 
 /** Settings → Conductors: start or stop one per workspace, and pick its project and agent. */
 export function ConductorSettings(_props: PluginSettingsSectionProps) {
   const enabled = useSettings().values?.conductor === true;
   const { state: workspaces } = useWorkspaces();
   const { state, reload } = useConductors();
-  if (!enabled) return <p className="jf-conductor-muted">Turn on Conductor above to start one per workspace.</p>;
-  if (workspaces.workspaces.length === 0) return <p className="jf-conductor-muted">Add a workspace first; a conductor looks after one.</p>;
+  if (!enabled) return <p className="jf-cd-muted">Turn on Conductor above to start one per workspace.</p>;
+  if (workspaces.workspaces.length === 0) return <p className="jf-cd-muted">Add a workspace first; a conductor looks after one.</p>;
   return (
-    <ul className="jf-conductor-settings">
+    <ul className="jf-cd-settings">
       {workspaces.workspaces.map((workspace) => (
         <ConductorSettingsRow
           key={workspace.id}
@@ -525,9 +892,10 @@ function ConductorSettingsRow({
   const running = conductor?.active === true;
   return (
     <li>
-      <div className="jf-conductor-settings-row">
-        <span className="jf-conductor-name">{workspace.name}</span>
-        <span className="jf-conductor-muted">{running ? "Running" : conductor ? "Stopped" : "No conductor"}</span>
+      <div className="jf-cd-settings-row">
+        <span className="jf-cd-dot" data-state={running ? "idle" : "off"} />
+        <span className="jf-cd-overview-name">{workspace.name}</span>
+        <span className="jf-cd-muted">{running ? "Running" : conductor ? "Stopped" : "No conductor"}</span>
         {running ? (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(() => rpc.call("conductor_stop", { workspaceId: workspace.id }))}>
             Stop
@@ -551,9 +919,9 @@ function ConductorSettingsRow({
         )}
       </div>
       {!hasThread && (
-        <div className="jf-conductor-settings-row">
+        <div className="jf-cd-settings-row">
           <label>
-            <span className="jf-conductor-muted">Lives in </span>
+            <span className="jf-cd-muted">Lives in </span>
             <select value={projectId} onChange={(event) => setProjectId(event.target.value)} aria-label={`Project for ${workspace.name}'s conductor`}>
               {(own.length > 0 ? own : projects).map((project) => (
                 <option key={project.id} value={project.id}>
@@ -565,8 +933,8 @@ function ConductorSettingsRow({
           {agent && <ProviderModelPicker value={agent} onChange={setAgent} />}
         </div>
       )}
-      {hasThread && conductor?.model && <p className="jf-conductor-muted">Runs on {conductor.model}.</p>}
-      {error && <p role="alert" className="jf-conductor-error">{error}</p>}
+      {hasThread && conductor?.model && <p className="jf-cd-muted">Runs on {conductor.model}.</p>}
+      {error && <p role="alert" className="jf-cd-error">{error}</p>}
     </li>
   );
 }

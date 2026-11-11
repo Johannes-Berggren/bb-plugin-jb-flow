@@ -120,6 +120,7 @@ async function mountPanel(options: { settings?: Record<string, boolean>; subPath
         conductor_page: () => page,
         conductor_card: () => ({ done: "ok" }),
         conductor_wake: () => ({ result: "woken" }),
+        conductor_fleet: () => [],
         conductor_start: () => ({ threadId: "thr_conductor" }),
         ...options.rpc,
       } as never,
@@ -129,37 +130,46 @@ async function mountPanel(options: { settings?: Record<string, boolean>; subPath
   );
 }
 
-const cards = () => Array.from(document.querySelectorAll<HTMLElement>(".jf-conductor-card"));
+const cards = () => Array.from(document.querySelectorAll<HTMLElement>(".jf-cd-card"));
 
 afterEach(() => cleanup());
 
 describe("Conductor page", () => {
-  it("shows the briefing as cards, leaving out the ones you've dealt with", async () => {
+  it("shows the briefing as cards grouped by kind, leaving out the ones you've dealt with", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(cards()).toHaveLength(2));
-    expect(slot.container.textContent).toContain("Needs you · 2");
-    expect(cards()[0]!.textContent).toContain("Fix billing export");
-    expect(cards()[1]!.textContent).toContain("Option 2: smaller bundle");
-    expect(slot.container.textContent).toContain("2 in its inbox");
-    fireEvent.click(slot.getByRole("button", { name: "Handled · 1" }));
+    expect(slot.getByRole("tab", { name: /Briefing/ }).textContent).toBe("Briefing2");
+    // Decisions come before what's ready to go.
+    expect(cards()[0]!.textContent).toContain("Chart library");
+    expect(cards()[0]!.textContent).toContain("Option 2: smaller bundle");
+    expect(cards()[1]!.textContent).toContain("Fix billing export");
+    expect(slot.container.textContent).toContain("2 waiting in its inbox");
+    fireEvent.click(slot.getByRole("button", { name: /Handled by the conductor · 1/ }));
     expect(slot.container.textContent).toContain("Merged acme/web-app#12");
   });
 
-  it("Go sends the card's reply to its worker through the server", async () => {
+  it("filters the briefing by kind", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(cards()).toHaveLength(2));
-    fireEvent.click(within(cards()[1]!).getByRole("button", { name: "Go" }));
+    fireEvent.click(within(slot.getByRole("group", { name: "Show" })).getByRole("button", { name: /Decisions/ }));
+    expect(cards()).toHaveLength(1);
+    expect(cards()[0]!.textContent).toContain("Chart library");
+  });
+
+  it("sends the suggested reply untouched as a go", async () => {
+    const slot = await mountPanel();
+    await waitFor(() => expect(cards()).toHaveLength(2));
+    fireEvent.click(within(cards()[0]!).getByRole("button", { name: /Send suggested reply/ }));
     await waitFor(() =>
       expect(slot.rpcCalls.find((call) => call.method === "conductor_card")?.input).toEqual({ workspaceId: "ws", threadId: "thr_b", action: "go" }),
     );
   });
 
-  it("Reply sends your own text, and Snooze picks a time", async () => {
+  it("an edited suggestion goes out as your own reply", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(cards()).toHaveLength(2));
-    fireEvent.click(within(cards()[0]!).getByRole("button", { name: "Reply…" }));
-    fireEvent.change(within(cards()[0]!).getByRole("textbox"), { target: { value: "Deploy after lunch" } });
-    fireEvent.click(within(cards()[0]!).getByRole("button", { name: "Send" }));
+    fireEvent.change(within(cards()[1]!).getByRole("textbox"), { target: { value: "Deploy after lunch" } });
+    fireEvent.click(within(cards()[1]!).getByRole("button", { name: /^Send/ }));
     await waitFor(() =>
       expect(slot.rpcCalls.find((call) => call.method === "conductor_card")?.input).toEqual({
         workspaceId: "ws",
@@ -168,8 +178,13 @@ describe("Conductor page", () => {
         text: "Deploy after lunch",
       }),
     );
-    fireEvent.click(within(cards()[1]!).getByRole("button", { name: "Snooze" }));
-    fireEvent.click(within(cards()[1]!).getByRole("button", { name: "Tomorrow" }));
+  });
+
+  it("snoozes from the clock button, and keys act on the selected card", async () => {
+    const slot = await mountPanel();
+    await waitFor(() => expect(cards()).toHaveLength(2));
+    fireEvent.click(within(cards()[0]!).getByRole("button", { name: "Snooze" }));
+    fireEvent.click(within(cards()[0]!).getByRole("button", { name: "Tomorrow" }));
     await waitFor(() =>
       expect(slot.rpcCalls.filter((call) => call.method === "conductor_card").at(-1)?.input).toEqual({
         workspaceId: "ws",
@@ -178,13 +193,50 @@ describe("Conductor page", () => {
         until: "tomorrow",
       }),
     );
+    const briefing = document.querySelector<HTMLElement>(".jf-cd-briefing")!;
+    fireEvent.keyDown(briefing, { key: "j" });
+    fireEvent.keyDown(briefing, { key: "e" });
+    await waitFor(() =>
+      expect(slot.rpcCalls.filter((call) => call.method === "conductor_card").at(-1)?.input).toEqual({
+        workspaceId: "ws",
+        threadId: "thr_a",
+        action: "dismiss",
+      }),
+    );
+  });
+
+  it("sends a line to the conductor itself and opens the conversation", async () => {
+    const slot = await mountPanel({ rpc: { thread_reply: () => ({ ok: true }) } });
+    await waitFor(() => expect(cards()).toHaveLength(2));
+    fireEvent.change(slot.getByRole("textbox", { name: "Tell the conductor" }), { target: { value: "2 go, 1 snooze 3d" } });
+    fireEvent.click(slot.getByRole("button", { name: "Send to the conductor" }));
+    await waitFor(() =>
+      expect(slot.rpcCalls.find((call) => call.method === "thread_reply")?.input).toEqual({ threadId: "thr_conductor", text: "2 go, 1 snooze 3d" }),
+    );
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Conversation" }).getAttribute("aria-selected")).toBe("true"));
   });
 
   it("wakes the conductor on request", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(cards()).toHaveLength(2));
-    fireEvent.click(slot.getByRole("button", { name: "Wake now" }));
-    await waitFor(() => expect(slot.container.textContent).toContain("Woken with its inbox."));
+    fireEvent.click(slot.getByRole("button", { name: /Wake now/ }));
+    await waitFor(() => expect(slot.container.textContent).toContain("Woken with its inbox"));
+  });
+
+  it("lists the workspace's threads and the conductor's activity in their tabs", async () => {
+    const slot = await mountPanel({
+      rpc: {
+        conductor_fleet: () => [
+          { threadId: "thr_a", title: "Fix billing export", projectId: "p1", state: "yours", reason: "you · 2h", needsYou: true, unread: true, prs: [], next: "Deploy", blocked: null },
+        ],
+      },
+    });
+    await waitFor(() => expect(cards()).toHaveLength(2));
+    fireEvent.click(slot.getByRole("tab", { name: /Threads/ }));
+    await waitFor(() => expect(slot.container.textContent).toContain("Needs you"));
+    expect(slot.container.textContent).toContain("Next: Deploy");
+    fireEvent.click(slot.getByRole("tab", { name: "Activity" }));
+    await waitFor(() => expect(slot.container.textContent).toContain("Merged acme/web-app#12."));
   });
 
   it("offers to start one for a workspace without a conductor", async () => {
@@ -212,17 +264,5 @@ describe("Conductor page", () => {
     await waitFor(() =>
       expect(JSON.parse(badge.getByTestId("badge").textContent!)).toEqual({ count: 2, tone: "critical", label: "2 items in your conductors' briefings" }),
     );
-  });
-
-  it("lists the conductor's activity in its side-panel tab", async () => {
-    const app = await loadPluginApp(() => import("./app"));
-    const panel = app.navPanels.find((item) => item.id === "conductor")!;
-    const tab = panel.fixedTabs!.find((item) => item.id === "activity")!;
-    const slot = renderSlot(tab as never, { subPath: "ws" } as never, {
-      settings: { conductor: true },
-      rpc: { conductor_page: () => page } as never,
-      realtimeConnectionState: "connected",
-    });
-    await waitFor(() => expect(slot.container.textContent).toContain("Merged acme/web-app#12."));
   });
 });

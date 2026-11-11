@@ -715,7 +715,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
         break;
       }
       case "dismiss":
-        done = `You dismissed the briefing item for ${title}; leave it out unless something changes.`;
+        done = `You marked ${title} done on the briefing; leave it out unless something changes.`;
         break;
     }
     if (current) {
