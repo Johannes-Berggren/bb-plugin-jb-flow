@@ -15,9 +15,9 @@ export function DecisionChips({
   updatedAt: number | null;
   idle: boolean;
 }) {
-  return threadId && idle ? (
-    <Choices key={`${threadId}:${updatedAt}`} threadId={threadId} />
-  ) : null;
+  // Keyed by thread only: marking a thread read also moves updatedAt, and a
+  // remount then would drop what's ticked, turning the next click into a send.
+  return threadId && idle ? <Choices key={threadId} threadId={threadId} updatedAt={updatedAt} /> : null;
 }
 
 /** Marks the agent's numbered list that these buttons repeat. CSS hides it. */
@@ -102,7 +102,7 @@ function useHideRepeatedList(section: RefObject<HTMLElement | null>, options: re
 
 const recommendedOf = (options: readonly DecisionOption[]) => options.filter((option) => option.recommended).map((option) => option.n);
 
-function Choices({ threadId }: { threadId: string }) {
+function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number | null }) {
   const rpc = useRpc<typeof rpcContract>();
   const hideRepeated = useSettings().values?.hideRepeatedChoices !== false;
   const sectionRef = useRef<HTMLElement>(null);
@@ -115,25 +115,37 @@ function Choices({ threadId }: { threadId: string }) {
   const [error, setError] = useState<string | null>(null);
   const locked = useRef(false);
   const mounted = useRef(false);
+  // What the panel shows now, so a re-read that finds the same options changes nothing.
+  const shown = useRef("");
   useEffect(() => {
     mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
     let live = true;
     rpc.call("decision_options", { threadId }).then(
       (result) => {
-        if (!live) return;
+        const signature = JSON.stringify(result);
+        if (!live || signature === shown.current) return;
+        // New options: start over. Several can go together: the recommended ones start ticked.
+        shown.current = signature;
         setMove(result);
-        // Several can go together: start with the recommended ones ticked.
-        if (result.mode === "multi") setPicked(recommendedOf(result.options));
+        setSeveral(false);
+        setPicked(result.mode === "multi" ? recommendedOf(result.options) : []);
+        setPending(null);
+        setSent(null);
+        setError(null);
+        locked.current = false;
       },
-      () => {
-        if (live) setMove({ options: [] });
-      },
+      // A failed re-read keeps what's showing.
+      () => undefined,
     );
     return () => {
       live = false;
-      mounted.current = false;
     };
-  }, [rpc, threadId]);
+  }, [rpc, threadId, updatedAt]);
   const { options } = move;
   const listHidden = useHideRepeatedList(sectionRef, options, hideRepeated);
   if (!options.length) return null;

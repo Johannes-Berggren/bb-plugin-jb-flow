@@ -224,6 +224,33 @@ it("switches a one-number decision to picking several, with the switch or a ⌘-
   slot.lifecycle.unmount();
 });
 
+it("keeps what's ticked when the thread changes but its options don't, and starts over when they do", async () => {
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  let move: { mode: "choice" | "multi"; options: typeof several.options } = { mode: "choice", options: several.options };
+  const read = vi.fn(() => move);
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: read, thread_reply: reply } },
+  );
+  fireEvent.click(await slot.findByRole("button", { name: "Pick several" }));
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Option 3:/ }));
+  // Opening the thread marks it read, which moves updatedAt.
+  slot.lifecycle.rerender(<DecisionChips threadId="t1" updatedAt={2} idle />);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  await new Promise((done) => setTimeout(done, 0));
+  // Still ticking: this click ticks, it doesn't send.
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Option 1:/ }));
+  expect(reply).not.toHaveBeenCalled();
+  expect(slot.getByRole("button", { name: "Send 1, 3" })).toBeTruthy();
+  // A new reply with other options starts over.
+  move = { mode: "multi", options: several.options.slice(0, 3) };
+  slot.lifecycle.rerender(<DecisionChips threadId="t1" updatedAt={3} idle />);
+  await slot.findByText("Pick one or more");
+  expect(slot.getByRole("button", { name: "Send 1, 2" })).toBeTruthy();
+  slot.lifecycle.unmount();
+});
+
 it("moves between options with the arrow keys, and a digit ticks one or only moves to it", async () => {
   const reply = vi.fn().mockResolvedValue({ ok: true });
   const multi = renderSlot(
