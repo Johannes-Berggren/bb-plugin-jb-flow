@@ -109,6 +109,9 @@ const goList = [
 test("a report's Decision needed callout is your move", () => {
   assert.equal(handBack(report({ next: "Pick a format.", after: decision })), "asks");
   assert.ok(asksUser(report({ after: decision })));
+  // Several picks: still your move, even without the Decision needed label.
+  const several = decision.replace("**Decision needed:** ", "").replace("Reply with the number.", "Reply with one or more numbers, e.g. 1,2.");
+  assert.equal(handBack(report({ next: "Clean up.", after: several })), "asks");
 });
 
 test("a report's go-list is ready, not your move", () => {

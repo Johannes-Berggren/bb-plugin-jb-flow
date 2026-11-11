@@ -12,10 +12,49 @@
   font-weight: 600;
   letter-spacing: 0.05em;
 }
+.jf-choices-title {
+  text-transform: uppercase;
+}
 .jf-choices-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
   font-weight: 400;
   letter-spacing: normal;
+}
+/* "Pick several": switches a one-click decision to ticking. */
+.jf-choices-toggle {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+.jf-choices-toggle:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--foreground) 25%, var(--border));
+  color: var(--foreground);
+}
+.jf-choices-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  background: color-mix(in srgb, var(--primary) 11%, transparent);
+  color: var(--primary);
+}
+.jf-choices-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.jf-choices-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .jf-choices-list {
   display: flex;
@@ -110,7 +149,7 @@
 .jf-choice-spinner {
   animation: jf-choice-spin 1.2s linear infinite;
 }
-/* Go-list: picked steps keep the selected look; Go sits under the list. */
+/* Ticking (go-list, several numbers): picked rows keep the selected look; Go or Send sits under the list. */
 .jf-choices-actions {
   display: flex;
   align-items: center;
@@ -120,7 +159,7 @@
   color: var(--muted-foreground);
   font-size: 11px;
 }
-.jf-choices-go {
+.jf-choices-submit {
   padding: 4px 14px;
   border: 1px solid var(--primary);
   border-radius: 7px;
@@ -131,16 +170,28 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.jf-choices-go:hover:not(:disabled) {
+.jf-choices-submit:hover:not(:disabled) {
   background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
 }
-.jf-choices-go:focus-visible {
+.jf-choices-submit:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
-.jf-choices-go:disabled {
+.jf-choices-submit:disabled {
   opacity: 0.6;
+  cursor: not-allowed;
+}
+.jf-choices-submit[aria-busy="true"] {
   cursor: wait;
+}
+/* A tickable row's number reads as a checkbox. */
+.jf-choices:is([data-mode="go"], [data-mode="multi"]) .jf-choice-number {
+  border-radius: 5px;
+}
+.jf-choices:is([data-mode="go"], [data-mode="multi"]) .jf-choice[data-selected="true"] .jf-choice-number {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 .jf-choices-error {
   margin: 6px 3px 0;
@@ -160,7 +211,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .jf-choice {
+  .jf-choice,
+  .jf-choices-toggle {
     transition: none;
   }
   .jf-choice-spinner {
@@ -176,6 +228,10 @@
   .jf-choice[data-selected="true"] {
     outline: 1px solid Highlight;
     outline-offset: -1px;
+  }
+  .jf-choices-toggle[aria-pressed="true"] {
+    border-color: Highlight;
+    color: Highlight;
   }
 }
 

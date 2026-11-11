@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { DecisionChips, REPEATED_LIST_ATTR, repeatedList } from "./decision-choices";
+import { DecisionChips, REPEATED_LIST_ATTR, repeatedList, repeatedReplyLines } from "./decision-choices";
 
 afterEach(cleanup);
 const options = [
@@ -122,6 +122,145 @@ it("offers a go-list as steps to tick and Go, sending go or go with the picked s
   expect(reply.mock.calls[1]).toEqual([{ threadId: "t1", text: "go 1,3" }]);
   some.lifecycle.unmount();
 });
+it("sends plain go when every step is ticked", async () => {
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ mode: "go", options }), thread_reply: reply } },
+  );
+  fireEvent.click(await slot.findByRole("checkbox", { name: /^Step 1:/ }));
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Step 2:/ }));
+  fireEvent.click(slot.getByRole("button", { name: "Go" }));
+  await slot.findByText("Sent “go”");
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go" }]);
+  slot.lifecycle.unmount();
+});
+
+const several = {
+  mode: "multi" as const,
+  options: [
+    { n: 1, text: "Lint rule", recommended: true },
+    { n: 2, text: "CI check", recommended: true },
+    { n: 3, text: "Weekly flag list", recommended: false },
+    { n: 4, text: "Draft a note to Alex", recommended: false },
+  ],
+};
+
+it("ticks the recommended options when several can go together, and sends the picked numbers once", async () => {
+  let finish!: (value: { ok: boolean }) => void;
+  const reply = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => several, thread_reply: reply } },
+  );
+  const first = await slot.findByRole("checkbox", { name: "Option 1: Lint rule (recommended)" });
+  expect(first.getAttribute("aria-checked")).toBe("true");
+  expect(slot.getByRole("checkbox", { name: /^Option 3:/ }).getAttribute("aria-checked")).toBe("false");
+  expect(slot.getByText("Pick one or more")).toBeTruthy();
+  expect(slot.queryByRole("button", { name: "Pick several" })).toBeNull();
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Option 2:/ }));
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Option 4:/ }));
+  const send = slot.getByRole("button", { name: "Send 1, 4" });
+  fireEvent.click(send);
+  fireEvent.click(send);
+  expect(reply).toHaveBeenCalledTimes(1);
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "1,4" }]);
+  finish({ ok: true });
+  await slot.findByText("Sent “1,4”");
+  expect(first.hasAttribute("disabled")).toBe(true);
+  slot.lifecycle.unmount();
+});
+
+it("can't send several with nothing ticked, and lets a failed send be retried", async () => {
+  const reply = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ ok: true });
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => several, thread_reply: reply } },
+  );
+  fireEvent.click(await slot.findByRole("checkbox", { name: /^Option 1:/ }));
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Option 2:/ }));
+  expect(slot.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Option 3:/ }));
+  fireEvent.click(slot.getByRole("button", { name: "Send 3" }));
+  expect((await slot.findByRole("alert")).textContent).toContain("Press Send to retry");
+  fireEvent.click(slot.getByRole("button", { name: "Send 3" }));
+  await slot.findByText("Sent “3”");
+  expect(reply).toHaveBeenCalledTimes(2);
+  slot.lifecycle.unmount();
+});
+
+it("switches a one-number decision to picking several, with the switch or a ⌘-click", async () => {
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const choice = { mode: "choice" as const, options: several.options };
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => choice, thread_reply: reply } },
+  );
+  const toggle = await slot.findByRole("button", { name: "Pick several" });
+  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  // Nothing ticked yet: picking several starts empty.
+  expect(slot.getAllByRole("checkbox").every((box) => box.getAttribute("aria-checked") === "false")).toBe(true);
+  fireEvent.click(toggle);
+  expect(slot.queryAllByRole("checkbox")).toHaveLength(0);
+  // ⌘-click ticks that option instead of sending it.
+  fireEvent.click(slot.getByRole("button", { name: /^Reply 3:/ }), { metaKey: true });
+  expect(reply).not.toHaveBeenCalled();
+  expect(slot.getByRole("checkbox", { name: /^Option 3:/ }).getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(slot.getByRole("checkbox", { name: /^Option 1:/ }));
+  fireEvent.click(slot.getByRole("button", { name: "Send 1, 3" }));
+  await slot.findByText("Sent “1,3”");
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "1,3" }]);
+  slot.lifecycle.unmount();
+});
+
+it("moves between options with the arrow keys, and a digit ticks one or only moves to it", async () => {
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const multi = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => several, thread_reply: reply } },
+  );
+  const first = await multi.findByRole("checkbox", { name: /^Option 1:/ });
+  first.focus();
+  fireEvent.keyDown(first, { key: "ArrowDown" });
+  expect(document.activeElement).toBe(multi.getByRole("checkbox", { name: /^Option 2:/ }));
+  fireEvent.keyDown(document.activeElement!, { key: "End" });
+  expect(document.activeElement).toBe(multi.getByRole("checkbox", { name: /^Option 4:/ }));
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
+  expect(document.activeElement).toBe(multi.getByRole("checkbox", { name: /^Option 3:/ }));
+  fireEvent.keyDown(document.activeElement!, { key: "3" });
+  expect(multi.getByRole("checkbox", { name: /^Option 3:/ }).getAttribute("aria-checked")).toBe("true");
+  fireEvent.keyDown(document.activeElement!, { key: "1" });
+  expect(first.getAttribute("aria-checked")).toBe("false");
+  expect(document.activeElement).toBe(first);
+  multi.lifecycle.unmount();
+
+  const choice = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 2, idle: true },
+    { rpc: { decision_options: () => ({ mode: "choice", options: several.options }), thread_reply: reply } },
+  );
+  const one = await choice.findByRole("button", { name: /^Reply 1:/ });
+  one.focus();
+  fireEvent.keyDown(one, { key: "4" });
+  expect(document.activeElement).toBe(choice.getByRole("button", { name: /^Reply 4:/ }));
+  fireEvent.keyDown(document.activeElement!, { key: "Home" });
+  expect(document.activeElement).toBe(one);
+  expect(reply).not.toHaveBeenCalled();
+  choice.lifecycle.unmount();
+});
+
 it("lets a failed Go be retried", async () => {
   const reply = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ ok: true });
   const slot = renderSlot(
@@ -175,5 +314,28 @@ it("leaves lists alone that don't match, and everything when the setting is off"
   expect(row.querySelector("ol")!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
   expect(section.hasAttribute("data-full")).toBe(false);
   slot.lifecycle.unmount();
+  row.remove();
+});
+
+it("hides the list's reply line with it, and keeps other paragraphs", async () => {
+  const row = document.createElement("div");
+  row.dataset.timelineRowId = "r1";
+  row.innerHTML = `<blockquote><p><strong>Decision needed:</strong> which one?</p><ol>${options
+    .map((option) => `<li>${option.text}</li>`)
+    .join("")}</ol><p>Reply with the numbers, e.g. <strong>1,2</strong>.</p><p>The rest is up to Sam.</p></blockquote>`;
+  document.body.append(row);
+  const [question, reply, rest] = Array.from(row.querySelectorAll("p"));
+  expect(repeatedReplyLines(row.querySelector("ol")!)).toEqual([reply]);
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ options }) } },
+  );
+  await slot.findByRole("region", { name: "Reply choices" });
+  await waitFor(() => expect(reply!.hasAttribute(REPEATED_LIST_ATTR)).toBe(true));
+  expect(question!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  expect(rest!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  slot.lifecycle.unmount();
+  expect(reply!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
   row.remove();
 });

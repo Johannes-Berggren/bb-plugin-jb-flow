@@ -88,7 +88,7 @@ function reportHandBack(text: string): HandBack | null {
   if (report === null) return null;
   const prose = text.slice(0, Math.max(0, text.search(REPORT_START)));
   if (prose.trim() !== "" && keywordAsks(prose)) return "asks";
-  if (/\*\*Decision needed:?\*\*/i.test(text) || /\breply with (?:the|a|one) number\b/i.test(text)) return "asks";
+  if (/\*\*Decision needed:?\*\*/i.test(text) || /\breply with (?:the|a|one(?: or more)?) numbers?\b/i.test(text)) return "asks";
   const next = straight(report.next);
   if (NEXT_IS_YOURS.test(next) || YOUR_PART.test(straight(text).slice(-900))) return "asks";
   const blocked = straight(report.blocked);

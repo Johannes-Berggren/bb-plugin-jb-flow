@@ -1,0 +1,78 @@
+/* "> [!TIP]" callouts in chat messages; callouts.ts tags them while polish is on. */
+html.jb-flow-shell blockquote[data-jf-callout] {
+  --jf-callout: #0969da;
+  margin: 10px 0;
+  padding: 8px 12px 9px;
+  border: 1px solid color-mix(in srgb, var(--jf-callout) 24%, var(--border));
+  border-left: 3px solid var(--jf-callout);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--jf-callout) 6%, transparent);
+}
+html.jb-flow-shell blockquote[data-jf-callout]::before {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--jf-callout);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+/* A marker on a line of its own leaves an empty paragraph behind. */
+html.jb-flow-shell blockquote[data-jf-callout] > p:empty {
+  display: none;
+}
+html.jb-flow-shell blockquote[data-jf-callout="note"] {
+  --jf-callout: #0969da;
+}
+html.jb-flow-shell blockquote[data-jf-callout="note"]::before {
+  content: "Note";
+}
+html.jb-flow-shell blockquote[data-jf-callout="tip"] {
+  --jf-callout: #1a7f37;
+}
+html.jb-flow-shell blockquote[data-jf-callout="tip"]::before {
+  content: "Tip";
+}
+html.jb-flow-shell blockquote[data-jf-callout="important"] {
+  --jf-callout: #8250df;
+}
+html.jb-flow-shell blockquote[data-jf-callout="important"]::before {
+  content: "Important";
+}
+html.jb-flow-shell blockquote[data-jf-callout="warning"] {
+  --jf-callout: #9a6700;
+}
+html.jb-flow-shell blockquote[data-jf-callout="warning"]::before {
+  content: "Warning";
+}
+html.jb-flow-shell blockquote[data-jf-callout="caution"] {
+  --jf-callout: #cf222e;
+}
+html.jb-flow-shell blockquote[data-jf-callout="caution"]::before {
+  content: "Caution";
+}
+/* Lighter shades read better on dark surfaces. */
+html.dark.jb-flow-shell blockquote[data-jf-callout="note"] {
+  --jf-callout: #4493f8;
+}
+html.dark.jb-flow-shell blockquote[data-jf-callout="tip"] {
+  --jf-callout: #3fb950;
+}
+html.dark.jb-flow-shell blockquote[data-jf-callout="important"] {
+  --jf-callout: #ab7df8;
+}
+html.dark.jb-flow-shell blockquote[data-jf-callout="warning"] {
+  --jf-callout: #d29922;
+}
+html.dark.jb-flow-shell blockquote[data-jf-callout="caution"] {
+  --jf-callout: #f85149;
+}
+@media (forced-colors: active) {
+  html.jb-flow-shell blockquote[data-jf-callout] {
+    border-color: CanvasText;
+  }
+  html.jb-flow-shell blockquote[data-jf-callout]::before {
+    color: CanvasText;
+  }
+}

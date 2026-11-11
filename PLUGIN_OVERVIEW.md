@@ -9,7 +9,7 @@
 - **Home page sections.** *Your move* lists threads that handed the next step to you, oldest first. *Stale threads* lists unfiled threads idle for 7+ days, with archive, keep and snooze in bulk. *Unreleased* lists merged PRs not yet released.
 - **PRs without polling.** Every PR a thread opens is linked to it, in any repo, and stacked PRs are shown as a stack. Agents call `wait_for_ci` and end their turn; the plugin checks GitHub every 2 minutes and messages the thread when checks finish (with the failed log), reviews arrive or the PR merges. `pr_status` gives an agent all of its PRs in one call.
 - **Scripts and dev servers.** A side panel lists the checkout's `package.json` scripts. Pinned commands get fallback ports for parallel worktrees.
-- **Decision buttons.** When an agent ends with numbered options, they appear as one-click replies above the composer.
+- **Decision buttons.** When an agent ends with numbered options, they appear as one-click replies above the composer. Tick several and send them together when the agent asks for more than one, or with **Pick several**.
 
 ## Optional
 
