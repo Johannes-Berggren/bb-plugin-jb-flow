@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { DEFAULT_STATUS_PROMPT, handBackInstructions, statusPrompt } from "./status-prompt";
+import { DECISION_ASK, DEFAULT_STATUS_PROMPT, handBackInstructions, statusPrompt } from "./status-prompt";
+import { parseDecisionOptions } from "./decisions";
+import { releaseWaitStated } from "./release-wait";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -165,7 +167,54 @@ it("hands back with the status prompt the user set, or the built-in one", () => 
   expect(handBackInstructions("")).toContain(DEFAULT_STATUS_PROMPT);
   expect(handBackInstructions("**Goal:** <x>")).toContain("**Goal:** <x>");
   // bb truncates thread instructions at 4096 characters.
-  expect(handBackInstructions("").length).toBeLessThan(4096);
+  expect(handBackInstructions("", true).length).toBeLessThan(4096);
+});
+
+it("asks for numbered options the reply buttons can offer, with or without a prompt of your own", () => {
+  expect(handBackInstructions("")).toContain(DECISION_ASK);
+  expect(handBackInstructions("My own prompt")).toContain(DECISION_ASK);
+  const ask = "Which store should we use?\n\n1. Postgres · already running (recommended)\n2. SQLite · simpler\n\nReply with the number.";
+  expect(parseDecisionOptions(ask).map((option) => option.recommended)).toEqual([true, false]);
+});
+
+it("reads a report written to the built-in template, Stack and Architecture included", () => {
+  expect(DEFAULT_STATUS_PROMPT).toContain("### Stack");
+  expect(DEFAULT_STATUS_PROMPT).toContain("### Architecture");
+  const report = parseStatusReport(
+    [
+      "**Goal:** Ship the importer",
+      "**Done:** Merged the parser",
+      "**Next:** Nothing pending.",
+      "**Blocked:** Waiting for release (last: v1.2.0, 2026-11-01).",
+      "**Due:** 2026-11-20 · customer demo",
+      "",
+      "### Stack",
+      "`✅ [#12 Parser](https://example.com/pr/12) · merged`",
+      "  `👀 [#13 Importer](https://example.com/pr/13) · in review`",
+      "",
+      "### Progress",
+      "```",
+      "[██████████] Parser     done",
+      "[█████░░░░░] Importer   50%  ← here",
+      "```",
+      "",
+      "### Architecture",
+      "```",
+      "upload → parser*",
+      "```",
+      "",
+      "_2026-11-11 12:00 CET_",
+    ].join("\n"),
+    1,
+  );
+  expect(report).toMatchObject({
+    goal: "Ship the importer",
+    done: "Merged the parser",
+    blocked: "Waiting for release (last: v1.2.0, 2026-11-01).",
+    due: "2026-11-20 · customer demo",
+  });
+  expect(report?.milestones).toHaveLength(2);
+  expect(releaseWaitStated("**Goal:** x\n**Done:** y\n**Blocked:** Waiting for release (last: v1.2.0, 2026-11-01).")).toBe(true);
 });
 
 describe("a report's Due line", () => {
