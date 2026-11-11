@@ -166,7 +166,7 @@ const cardCalls = (slot: { rpcCalls: Array<{ method: string; input: unknown }> }
 afterEach(() => cleanup());
 
 describe("Conductor page", () => {
-  it("lists the briefing as lines to scan, decisions first, with the selected one open", async () => {
+  it("lists the briefing as lines to scan, decisions first, each opening into its context", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(items()).toHaveLength(2));
     expect(slot.getByRole("tab", { name: /Briefing/ }).textContent).toBe("Briefing2");
@@ -175,9 +175,12 @@ describe("Conductor page", () => {
     expect(items()[1]!.querySelector(".jf-cd-headline")!.textContent).toBe("CI is green; it waits for your go to deploy.");
     expect(items()[0]!.textContent).toContain("due");
     expect(items()[0]!.textContent).toContain("3d");
-    // The first is open with its context; the others are one line.
+    // Collapsed, a line carries the recommendation and a one-click answer.
+    expect(items()[0]!.querySelector(".jf-cd-row-rec")!.textContent).toBe("Option 2: smaller bundle");
+    expect(within(items()[0]!).getByRole("button", { name: "Choose 2" })).toBeTruthy();
+    expect(items()[0]!.textContent).not.toContain("Charts for the dashboard");
+    fireEvent.click(items()[0]!.querySelector(".jf-cd-row")!);
     expect(items()[0]!.textContent).toContain("Charts for the dashboard");
-    expect(items()[1]!.textContent).not.toContain("Ship the billing export");
     expect(slot.container.textContent).toContain("2 waiting in its inbox");
     fireEvent.click(slot.getByRole("button", { name: /Handled by the conductor · 1/ }));
     expect(slot.container.textContent).toContain("Merged acme/web-app#12");
@@ -202,20 +205,31 @@ describe("Conductor page", () => {
   it("answers with one of the thread's own options", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(items()[0]!.querySelector(".jf-cd-row")!);
     const options = within(items()[0]!).getByRole("group", { name: "The thread's options" });
-    expect(within(options).getByRole("button", { name: /uPlot/ }).textContent).toContain("Recommended");
+    // The conductor's suggestion is option 2, so that option carries it and no separate draft shows.
+    expect(within(options).getByRole("button", { name: /uPlot/ }).textContent).toContain("Conductor's pick");
+    expect(within(items()[0]!).queryByRole("textbox")).toBeNull();
     fireEvent.click(within(options).getByRole("button", { name: /Recharts/ }));
     await waitFor(() =>
       expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_b", action: "reply", text: "1" }),
     );
   });
 
-  it("sends the suggestion as a go, from the open item or straight from a line", async () => {
+  it("sends the suggestion as a go, straight from a line or from the open item", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(items()).toHaveLength(2));
-    fireEvent.click(within(items()[0]!).getByRole("button", { name: /Send suggested reply/ }));
+    fireEvent.click(within(items()[0]!).getByRole("button", { name: "Choose 2" }));
     await waitFor(() => expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_b", action: "go" }));
     fireEvent.click(within(items()[1]!).getByRole("button", { name: "Send “go”" }));
+    await waitFor(() => expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_a", action: "go" }));
+  });
+
+  it("the open item sends the suggestion untouched as a go", async () => {
+    const slot = await mountPanel();
+    await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(items()[1]!.querySelector(".jf-cd-row")!);
+    fireEvent.click(within(items()[1]!).getByRole("button", { name: /Send suggested reply/ }));
     await waitFor(() => expect(cardCalls(slot).at(-1)).toEqual({ workspaceId: "ws", threadId: "thr_a", action: "go" }));
   });
 
@@ -233,6 +247,7 @@ describe("Conductor page", () => {
   it("snoozes, opens the thread beside the page, and takes keys", async () => {
     const slot = await mountPanel();
     await waitFor(() => expect(items()).toHaveLength(2));
+    fireEvent.click(items()[0]!.querySelector(".jf-cd-row")!);
     fireEvent.click(within(items()[0]!).getByRole("button", { name: "Open the thread beside this" }));
     expect(slot.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_b", options: { split: true } });
     fireEvent.click(within(items()[0]!).getByRole("button", { name: "Snooze" }));

@@ -404,6 +404,25 @@
 .jf-cd-item[data-expanded] .jf-cd-headline {
   white-space: normal;
 }
+.jf-cd-row-rec {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-cd-row-rec > [data-icon-root] {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--cd-kind, var(--cd-decision));
+}
+.jf-cd-row-rec > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .jf-cd-row-meta {
   display: flex;
   flex: none;
@@ -518,6 +537,10 @@
 .jf-cd-option-text {
   flex: 1;
   min-width: 0;
+}
+.jf-cd-option-badge[data-pick] {
+  background: color-mix(in oklch, var(--cd-decision) 18%, transparent);
+  color: var(--cd-decision);
 }
 .jf-cd-option-badge {
   flex: none;

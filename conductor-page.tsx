@@ -376,7 +376,7 @@ function Briefing({
   }, [threads, projects]);
   const [filter, setFilter] = useState<Kind | "all">("all");
   const [selected, setSelected] = useState(0);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const moved = useRef(false);
@@ -427,7 +427,6 @@ function Briefing({
       moved.current = true;
       const down = key === "j" || key === "ArrowDown";
       setSelected((index) => (down ? Math.min(index + 1, visible.length - 1) : Math.max(index - 1, 0)));
-      setExpanded(true);
     } else if (key === "Enter") setExpanded((value) => !value);
     else if (["g", "r", "s", "o", "e"].includes(key) && visible[selected]) {
       root.current?.querySelector<HTMLElement>(`[data-item="${visible[selected].threadId}"]`)?.dispatchEvent(new CustomEvent("jf-cd-key", { detail: key }));
@@ -616,8 +615,11 @@ export function BriefingItemRow({
   const rpc = useRpc<typeof rpcContract>();
   const openThread = useOpenThread();
   const suggested = item.reply ?? "";
+  const options = context?.options ?? [];
+  // The conductor's suggestion is often just one of the thread's own options ("2", "go 1").
+  const pick = options.find((option) => [String(option.n), `go ${option.n}`].includes(suggested.trim().toLowerCase()));
   const [draft, setDraft] = useState(suggested);
-  const [composing, setComposing] = useState(suggested !== "");
+  const [composing, setComposing] = useState(suggested !== "" && !pick);
   const [snoozing, setSnoozing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -668,7 +670,9 @@ export function BriefingItemRow({
 
   const waited = age(context?.waitingSince ?? null);
   const due = dueLabel(context?.dueAt ?? null);
-  const options = context?.options ?? [];
+  // Without a headline the line is the summary's first sentence; don't say it twice.
+  const headline = headlineOf(item);
+  const summary = item.headline ? item.summary : item.summary.slice(item.summary.split(/(?<=[.!?])\s/)[0]!.length).trim();
   const reportLines = context ? ([["Goal", context.goal], ["Blocked", context.blocked], ["Next", context.next]] as const).filter(([, value]) => value) : [];
 
   return (
@@ -690,7 +694,13 @@ export function BriefingItemRow({
             <span className="jf-cd-row-title">{title}</span>
             {project && <span className="jf-cd-chip">{project}</span>}
           </div>
-          <p className="jf-cd-headline">{headlineOf(item)}</p>
+          <p className="jf-cd-headline">{headline}</p>
+          {!expanded && (item.recommendation || pick) && (
+            <p className="jf-cd-row-rec">
+              <Icon name="ArrowRight" />
+              <span>{item.recommendation ?? `${pick!.n}. ${pick!.text}`}</span>
+            </p>
+          )}
         </div>
         <div className="jf-cd-row-meta">
           {due && <span className="jf-cd-due" data-overdue={due === "overdue" || undefined}>{due}</span>}
@@ -705,14 +715,14 @@ export function BriefingItemRow({
             <button
               type="button"
               className={`${buttonVariants({ variant: "outline", size: "sm" })} jf-cd-quick`}
-              title={`Send the suggested reply: ${suggested}`}
+              title={pick ? `Answer ${pick.n}: ${pick.text}` : `Send the suggested reply: ${suggested}`}
               disabled={busy}
               onClick={(event) => {
                 event.stopPropagation();
                 void act("go");
               }}
             >
-              Send “{quote(suggested)}”
+              {pick ? `Choose ${pick.n}` : suggested.length <= 14 ? `Send “${quote(suggested)}”` : "Send suggestion"}
             </button>
           )}
           <Icon name="ChevronDown" className="jf-cd-chevron" />
@@ -721,7 +731,7 @@ export function BriefingItemRow({
 
       {expanded && (
         <div className="jf-cd-detail">
-          <p className="jf-cd-summary">{item.summary}</p>
+          {summary && <p className="jf-cd-summary">{summary}</p>}
 
           {(reportLines.length > 0 || (context?.prs.length ?? 0) > 0) && (
             <dl className="jf-cd-context">
@@ -761,7 +771,8 @@ export function BriefingItemRow({
                 >
                   <span className="jf-cd-option-n">{option.n}</span>
                   <span className="jf-cd-option-text">{option.text}</span>
-                  {option.recommended && <span className="jf-cd-option-badge">Recommended</span>}
+                  {option === pick && <span className="jf-cd-option-badge" data-pick>Conductor's pick</span>}
+                  {option.recommended && option !== pick && <span className="jf-cd-option-badge">Recommended</span>}
                 </button>
               ))}
               {context?.optionsMode === "go" && (
@@ -775,7 +786,7 @@ export function BriefingItemRow({
             </div>
           )}
 
-          {item.recommendation && (
+          {item.recommendation && !pick && (
             <p className="jf-cd-rec">
               <Icon name="Workflow" />
               <span>
