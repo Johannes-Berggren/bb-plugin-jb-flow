@@ -24,6 +24,7 @@ export default defineConfig({
       "conductor-page.ui.test.tsx",
       "server-boot.test.ts",
       "conductor-brief.ui.test.tsx",
+      "plan-model-picker.ui.test.tsx",
     ],
   },
 });
