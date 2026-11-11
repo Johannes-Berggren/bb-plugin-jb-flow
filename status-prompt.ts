@@ -43,6 +43,8 @@ export const DEFAULT_STATUS_PROMPT = [
   ">",
   "> Reply with the number.",
   "",
+  'When several options can go together, end with "Reply with one or more numbers, e.g. **1,3**." instead.',
+  "",
   "_<YYYY-MM-DD HH:MM TZ>_",
   "",
   "Rules: high level and concise. Link every PR, ticket, deploy and doc. Check PR, CI and deploy state live with tools (pr_status or `gh`) instead of from memory, and take the timestamp from `date`.",
@@ -59,7 +61,7 @@ export function statusPrompt(setting: unknown, withDue = false): string {
 
 /** Numbered options marked "(recommended)" become one-click replies (see decisions.ts). */
 export const DECISION_ASK =
-  'Whenever you ask the user to decide something, with or without a report, end the message with a numbered list of options, one line each, mark your recommendation with "(recommended)", and say "Reply with the number." so they can answer with just the number.';
+  'Whenever you ask the user to decide something, with or without a report, end the message with a numbered list of options, one line each, mark your recommendation with "(recommended)", and say "Reply with the number." so they can answer with just the number. When several options can go together, say "Reply with one or more numbers, e.g. 1,3." instead.';
 
 /**
  * Thread instructions for the "Status report at hand-back" setting: the agent

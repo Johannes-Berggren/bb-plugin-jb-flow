@@ -80,3 +80,37 @@ test("next move without a report: a trailing list, go-list when it asks for go",
   assert.equal(choice.options.length, 2);
   assert.deepEqual(nextMove("All done, the PR is merged."), { mode: "choice", options: [] });
 });
+
+test("next move: a list that asks for several numbers is answered with several", () => {
+  const callout = [
+    "> [!TIP]",
+    "> **Decision needed:** which should I set up?",
+    "> 1. Rule in the contributing guide · agents follow it straight away (recommended)",
+    "> 2. CI check, warning only for two weeks · a backstop for everyone (recommended)",
+    "> 3. Weekly flag list · keeps flags from drifting",
+    "> 4. Draft a note to Alex and Sam for you to send",
+    ">",
+    "> Reply with the numbers, e.g. **1,2,4**.",
+  ].join("\n");
+  // Inside a status report, and as a bare list.
+  const report = nextMove(`**Goal:** Keep flags tidy\n**Done:** Compared the options\n\n### Next steps\n${callout}\n\n_2026-11-10 09:55 CET_`);
+  assert.equal(report.mode, "multi");
+  assert.deepEqual(report.options.filter((option) => option.recommended).map((option) => option.n), [1, 2]);
+  const bare = nextMove(`The call is yours.\n\n${callout}`);
+  assert.equal(bare.mode, "multi");
+  assert.equal(bare.options.length, 4);
+  for (const ask of ["Pick one or more:", "Which apply? Select all that apply.", "Choose any combination:"]) {
+    assert.equal(nextMove(`${ask}\n1. Merge now\n2. Wait for review\n3. Tidy the docs`).mode, "multi", ask);
+  }
+  assert.equal(nextMove("Two ways forward:\n1. Merge now\n2. Wait for review\n\nReply with one or more numbers, e.g. 1,2.").mode, "multi");
+});
+
+test("next move: one number, go, and earlier prose stay as they were", () => {
+  assert.equal(nextMove("Which should I do?\n1. Merge now\n2. Wait for review\n\nReply with the number.").mode, "choice");
+  assert.equal(nextMove("Which should I do?\n1. Merge now\n2. Wait for review\n\nReply **go** for all, or **go 1,3**.").mode, "go");
+  // "several" belongs to the prose, not to the list.
+  const prose = "Several checks failed and multiple jobs need numbers.\n\nWhich should I do?\n1. Merge now\n2. Wait for review";
+  assert.equal(nextMove(prose).mode, "choice");
+  // Plural asks are still choices for the parser the deck and palette use.
+  assert.equal(parseDecisionOptions("Two ways forward:\n1. Merge now\n2. Wait for review\n\nReply with the numbers.").length, 2);
+});

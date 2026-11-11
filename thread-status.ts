@@ -16,12 +16,13 @@ export const statusReportSchema = z.object({
     )
     .max(12),
   /**
-   * The report's "Next steps": steps to run with "go" (all, or "go 1,3"), or a
-   * decision answered with a number. Optional: older saved reports lack it.
+   * The report's "Next steps": steps to run with "go" (all, or "go 1,3"), a
+   * decision answered with a number, or one where several can go together
+   * ("multi", answered with "1,3"). Optional: older saved reports lack it.
    */
   steps: z
     .object({
-      mode: z.enum(["go", "choice"]),
+      mode: z.enum(["go", "choice", "multi"]),
       question: z.string().max(300),
       items: z.array(z.string().max(300)).max(9),
       recommended: z.array(z.number()).max(9),
@@ -100,6 +101,15 @@ export function parseStatusReport(
   return { ...fields, milestones, ...parseNextSteps(reply), ...(due ? { due } : {}), capturedAt };
 }
 
+/**
+ * Wording that lets the user pick several options: "Reply with the numbers,
+ * e.g. 1,2,4", "pick one or more", "all that apply". The singular "Reply with
+ * the number." doesn't match. Test it against the lines around a list, not
+ * its items or earlier prose.
+ */
+export const MULTI_REPLY =
+  /\b(?:reply|answer|respond|write|type|say|send|pick|choose|select|tick)\b[^.\n]{0,40}?\b(?:numbers|number\(s\)|one or more|several|multiple|any (?:of (?:them|these)|combination|number))(?![\w(])|\ball that apply\b|\be\.\s?g\.?,?\s*[*_`"“]*\d+\s*,\s*\d/i;
+
 /** The "### Next steps" section: a go-list, a numbered decision, or "Doing now". */
 export function parseNextSteps(reply: string): Pick<StatusReport, "steps" | "doingNow"> {
   const section =
@@ -111,19 +121,24 @@ export function parseNextSteps(reply: string): Pick<StatusReport, "steps" | "doi
   const question = /\*\*Decision needed:\*\*\s*(.+)/i.exec(text)?.[1];
   const items: string[] = [];
   const recommended: number[] = [];
+  const around: string[] = [];
   for (const line of lines) {
     const match = /^\s*(\d+)[.)]\s+(.+)$/.exec(line);
-    if (!match) continue;
+    if (!match) {
+      around.push(line);
+      continue;
+    }
+    // Past nine items, keep reading: the reply line after the list still counts.
+    if (items.length === 9) continue;
     if (/\(recommended\)/i.test(match[2]!)) recommended.push(items.length + 1);
     items.push(plain(match[2]!.replace(/\s*\(recommended\)\s*/i, " ")).slice(0, 300));
-    if (items.length === 9) break;
   }
   // "**Recommended:** 1" or "1,3" names steps by number.
   const named = /\*\*Recommended:?\*\*:?\s*([\d,\s]+)(?:$|\n)/i.exec(text)?.[1];
   for (const n of named?.match(/\d+/g) ?? []) if (Number(n) <= items.length && !recommended.includes(Number(n))) recommended.push(Number(n));
   return {
     steps: items.length
-      ? { mode: question ? "choice" : "go", question: question ? plain(question).slice(0, 300) : "", items, recommended }
+      ? { mode: question ? (MULTI_REPLY.test(around.join("\n")) ? "multi" : "choice") : "go", question: question ? plain(question).slice(0, 300) : "", items, recommended }
       : null,
     ...(doing ? { doingNow: plain(doing).slice(0, 500) } : {}),
   };

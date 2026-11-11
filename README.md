@@ -183,7 +183,9 @@ plugin page can't hide itself yet; JB Flow's workspace navigation hides it.
 **Polish the entire BB interface** (Settings → JB Flow, on by default) applies
 across the standard BB interface: inset sidebar selections, refined section
 headings and rail controls, layered page surfaces, elevated composers, panel tabs,
-menus, dialogs, and the command palette. It works with any palette; Graphite adds
+menus, dialogs, and the command palette. Callouts in chat messages (`> [!TIP]`,
+`[!NOTE]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), which BB shows as literal
+text, become tinted boxes with a label. It works with any palette; Graphite adds
 coordinated sidebar, card, popover, and recessed colors in light and dark mode.
 
 **Graphite**, under **Settings → Appearance**, is an optional app-wide palette:
@@ -270,9 +272,20 @@ list scrolls inside a capped box instead of pushing the composer. Choosing
 one sends only its number, with visible sending/sent feedback. Duplicate clicks
 are blocked; failed sends show an error and allow retry. Choices reset when the
 thread or source reply changes. Motion respects reduced-motion preferences.
-While the choices show, the same numbered list in the agent's message is hidden and
-each choice shows its full text (turn off with **Hide options the reply buttons
-repeat**).
+
+When the agent asks for several ("Reply with the numbers, e.g. 1,3", "pick one or
+more", "all that apply"), the options are checkboxes with the recommended ones
+already ticked, and **Send 1, 3** replies `1,3`. Any other decision can be
+switched to the same ticking with **Pick several** in the header, or by
+⌘/Ctrl-clicking an option. Go-lists work the same way with **Go**; ticking every
+step sends plain `go`.
+
+With focus in the list, ↑/↓ and Home/End move between options, and a digit ticks
+that option (or, where a click sends, moves to it so Enter sends).
+
+While the choices show, the same numbered list in the agent's message is hidden,
+along with its "Reply with the number…" line, and each choice shows its full
+text (turn off with **Hide options the reply buttons repeat**).
 
 ### Triage sidebar
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
@@ -348,7 +361,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - Threads whose PRs are all merged or closed go into a **ready to archive** group, with **Archive all**. Threads waiting on a release or CI, or in Priority, are left out.
 
 ### Decisions and "Your move"
-- **Decision buttons:** when an agent's last message ends with numbered options, they appear under **Your next move** above the composer and the thread monitor. The recommended one is highlighted. A decision sends the option's number in one click. A list of steps to run with go (a status report's **Next steps**, or a list ending "Reply go for all, or go 1,3") lets you tick steps, then **Go** sends `go`, or `go 1,3` with steps ticked.
+- **Decision buttons:** when an agent's last message ends with numbered options, they appear under **Your next move** above the composer and the thread monitor. The recommended one is highlighted. A decision sends the option's number in one click; **Pick several** (or ⌘-click) ticks several and sends `1,3`. A decision that asks for several numbers opens ticked to the recommended ones. A list of steps to run with go (a status report's **Next steps**, or a list ending "Reply go for all, or go 1,3") lets you tick steps, then **Go** sends `go`, or `go 1,3` with steps ticked.
 - **Leftover worktrees:** bb removes a thread's worktree when it's archived, but extra checkouts an agent adds next to it (cross-repo work) and failed teardowns stay on disk. A weekly scan (Mondays 08:00) lists them under the stale digest with their PR state, uncommitted changes and node_modules, plus a button that deletes the merged, clean ones. Also `bb jb-flow leftovers`.
 - **Ready to go:** a status report that only offers steps with **Reply go** means nothing is stuck on you, so these threads aren't in Needs me or Your move. A **Ready to go** filter above the list collects them, and they stay out of Done.
 - **Your move:** a home-page section lists threads whose agent handed the next step to you, oldest first. With Catch up on, a *Catch up · N unread* line above it opens the deck. Threads waiting 3+ days are flagged, and each has Snooze 3d and Archive. Also `bb jb-flow your-move`.
@@ -419,7 +432,7 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 
 Under **Settings → JB Flow**:
 
-- **Polish the entire BB interface**: restyles bb and folds finished commands behind *Show trace* (on by default).
+- **Polish the entire BB interface**: restyles bb, shows `> [!TIP]` callouts as callouts and folds finished commands behind *Show trace* (on by default).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **Swipe between workspaces**: a two-finger sideways swipe on the sidebar moves to the next or previous workspace tab, and the sidebar slides as the workspace changes (off by default).
@@ -433,7 +446,7 @@ Under **Settings → JB Flow**:
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).
 - **Expand plan reviews**: expanded, resizable plan reviews (on by default).
-- **Hide options the reply buttons repeat**: while the reply choices show, hide the same numbered list in the agent's message (on by default).
+- **Hide options the reply buttons repeat**: while the reply choices show, hide the same numbered list and its "Reply with…" line in the agent's message (on by default).
 - **Copy buttons on code**: hovering an inline code snippet in a chat message shows a copy button (off by default). Fenced code blocks already have BB's own *Copy code*.
 - **Advanced config (JSON)**: see below.
 - **Triage lanes**, **Repo commands** and **Area tags** have their own sections.

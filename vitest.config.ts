@@ -12,6 +12,7 @@ export default defineConfig({
       "live-activity.ui.test.tsx",
       "timeline-activity.ui.test.tsx",
       "inline-code-copy.ui.test.tsx",
+      "callouts.ui.test.tsx",
       "thread-status.test.ts",
       "decision-choices.ui.test.tsx",
       "palette.ui.test.tsx",

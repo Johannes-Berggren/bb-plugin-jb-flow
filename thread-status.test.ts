@@ -150,6 +150,16 @@ it("reads next steps to run with go, a numbered decision, and Doing now", () => 
   expect(doing?.steps).toBeNull();
 });
 
+it("reads a decision that takes several numbers as multi", () => {
+  const head = "**Goal:** Ship it\n**Done:** Merged the fix\n\n### Next steps\n> [!TIP]\n> **Decision needed:** which should I set up?\n";
+  const multi = parseStatusReport(head + "> 1. Lint rule (recommended)\n> 2. CI check (recommended)\n> 3. Weekly list\n>\n> Reply with one or more numbers, e.g. **1,3**.", 1);
+  expect(multi?.steps).toMatchObject({ mode: "multi", items: ["Lint rule", "CI check", "Weekly list"], recommended: [1, 2] });
+  // The reply line after a long list still counts.
+  const items = Array.from({ length: 10 }, (_, index) => `> ${index + 1}. Option ${index + 1}`).join("\n");
+  expect(parseStatusReport(head + items + "\n>\n> Reply with the numbers.", 1)?.steps?.mode).toBe("multi");
+  expect(parseStatusReport(head + "> 1. Lint rule\n> 2. CI check\n>\n> Reply with the number.", 1)?.steps?.mode).toBe("choice");
+});
+
 it("reads a go-list under a **Path forward:** line without taking it for a recommendation", () => {
   const report = parseStatusReport(
     "**Goal:** Ship it\n**Done:** Merged the fix\n\n### Next steps\n> [!TIP]\n> **Path forward:** finish the menu, then the docs\n> 1. Add the item · one step instead of three\n> 2. Update the README · keep docs current\n>\n> Reply **go** for all, or **go 1,3**.\n\n_2026-10-23 12:13 CEST_",

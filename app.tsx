@@ -9,6 +9,7 @@ import { WorkspaceNavigation, WorkspaceTopBar, WorkspaceRouteBridge, WorkspaceSe
 import { useWorkspaces } from "./workspace-client";
 import { mountTimelineActivity } from "./timeline-activity";
 import { COPY_CODE_FLAG, mountInlineCodeCopy } from "./inline-code-copy";
+import { mountCallouts } from "./callouts";
 import { useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_useSidebarThreads as useSidebarThreads, useRpc, experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest, useBbContext, useComposer, useSidebarSplitLayout, useSettings } from "@get-bb/plugin-sdk/app";
 import type { JsonValue } from "@get-bb/plugin-sdk/app";
@@ -227,6 +228,7 @@ export default definePluginApp((app) => {
   app.contentScripts.register({ id: "shell-appearance", mount: mountShellAppearance });
   app.contentScripts.register({ id: "timeline-activity", mount: mountTimelineActivity });
   app.contentScripts.register({ id: "inline-code-copy", mount: mountInlineCodeCopy });
+  app.contentScripts.register({ id: "callouts", mount: mountCallouts });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
   app.slots.navPanel({
     id: "catch-up",
