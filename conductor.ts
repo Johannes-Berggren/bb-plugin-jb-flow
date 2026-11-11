@@ -327,7 +327,9 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
       ...(compact ? { compactFirst: true } : {}),
     });
     deps.store.markDelivered(events.map((event) => event.id), now());
-    records[workspaceId] = { ...record, lastWakeAt: now(), ...(compact ? { compactedOn: day } : {}) };
+    // Every wake-up marks the day: the first one of a day starts it compacted, or (the very
+    // first) with a fresh conversation, so later ones that day leave it alone.
+    records[workspaceId] = { ...record, lastWakeAt: now(), compactedOn: day };
     await save();
     log(workspaceId, "woken", threadId, `Woken with ${events.length} event${events.length === 1 ? "" : "s"}${compact ? " (compacted first)" : ""}.`);
     return "woken";

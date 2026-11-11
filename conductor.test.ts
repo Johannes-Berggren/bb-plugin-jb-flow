@@ -324,14 +324,18 @@ test("the first wake-up of a day compacts the conductor first", async () => {
   advance(11 * MINUTE);
   await conductor.wake("ws");
   assert.equal(sent[0]!.compactFirst, undefined, "its very first wake-up has nothing to compact");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "one more" }]);
+  advance(11 * MINUTE);
+  await conductor.wake("ws");
+  assert.equal(sent[1]!.compactFirst, undefined, "nor does a second one the same day");
   await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "two" }]);
   advance(24 * 60 * MINUTE);
   await conductor.wake("ws");
-  assert.equal(sent[1]!.compactFirst, true);
+  assert.equal(sent[2]!.compactFirst, true);
   await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "three" }]);
   advance(11 * MINUTE);
   await conductor.wake("ws");
-  assert.equal(sent[2]!.compactFirst, undefined, "once a day");
+  assert.equal(sent[3]!.compactFirst, undefined, "once a day");
 });
 
 test("a briefing keeps only items for open threads in the workspace", async () => {
