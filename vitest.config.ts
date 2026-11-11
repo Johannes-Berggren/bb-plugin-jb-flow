@@ -20,6 +20,7 @@ export default defineConfig({
       "now.ui.test.tsx",
       "subthreads.ui.test.tsx",
       "conductor-page.ui.test.tsx",
+      "server-boot.test.ts",
     ],
   },
 });

@@ -84,6 +84,7 @@
     "conductor-model.test.ts",
     "conductor.test.ts",
     "conductor-page.tsx",
-    "conductor-page.ui.test.tsx"
+    "conductor-page.ui.test.tsx",
+    "server-boot.test.ts"
   ]
 }
