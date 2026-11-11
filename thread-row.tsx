@@ -88,8 +88,14 @@ export function ThreadRow({
   reason,
   due,
   onSetDue,
+  depth = 0,
+  subthreads,
 }: {
   thread: PluginSidebarThread;
+  /** How far under a top-level row this subthread sits (0 for a row of its own). */
+  depth?: number;
+  /** When it has subthreads: how many (at any depth), whether they're folded away, and whether one needs you or runs. */
+  subthreads?: { count: number; folded: boolean; tone: "needs" | "running" | null; onToggle: () => void };
   /** Marked as Focus. */
   focused: boolean;
   /** Missing when Now and Focus is turned off. */
@@ -173,6 +179,9 @@ export function ThreadRow({
     } else if (event.key === "u") {
       event.preventDefault();
       void actions.setRead(thread.id, thread.isUnread);
+    } else if (subthreads && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      if (subthreads.folded === (event.key === "ArrowRight")) subthreads.onToggle();
     } else if (event.key === "j" || event.key === "k") {
       event.preventDefault();
       const rows = Array.from(
@@ -223,14 +232,35 @@ export function ThreadRow({
           }}
           onKeyDown={onKeyDown}
           className={cn(
-            "jf-thread-row group flex h-8 items-center gap-2 rounded-md pl-6 pr-2 text-sm outline-none",
+            "jf-thread-row group relative flex h-8 items-center gap-2 rounded-md pl-6 pr-2 text-sm outline-none",
             "hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
             active && "bg-accent",
           )}
           style={{
             opacity: drag.dragging?.threadId === thread.id ? 0.4 : 1,
+            // A margin, not padding, so it indents the same with and without the restyle.
+            ...(depth > 0 ? { marginLeft: `${depth}rem` } : {}),
           }}
+          {...(depth > 0 ? { "data-jb-flow-subthread": "" } : {})}
         >
+          {subthreads ? (
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-expanded={!subthreads.folded}
+              aria-label={subthreads.folded ? "Show subthreads" : "Hide subthreads"}
+              title={`${subthreads.folded ? "Show" : "Hide"} ${subthreads.count} subthread${subthreads.count === 1 ? "" : "s"} (← →)`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                subthreads.onToggle();
+              }}
+              className="absolute left-0.5 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground"
+            >
+              <Icon name={subthreads.folded ? "ChevronRight" : "ChevronDown"} className="size-3" />
+            </button>
+          ) : null}
           <StatusIcon status={status} />
           {focused ? (
             <span role="img" aria-label="In Focus" title="In Focus" className="shrink-0">
@@ -258,6 +288,19 @@ export function ThreadRow({
                   #{tag}
                 </span>
               ))}
+          {subthreads?.folded ? (
+            <span
+              data-jb-flow-subthread-count=""
+              title={`${subthreads.count} subthread${subthreads.count === 1 ? "" : "s"}${subthreads.tone === "needs" ? ", one needs you" : subthreads.tone === "running" ? ", running" : ""}`}
+              className={cn(
+                "flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums",
+                subthreads.tone === "needs" ? "font-medium text-amber-600" : subthreads.tone === "running" ? "text-sky-600" : "text-muted-foreground",
+              )}
+            >
+              <Icon name="CornerDownRight" fallback="ChevronRight" className="size-3" />
+              {subthreads.count}
+            </span>
+          ) : null}
           <ProjectChip project={project} />
           {machine?.remote ? (
             <span className="shrink-0 text-[10px] text-muted-foreground" title={`Runs on ${machineLabel(machine.name)}`}>

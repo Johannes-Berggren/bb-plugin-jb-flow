@@ -18,6 +18,7 @@ export default defineConfig({
       "palette.ui.test.tsx",
       "catch-up.ui.test.tsx",
       "now.ui.test.tsx",
+      "subthreads.ui.test.tsx",
     ],
   },
 });

@@ -11,6 +11,7 @@ import type { FlowState } from "./server";
 import { useSidebarThreadActions } from "./thread-actions";
 import { allSettled, threadPrs, useNow } from "./ui-extras";
 import { groupByProject, groupBySection, quietFor, sortRows } from "./sidebar-groups";
+import { childrenByParent, descendants, subthreadRows, topLevel } from "./subthreads";
 import { resolveLanes, sectionNames } from "./lanes";
 import { needsMe, replyQueued } from "./needs-me";
 import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
@@ -375,10 +376,10 @@ export function TriageThreadList({
   const createdOrder = settingValues?.createdRowOrder === true;
   const nowEnabled = settingValues?.nowQueue === true;
   const focusLimit = focusLimitOf(settingValues?.focusLimit);
-  const liveRows = useMemo(
-    () => threads.filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId))),
-    [threads],
-  );
+  const liveThreads = useMemo(() => threads.filter((thread) => !thread.isHidden && !thread.isArchived), [threads]);
+  // Subthreads ride under their parent's row; only the rest are rows of their own.
+  const liveRows = useMemo(() => topLevel(liveThreads), [liveThreads]);
+  const subthreads = useMemo(() => childrenByParent(sortRows(liveThreads, createdOrder)), [liveThreads, createdOrder]);
   // Waits and "no next step" depend on the clock, so the queue is rebuilt each minute.
   const nowMinute = Math.floor(now / 60_000);
   const lastNowOrder = useRef<readonly string[]>([]);
@@ -661,6 +662,59 @@ export function TriageThreadList({
   );
   const { isCollapsed, toggle } = useCollapsed(defaults);
 
+  // Subthreads start unfolded, as in bb's own list; folding is remembered per thread.
+  const foldKey = (threadId: string) => `subthreads:${threadId}`;
+  const isFolded = (threadId: string) => isCollapsed(foldKey(threadId));
+  const subthreadToggle = (thread: PluginSidebarThread) => {
+    const under = descendants(thread.id, subthreads);
+    if (under.length === 0) return undefined;
+    return {
+      count: under.length,
+      folded: isFolded(thread.id),
+      // A folded thread still says when something under it needs you or is running.
+      tone: under.some((child) => needsMe(child, state?.awaiting))
+        ? ("needs" as const)
+        : under.some((child) => child.status === "active" || child.status === "starting")
+          ? ("running" as const)
+          : null,
+      onToggle: () => toggle(foldKey(thread.id)),
+    };
+  };
+  const renderRow = (thread: PluginSidebarThread, group: Group, depth: number) => (
+    <ThreadRow
+      key={thread.id}
+      thread={thread}
+      depth={depth}
+      subthreads={subthreadToggle(thread)}
+      workspaceState={workspaceState}
+      onWorkspace={(workspaceId, automatic) => void workspaceRpc.call("workspace_assign", { threadId: thread.id, workspaceId, automatic }).then(refreshWorkspaces).catch((cause) => toast.error(errorText(cause)))}
+      project={projectById.get(thread.projectId)}
+      active={thread.id === activeThreadId}
+      tags={tags[thread.id] ?? []}
+      snoozeUntil={state?.snoozes[thread.id]?.until}
+      watching={state?.watching[thread.id]}
+      createdPrs={state?.threadPrs[thread.id]}
+      running={state?.running[thread.id]}
+      now={now}
+      lanes={lanes}
+      otherSections={otherSections}
+      onNavigate={onNavigate}
+      onSnooze={() => setSnoozeTarget(thread.id)}
+      onUnsnooze={() =>
+        void rpc.call("unsnooze", { threadId: thread.id })
+      }
+      onTag={() => setTagTarget(thread.id)}
+      onRename={() => setRenameTarget(thread)}
+      onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
+      machine={rowMachine(thread)}
+      focused={nowEnabled && state?.focused[thread.id] !== undefined}
+      onToggleFocus={nowEnabled ? () => toggleFocus(thread.id) : undefined}
+      due={nowEnabled ? state?.due[thread.id] : undefined}
+      onSetDue={nowEnabled ? () => setDueTarget(thread.id) : undefined}
+      reason={rowReason(group.id === "now" || group.id === "moving" ? nowEntries.get(thread.id) : undefined)}
+    />
+  );
+
   if (status === "loading" || (!workspaceReady && selectedWorkspace !== null)) {
     return (
       <p className="px-3 py-2 text-xs text-muted-foreground">
@@ -679,7 +733,7 @@ export function TriageThreadList({
     >
       <div className="jf-triage-heading"><span>Threads</span>
         {smart !== null && <button type="button" onClick={() => setSmart(null)}>Clear filter</button>}
-        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus · d due date" : ""} · e archive · u unread · j/k move`}><Icon name="Info" className="size-3" /></span>
+        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus · d due date" : ""} · e archive · u unread · ←/→ fold subthreads · j/k move`}><Icon name="Info" className="size-3" /></span>
       </div>
       <div className="jf-triage-filters">
         {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
@@ -800,38 +854,10 @@ export function TriageThreadList({
               </p>
             ) : (
               <>
-                {group.threads.slice(0, limit).map((thread) => (
-                  <ThreadRow
-                    key={thread.id}
-                    thread={thread}
-                    workspaceState={workspaceState}
-                    onWorkspace={(workspaceId, automatic) => void workspaceRpc.call("workspace_assign", { threadId: thread.id, workspaceId, automatic }).then(refreshWorkspaces).catch((cause) => toast.error(errorText(cause)))}
-                    project={projectById.get(thread.projectId)}
-                    active={thread.id === activeThreadId}
-                    tags={tags[thread.id] ?? []}
-                    snoozeUntil={state?.snoozes[thread.id]?.until}
-                    watching={state?.watching[thread.id]}
-                    createdPrs={state?.threadPrs[thread.id]}
-                    running={state?.running[thread.id]}
-                    now={now}
-                    lanes={lanes}
-                    otherSections={otherSections}
-                    onNavigate={onNavigate}
-                    onSnooze={() => setSnoozeTarget(thread.id)}
-                    onUnsnooze={() =>
-                      void rpc.call("unsnooze", { threadId: thread.id })
-                    }
-                    onTag={() => setTagTarget(thread.id)}
-                    onRename={() => setRenameTarget(thread)}
-                    onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
-                    machine={rowMachine(thread)}
-                    focused={nowEnabled && state?.focused[thread.id] !== undefined}
-                    onToggleFocus={nowEnabled ? () => toggleFocus(thread.id) : undefined}
-                    due={nowEnabled ? state?.due[thread.id] : undefined}
-                    onSetDue={nowEnabled ? () => setDueTarget(thread.id) : undefined}
-                    reason={rowReason(group.id === "now" || group.id === "moving" ? nowEntries.get(thread.id) : undefined)}
-                  />
-                ))}
+                {group.threads.slice(0, limit).flatMap((thread) => [
+                  renderRow(thread, group, 0),
+                  ...subthreadRows(thread.id, subthreads, isFolded).map((row) => renderRow(row.thread, group, row.depth)),
+                ])}
                 {group.threads.length > limit ? (
                   <button
                     type="button"
