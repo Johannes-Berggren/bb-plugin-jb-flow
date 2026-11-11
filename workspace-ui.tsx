@@ -43,6 +43,8 @@ import "./workspaces.css";
 
 const isCatchUpPanel = (item: ExperimentalSidebarNavigationItem) =>
   item.action.kind === "open-plugin-panel" && item.action.pluginId === "jb-flow" && item.action.panelId === "catch-up";
+const isConductorPanel = (item: ExperimentalSidebarNavigationItem) =>
+  item.action.kind === "open-plugin-panel" && item.action.pluginId === "jb-flow" && item.action.panelId === "conductor";
 
 function NavItem({
   item,
@@ -371,6 +373,7 @@ function WorkspaceNavigationInner(
   const { items, actions } = useSidebarNavigation();
   const { projects } = useSidebarThreads();
   const catchUpOn = useSettings().values?.catchUp === true;
+  const conductorOn = useSettings().values?.conductor === true;
   const [more, setMore] = useState(false);
   const active = state.workspaces.find(
     (workspace) => workspace.id === selected,
@@ -382,7 +385,8 @@ function WorkspaceNavigationInner(
     (item) =>
       pluginInWorkspace(item.pluginId, selected, state) &&
       // bb's own rail still lists the panel (a panel can't hide itself); this list can.
-      (catchUpOn || !isCatchUpPanel(item)),
+      (catchUpOn || !isCatchUpPanel(item)) &&
+      (conductorOn || !isConductorPanel(item)),
   );
   return (
     <div className="jf-workspaces">

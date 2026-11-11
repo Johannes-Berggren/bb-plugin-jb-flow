@@ -19,6 +19,7 @@ export default defineConfig({
       "catch-up.ui.test.tsx",
       "now.ui.test.tsx",
       "subthreads.ui.test.tsx",
+      "conductor-page.ui.test.tsx",
     ],
   },
 });

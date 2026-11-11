@@ -1,0 +1,287 @@
+/* The Conductor page: a header, the briefing as cards, the conductor's chat below.
+   Side-panel tabs: Fleet and Activity. Settings: one row per workspace. */
+.jf-conductor,
+.jf-conductor-page {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+.jf-conductor-page {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px 12px;
+}
+.jf-conductor {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, auto) minmax(18rem, 1fr);
+  height: 100%;
+  min-height: 0;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 6px 12px 8px;
+}
+.jf-conductor h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.jf-conductor-muted {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-conductor-empty {
+  padding: 32px 0;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+.jf-conductor-error {
+  color: var(--destructive);
+  font-size: 12px;
+}
+.jf-conductor-name {
+  font-weight: 600;
+}
+
+/* --- header --- */
+.jf-conductor-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.jf-conductor-heading,
+.jf-conductor-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.jf-conductor-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.jf-conductor-chip[data-state="working"] {
+  color: var(--foreground);
+  border-color: color-mix(in oklab, var(--primary) 50%, var(--border));
+}
+
+/* --- briefing --- */
+.jf-conductor-briefing {
+  max-height: 55vh;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.jf-conductor-briefing-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.jf-conductor-note {
+  margin: 0 0 8px;
+  color: var(--muted-foreground);
+}
+.jf-conductor-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jf-conductor-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--card, transparent);
+}
+.jf-conductor-card[data-kind="decision"],
+.jf-conductor-card[data-kind="blocked"] {
+  border-left: 3px solid color-mix(in oklab, var(--primary) 60%, var(--border));
+}
+.jf-conductor-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.jf-conductor-index {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-conductor-kind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+}
+.jf-conductor-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.jf-conductor-title:hover {
+  text-decoration: underline;
+}
+.jf-conductor-summary,
+.jf-conductor-recommendation {
+  margin: 4px 0 0;
+}
+.jf-conductor-reply {
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+  max-height: 6.5em;
+  overflow: hidden;
+}
+.jf-conductor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.jf-conductor-reply-form textarea {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--input, var(--border));
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  resize: vertical;
+}
+.jf-conductor-handled {
+  margin-top: 10px;
+}
+.jf-conductor-handled > button {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+.jf-conductor-handled ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+/* --- chat --- */
+.jf-conductor-chat {
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+/* --- overview and settings --- */
+.jf-conductor-overview h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.jf-conductor-overview ul,
+.jf-conductor-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.jf-conductor-overview li,
+.jf-conductor-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.jf-conductor-overview li > .jf-conductor-muted,
+.jf-conductor-settings-row > .jf-conductor-muted {
+  flex: 1;
+}
+.jf-conductor-overview li[data-current] .jf-conductor-name {
+  text-decoration: underline;
+}
+.jf-conductor-settings > li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jf-conductor-settings select {
+  border: 1px solid var(--input, var(--border));
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px 6px;
+  font: inherit;
+}
+
+/* --- side-panel tabs --- */
+.jf-conductor-fleet,
+.jf-conductor-log {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  font-size: 12px;
+}
+.jf-conductor-fleet li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jf-conductor-fleet li[data-needs-you] .jf-conductor-title {
+  color: var(--foreground);
+}
+.jf-conductor-fleet .jf-conductor-title {
+  color: var(--muted-foreground);
+}
+.jf-conductor-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  vertical-align: middle;
+}
+.jf-conductor-prs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.jf-conductor-prs a {
+  color: var(--muted-foreground);
+}
+.jf-conductor-prs a[data-attention="checks_failed"],
+.jf-conductor-prs a[data-attention="changes_requested"],
+.jf-conductor-prs a[data-attention="conflicts"] {
+  color: var(--destructive);
+}
+.jf-conductor-next {
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-conductor-log li {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jf-conductor-log-kind {
+  font-weight: 600;
+}

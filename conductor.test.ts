@@ -362,3 +362,29 @@ test("standing preferences are kept and put in the instructions", async () => {
   const config = conductor.configureFor({ ...base, thread: { id: threadId, title: null, parentThreadId: null, sourceThreadId: null } });
   assert.match(config!.instructions, /Always merge dependency bumps\./);
 });
+
+test("Go on a card sends the reply as the user's, marks the thread read and puts the card away", async () => {
+  const { conductor, call, sent, read, store, advance } = await setup();
+  const { threadId } = await conductor.start("ws");
+  await call("post_briefing", { items: [{ threadId: "thr_a", kind: "decision", summary: "Pick one", reply: "2" }] }, threadId);
+  await conductor.cardAction("ws", "thr_a", "go");
+  assert.deepEqual(sent.map((message) => [message.threadId, message.text]), [["thr_a", "2"]], "no [conductor] prefix: it's the user's answer");
+  assert.deepEqual(read, ["thr_a"]);
+  const page = await conductor.page("ws");
+  assert.deepEqual(page.resolved, ["thr_a"]);
+  assert.equal((await conductor.status())[0]!.needsYou, 0);
+  assert.equal(store.open("ws")[0]!.kind, "user-action");
+  advance(60 * MINUTE);
+  assert.equal(await conductor.wake("ws"), "nothing", "what the user did rides along but never wakes it");
+});
+
+test("a new briefing brings back a card only if the conductor lists it again", async () => {
+  const { conductor, call, advance } = await setup();
+  const { threadId } = await conductor.start("ws");
+  await call("post_briefing", { items: [{ threadId: "thr_a", kind: "fyi", summary: "Heads up" }] }, threadId);
+  await conductor.cardAction("ws", "thr_a", "dismiss");
+  advance(MINUTE);
+  await call("post_briefing", { items: [{ threadId: "thr_a", kind: "blocked", summary: "Now it's blocked" }] }, threadId);
+  assert.deepEqual((await conductor.page("ws")).resolved, []);
+  assert.equal((await conductor.status())[0]!.needsYou, 1);
+});

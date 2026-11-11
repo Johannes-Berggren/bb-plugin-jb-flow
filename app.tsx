@@ -32,6 +32,7 @@ import { TriageThreadList } from "./triage-list";
 import { DigestSection } from "./digest";
 import { LaneSettings, MigrationSettings } from "./settings-panels";
 import { EXPAND_PLANS_FLAG, mountPlanExpander } from "./plan-expander";
+import { CONDUCTOR_PANEL, ConductorActivityTab, ConductorFleetTab, ConductorPage, ConductorSettings, useConductorBadge } from "./conductor-page";
 
 // --- thread header: status strip + Pull requests panel ------------------------------
 
@@ -244,6 +245,18 @@ export default definePluginApp((app) => {
       return useCatchUpBadge(state, useSettings().values?.catchUp === true);
     },
   });
+  app.slots.navPanel({
+    id: CONDUCTOR_PANEL,
+    title: "Conductor",
+    icon: "Workflow",
+    path: CONDUCTOR_PANEL,
+    component: ConductorPage,
+    fixedTabs: [
+      { panelId: CONDUCTOR_PANEL, id: "fleet", title: "Fleet", icon: "ListView", component: ConductorFleetTab, layout: "flush" },
+      { panelId: CONDUCTOR_PANEL, id: "activity", title: "Activity", icon: "Clock", component: ConductorActivityTab, layout: "flush" },
+    ],
+    experimental_useBadge: useConductorBadge,
+  });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
   app.slots.experimental_sidebarNavigation({
@@ -439,6 +452,12 @@ export default definePluginApp((app) => {
     id: "stale-digest",
     title: "Stale threads",
     component: DigestSection,
+  });
+  app.slots.settingsSection({
+    id: "conductors",
+    title: "Conductors",
+    description: "One permanent conductor per workspace takes its threads' routine news and leaves you one briefing. Needs the Conductor setting.",
+    component: ConductorSettings,
   });
   app.slots.settingsSection({
     id: "lanes",

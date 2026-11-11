@@ -53,6 +53,8 @@ export const CONDUCTOR_TOOLS = [
   "conductor_memory",
 ] as const;
 
+/** Something the user did on the conductor page, so the conductor knows at its next wake-up. */
+export const USER_ACTION = "user-action";
 /** Inbox kinds that describe a worker's turn; stale once the user has read the thread or it runs again. */
 const HAND_BACK_KINDS = new Set(["needs-you", "ready", "finished", "input", "turn-failed"]);
 const BUSY = new Set(["active", "starting", "stopping", "pending"]);
@@ -86,6 +88,8 @@ const RECORDS_KEY = "conductors";
 const briefingKey = (workspaceId: string) => `conductorBriefing:${workspaceId}`;
 const memoryKey = (workspaceId: string) => `conductorMemory:${workspaceId}`;
 const RERUNS_KEY = "conductorReruns";
+/** Briefing items the user has dealt with on the page: thread id → the briefing's `at`. */
+const resolvedKey = (workspaceId: string) => `conductorResolved:${workspaceId}`;
 
 export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   const kv = bb.storage.kv;
@@ -303,9 +307,11 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   async function wake(workspaceId: string, force = false): Promise<WakeResult> {
     if (!active(workspaceId)) return "off";
     const events = await dropStale(workspaceId, deps.store.undelivered(workspaceId));
-    if (events.length === 0 && !force) return "nothing";
+    // What you did on the conductor page rides along with the next wake-up but never causes one.
+    const triggering = events.filter((event) => event.kind !== USER_ACTION);
+    if (triggering.length === 0 && !force) return "nothing";
     const batchMs = Math.max(0, deps.options().batchMinutes) * 60_000;
-    if (!force && !wakeDue(events[0]?.createdAt ?? null, now(), batchMs)) return "waiting";
+    if (!force && !wakeDue(triggering[0]?.createdAt ?? null, now(), batchMs)) return "waiting";
     const threadId = await ensure(workspaceId);
     const [row] = await bb.sdk.threads.list({ threadIds: [threadId], includeHidden: true });
     if (row && (BUSY.has(row.status) || row.hasPendingInteraction || row.queuedWork !== "none")) return "busy";
@@ -442,6 +448,22 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   }
 
   const NEEDS_YOU = new Set(["blocked", "yours", "stalled", "pr", "go"]);
+  /** The workspace's threads for the page's Fleet tab, those that need the user first. */
+  async function fleet(workspaceId: string): Promise<FleetRow[]> {
+    const rows = (await fleetRows(workspaceId)).map(({ thread, ball, reason, status, prs }) => ({
+      threadId: thread.id,
+      title: thread.title ?? thread.titleFallback ?? "Untitled",
+      projectId: thread.projectId,
+      state: ball,
+      reason,
+      needsYou: NEEDS_YOU.has(ball),
+      unread: thread.latestAttentionAt !== null && (thread.lastReadAt ?? 0) < thread.latestAttentionAt,
+      prs: prs.map((pr) => ({ repo: pr.repo, number: pr.number, attention: pr.attention, url: pr.url })),
+      next: status?.report?.next ?? null,
+      blocked: status?.report?.blocked || null,
+    }));
+    return rows.sort((a, b) => Number(b.needsYou) - Number(a.needsYou));
+  }
   tool(
     "fleet_status",
     "Every thread in this workspace: who holds the next move, unread, its open PRs and the Next/Blocked of its last status report. needs_you_only narrows it to threads waiting on the user or with an actionable PR.",
@@ -654,15 +676,98 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     return (await kv.get<Briefing>(briefingKey(workspaceId))) ?? null;
   }
 
-  function status() {
-    return Object.entries(records).map(([workspaceId, record]) => ({
+  /** The current briefing's items the user has already dealt with on the page. */
+  async function resolved(workspaceId: string): Promise<Record<string, number>> {
+    return (await kv.get<Record<string, number>>(resolvedKey(workspaceId))) ?? {};
+  }
+
+  /**
+   * The user acting on a briefing card: their reply goes to the worker as theirs
+   * (no conductor in between), the thread is marked read, the card is put away
+   * and the conductor hears about it at its next wake-up.
+   */
+  async function cardAction(
+    workspaceId: string,
+    threadId: string,
+    action: "go" | "reply" | "snooze" | "dismiss",
+    options: { text?: string; until?: string } = {},
+  ): Promise<string> {
+    if (!records[workspaceId]) throw new Error("This workspace has no conductor.");
+    const current = await briefing(workspaceId);
+    const item = current?.items.find((candidate) => candidate.threadId === threadId);
+    const thread = await bb.sdk.threads.get({ threadId });
+    const title = `"${thread.title ?? threadId}"`;
+    let done: string;
+    switch (action) {
+      case "go":
+      case "reply": {
+        const text = (action === "go" ? item?.reply ?? "go" : options.text ?? "").trim();
+        if (!text) throw new Error("Write a reply first.");
+        await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+        await bb.sdk.threads.markRead({ threadId }).catch(() => undefined);
+        done = `You sent ${title}: ${text.length > 200 ? `${text.slice(0, 200)}…` : text}`;
+        break;
+      }
+      case "snooze": {
+        if (!options.until) throw new Error("Say until when.");
+        const record = await deps.snooze(threadId, options.until, null);
+        done = `You snoozed ${title} until ${new Date(record.until).toLocaleString("en-GB")}.`;
+        break;
+      }
+      case "dismiss":
+        done = `You dismissed the briefing item for ${title}; leave it out unless something changes.`;
+        break;
+    }
+    if (current) {
+      const all = await resolved(workspaceId);
+      // Only this briefing's cards: forget the ones from older briefings.
+      for (const [id, at] of Object.entries(all)) if (at !== current.at) delete all[id];
+      all[threadId] = current.at;
+      await kv.set(resolvedKey(workspaceId), all);
+    }
+    deps.store.add(workspaceId, threadId, [{ kind: USER_ACTION, text: done, meta: { at: now() } }], now());
+    log(workspaceId, `you-${action}`, threadId, done);
+    deps.changed();
+    return done;
+  }
+
+  /** Everything the conductor page shows for one workspace. */
+  async function page(workspaceId: string) {
+    const record = records[workspaceId] ?? null;
+    const [current, done, thread] = await Promise.all([
+      briefing(workspaceId),
+      resolved(workspaceId),
+      record?.threadId ? bb.sdk.threads.get({ threadId: record.threadId }).catch(() => null) : Promise.resolve(null),
+    ]);
+    return {
       workspaceId,
-      name: names.get(workspaceId) ?? workspaceId,
-      ...record,
+      threadId: record?.threadId ?? null,
+      threadStatus: thread?.status ?? null,
       active: active(workspaceId),
-      open: deps.store.open(workspaceId, 500).length,
-      undelivered: deps.store.undelivered(workspaceId).length,
-    }));
+      briefing: current,
+      resolved: current ? Object.keys(done).filter((id) => done[id] === current.at) : [],
+      log: deps.store.recentLog(workspaceId, 60),
+      open: deps.store.open(workspaceId, 500).filter((event) => event.kind !== USER_ACTION).length,
+      lastWakeAt: record?.lastWakeAt ?? null,
+    };
+  }
+
+  async function status() {
+    return Promise.all(
+      Object.entries(records).map(async ([workspaceId, record]) => {
+        const [current, done] = await Promise.all([briefing(workspaceId), resolved(workspaceId)]);
+        return {
+          workspaceId,
+          name: names.get(workspaceId) ?? workspaceId,
+          ...record,
+          active: active(workspaceId),
+          open: deps.store.open(workspaceId, 500).filter((event) => event.kind !== USER_ACTION).length,
+          undelivered: deps.store.undelivered(workspaceId).length,
+          /** Briefing items the user hasn't dealt with yet. */
+          needsYou: current ? current.items.filter((item) => done[item.threadId] !== current.at).length : 0,
+        };
+      }),
+    );
   }
 
   return {
@@ -675,6 +780,9 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     tick,
     status,
     briefing,
+    fleet,
+    cardAction,
+    page,
     inbox: (workspaceId: string) => deps.store.open(workspaceId),
     log: (workspaceId: string, limit?: number) => deps.store.recentLog(workspaceId, limit),
     prune: () => deps.store.prune(now() - CONDUCTOR_RETENTION_MS),
@@ -682,3 +790,16 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
 }
 
 export type Conductor = Awaited<ReturnType<typeof createConductor>>;
+
+export type FleetRow = {
+  threadId: string;
+  title: string;
+  projectId: string;
+  state: string;
+  reason: string;
+  needsYou: boolean;
+  unread: boolean;
+  prs: Array<{ repo: string; number: number; attention: string; url: string }>;
+  next: string | null;
+  blocked: string | null;
+};

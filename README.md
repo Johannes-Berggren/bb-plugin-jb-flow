@@ -422,7 +422,20 @@ A conductor is a permanent agent thread that looks after one workspace. Its work
 - **Briefing.** Every turn ends with a briefing: one item per thread that needs you (summary, recommendation, the exact reply for the worker), plus what it handled. Reply in the conductor with `2 go, 4 snooze 3d, 5: use option B`: it sends each reply, snoozes or archives, and marks those threads read. `bb jb-flow conductor briefing <workspace-id>` prints it.
 - **Permanent.** The thread is hidden from the thread list. Archiving it brings it straight back, and a deleted one is started again at the next wake-up. Preferences you state ("always merge dependency bumps") are kept with its `conductor_memory` tool and included in its instructions.
 - **Only its own workspace.** Its tools (`conductor_inbox`, `fleet_status`, `thread_brief`, `merge_pr`, `rerun_failed`, `forward_to_thread`, `thread_action`, `post_briefing`, `conductor_memory`) are given to conductor threads only. They act only on threads and PRs of its workspace.
-- **Starting one.** Turn on **Conductor** in the settings, then `bb jb-flow conductor start <workspace-id>`. It lives in the workspace's first project unless you pass `--project`, and `--provider` and `--model` pick its agent. `stop` turns routing off and keeps the thread for next time.
+- **The Conductor page.** Each conductor has its own page (*Conductor* in the navigation, badged with what its briefing still needs from you). It opens on the selected workspace tab.
+  - **Briefing cards.** Each card has the summary, the recommendation and the reply it would send:
+    - **Go** sends that reply to the worker as yours.
+    - **Reply…** sends your own text.
+    - **Snooze**, **Open** and **Dismiss** do what they say.
+
+    Each of these marks the thread read and puts the card away. The conductor hears what you did at its next wake-up, but that alone never wakes it.
+  - **Handled** lists what the conductor did since its last briefing.
+  - **Chat.** Its live conversation is below the cards, so you can also just tell it what to do.
+  - **Side panel.** **Fleet** lists every thread in the workspace, those that need you first, with PRs and Next/Blocked. **Activity** shows what the conductor did: merges, reruns, forwards, archives, wake-ups and your card actions.
+- **Starting one.** Turn on **Conductor** in the settings, then start one under **Settings → Conductors**, on the Conductor page, or with `bb jb-flow conductor start <workspace-id>`.
+  - It lives in the workspace's first project unless you choose another.
+  - Its agent defaults to that project's default; Settings → Conductors or `--provider`/`--model` pick another.
+  - Stopping turns routing off and keeps the thread for next time.
 
 ### Focus tracking (for Stream Deck and scripts)
 - Every BB window reports which thread is focused, including the focused pane in a split view.
@@ -474,7 +487,7 @@ Under **Settings → JB Flow**:
 - **Conductor: minutes to collect news before waking it** (default 10).
 - **Conductor: your instructions**: added to every conductor's instructions, e.g. which PRs it may merge on its own (empty by default).
 - **Advanced config (JSON)**: see below.
-- **Triage lanes**, **Repo commands** and **Area tags** have their own sections.
+- **Triage lanes**, **Repo commands**, **Area tags** and **Conductors** have their own sections.
 
 ## Configuration
 
