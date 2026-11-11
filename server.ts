@@ -400,7 +400,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Status report prompt",
       description:
-        "What Update status sends to the agent. Leave empty for a short built-in prompt. The monitor reads **Goal:**, **Done:**, **Next:**, **Blocked:** and a ### Progress block.",
+        "What Update status sends to the agent. Leave empty for the built-in report: Goal, Done, Next, Blocked, then PR stack, progress bars, architecture changes and next steps. The monitor reads **Goal:**, **Done:**, **Next:**, **Blocked:** and a ### Progress block.",
       experimental_multiline: true,
       default: "",
     },
@@ -408,8 +408,8 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Status report at hand-back",
       description:
-        "Ask agents to end replies that hand the thread back to you with the status report above, so the thread monitor stays current without Update status. Threads pick this up when their session next starts.",
-      default: false,
+        "Ask agents to end replies that hand the thread back to you with the status report above, and to end questions with numbered options you can answer in one click, so the thread monitor stays current without Update status. Threads pick this up when their session next starts.",
+      default: true,
     },
     staleDays: {
       type: "number",

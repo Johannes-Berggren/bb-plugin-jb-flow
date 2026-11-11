@@ -235,11 +235,15 @@ agent is already doing. **Auto-prompt** in its footer (with a count, or "off") o
 its own: continuing after a usage limit resets, and each CI/review watch and release wait (see Watchers). Untick one
 to stop it.
 
-**Update status** sends the **Status report prompt** setting to this thread (empty uses a short
-built-in prompt in that format), preserving your composer draft. It runs only when clicked.
-To skip the button, turn on **Status report at hand-back**: agents then end every reply that hands the
-thread back to you (done, blocked, or waiting for your input) with that report, and the monitor keeps itself
-current. Threads pick it up when their session next starts.
+**Update status** sends the **Status report prompt** setting to this thread, preserving your composer draft.
+Empty uses the built-in report: **Goal**, **Done**, **Next** and **Blocked** (plus **Due** with Now and Focus on),
+then a **Stack** of the thread's PRs and deploys, **Progress** bars, before/after **Architecture** diagrams when
+the backend changed, **Next steps** or a **Decision needed** callout, and a timestamp. Sections with nothing to say
+are left out. It runs only when clicked.
+**Status report at hand-back** (on by default) skips the button: agents end every reply that hands the
+thread back to you (done, blocked, or waiting for your input) with that report, and end any question with numbered
+options marked *(recommended)*, so the monitor keeps itself current and the reply buttons appear. Threads pick it up
+when their session next starts.
 The monitor refreshes on thread
 events and reconnects. Running agents retain the live command/workflow view;
 idle headers reflect pending input, errors and JB Flow watches. Milestone bars
@@ -424,8 +428,8 @@ Under **Settings → JB Flow**:
 - **Now and Focus**: the ranked Now group, the Focus mark and due dates, including the `set_thread_due` agent tool (on by default). Off restores Needs me.
 - **Focus limit**: how many threads can be in Focus before marking another one asks you to drop one (default 7).
 - **Keep threads in creation order**: Triage list rows stay put, newest thread first, instead of moving to the top on new activity (off by default).
-- **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
-- **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
+- **Status report prompt**: what *Update status* sends; empty uses the built-in report described under Persistent thread monitor.
+- **Status report at hand-back**: agents end replies that hand the thread back with the status report and end questions with numbered options, so the monitor and reply buttons stay current (on by default).
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).
 - **Expand plan reviews**: expanded, resizable plan reviews (on by default).
