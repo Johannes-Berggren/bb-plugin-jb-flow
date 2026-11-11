@@ -67,6 +67,16 @@ export function createConductorStore(db: () => Db) {
     return added;
   }
 
+  /** Stores one event and returns its id, or null when it was already there (a retried delivery). */
+  function addOne(workspaceId: string, threadId: string, event: ConductorInboxEvent, now: number): number | null {
+    const result = db()
+      .prepare(
+        "INSERT OR IGNORE INTO conductor_events (workspace_id, thread_id, kind, text, meta, dedupe, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(workspaceId, threadId, event.kind, event.text, JSON.stringify(event.meta ?? {}), dedupeKey(workspaceId, threadId, event), now);
+    return result.changes === 0 ? null : Number(result.lastInsertRowid);
+  }
+
   /** Events not yet acknowledged, oldest first. */
   function open(workspaceId: string, limit = 200): StoredConductorEvent[] {
     const rows = db()
@@ -103,18 +113,29 @@ export function createConductorStore(db: () => Db) {
   }
 
   /** Records something a conductor did (or that happened to it), for its activity log. */
-  function log(workspaceId: string, kind: string, threadId: string | null, text: string, at: number): void {
+  function log(workspaceId: string, kind: string, threadId: string | null, text: string, at: number, savedTokens: number | null = null): void {
     db()
-      .prepare("INSERT INTO conductor_log (workspace_id, at, kind, thread_id, text) VALUES (?, ?, ?, ?, ?)")
-      .run(workspaceId, at, kind, threadId, text.slice(0, 1000));
+      .prepare("INSERT INTO conductor_log (workspace_id, at, kind, thread_id, text, saved_tokens) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(workspaceId, at, kind, threadId, text.slice(0, 1000), savedTokens);
+  }
+
+  /** Log entries of the given kinds since `since`, every workspace, newest first. */
+  function feed(kinds: readonly string[], since: number, limit = 50): ConductorLogEntry[] {
+    if (kinds.length === 0) return [];
+    const rows = db()
+      .prepare(
+        `SELECT id, workspace_id, at, kind, thread_id, text, saved_tokens FROM conductor_log WHERE at >= ? AND kind IN (${kinds.map(() => "?").join(", ")}) ORDER BY id DESC LIMIT ?`,
+      )
+      .all(since, ...kinds, limit) as LogRow[];
+    return rows.map(fromLogRow);
   }
 
   /** The newest log entries first. */
   function recentLog(workspaceId: string, limit = 100): ConductorLogEntry[] {
     const rows = db()
-      .prepare("SELECT id, at, kind, thread_id, text FROM conductor_log WHERE workspace_id = ? ORDER BY id DESC LIMIT ?")
-      .all(workspaceId, limit) as Array<{ id: number; at: number; kind: string; thread_id: string | null; text: string }>;
-    return rows.map((row) => ({ id: row.id, at: row.at, kind: row.kind, threadId: row.thread_id, text: row.text }));
+      .prepare("SELECT id, workspace_id, at, kind, thread_id, text, saved_tokens FROM conductor_log WHERE workspace_id = ? ORDER BY id DESC LIMIT ?")
+      .all(workspaceId, limit) as LogRow[];
+    return rows.map(fromLogRow);
   }
 
   /** Forgets events and log entries older than `before`, handled or not. Returns how many events. */
@@ -123,9 +144,28 @@ export function createConductorStore(db: () => Db) {
     return db().prepare("DELETE FROM conductor_events WHERE created_at < ?").run(before).changes;
   }
 
-  return { add, open, undelivered, markDelivered, ack, log, recentLog, prune };
+  return { add, addOne, open, undelivered, markDelivered, ack, log, recentLog, feed, prune };
 }
 
 export type ConductorStore = ReturnType<typeof createConductorStore>;
 
-export type ConductorLogEntry = { id: number; at: number; kind: string; threadId: string | null; text: string };
+export type ConductorLogEntry = {
+  id: number;
+  workspaceId: string;
+  at: number;
+  kind: string;
+  threadId: string | null;
+  text: string;
+  /** What the wake-up this spared a worker would have cost, when known. */
+  savedTokens: number | null;
+};
+type LogRow = { id: number; workspace_id: string; at: number; kind: string; thread_id: string | null; text: string; saved_tokens: number | null };
+const fromLogRow = (row: LogRow): ConductorLogEntry => ({
+  id: row.id,
+  workspaceId: row.workspace_id,
+  at: row.at,
+  kind: row.kind,
+  threadId: row.thread_id,
+  text: row.text,
+  savedTokens: row.saved_tokens ?? null,
+});

@@ -101,7 +101,7 @@ export function ThreadRow({
   /** Missing when Now and Focus is turned off. */
   onToggleFocus: (() => void) | undefined;
   /** On a Now or Moving row: who holds the thread, and for how long. */
-  reason: { text: string; urgent: boolean } | undefined;
+  reason: { text: string; urgent: boolean; detail?: string } | undefined;
   /** This thread's deadline, if it has one. */
   due: FlowState["due"][string] | undefined;
   /** Missing when Now and Focus is turned off. */
@@ -320,7 +320,7 @@ export function ThreadRow({
           {reasonChip ? (
             <span
               data-jb-flow-reason=""
-              title={reasonChip.text}
+              title={reasonChip.detail ?? reasonChip.text}
               className={cn("min-w-0 truncate whitespace-nowrap text-[10px] tabular-nums", reasonChip.urgent ? "font-medium text-amber-600" : "text-muted-foreground")}
             >
               {reasonChip.text}

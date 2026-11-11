@@ -19,6 +19,7 @@ import {
   useSettings,
 } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { ConductorBriefStrip } from "./conductor-brief";
 import type { FlowState, rpcContract } from "./server";
 import {
   CATCH_UP_EVENT,
@@ -894,6 +895,8 @@ function CardView({
         ) : item.tier === 1 ? (
           <p className="jf-catchup-callout jf-catchup-callout-error">{thread.indicatorLabel ?? "The last turn failed"}. Retry from the thread below.</p>
         ) : null}
+        {/* The conductor's take, when its workspace has one: what's needed and a one-click answer. */}
+        {!sentHere ? <ConductorBriefStrip threadId={thread.id} /> : null}
         {prs.length > 0 ? (
           <div className="jf-catchup-prs">
             {shownPrs.length > 0 ? <PrList prs={shownPrs} compact /> : null}

@@ -24,6 +24,8 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { errorText } from "./flow-state";
 import { useSelectedWorkspace, useWorkspaces } from "./workspace-client";
+import { tokens, useConductorFeed } from "./conductor-client";
+import { feedSummary } from "./conductor-brief";
 import { formatWhen } from "./when";
 
 export const CONDUCTOR_PANEL = "conductor";
@@ -378,6 +380,7 @@ function Briefing({
   const [selected, setSelected] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
+  const feed = useConductorFeed();
   const root = useRef<HTMLDivElement>(null);
   const moved = useRef(false);
   const briefing = page.briefing;
@@ -460,6 +463,12 @@ function Briefing({
           <strong>{briefing.handled.length}</strong>
           <span>handled</span>
         </div>
+        {feed && feed.wakeupsSpared > 0 && (
+          <div className="jf-cd-stat" title={feedSummary(feed)}>
+            <strong>{feed.wakeupsSpared}</strong>
+            <span>wake-ups spared today{feed.tokensSpared ? ` · ≈${tokens(feed.tokensSpared)} tokens` : ""}</span>
+          </div>
+        )}
         <span className="jf-cd-spacer" />
         {open.length > 0 && (
           <div className="jf-cd-filters" role="group" aria-label="Show">

@@ -56,7 +56,7 @@ const workspaceState: WorkspaceState = {
 };
 
 /** A conductor over a fake bb: two worker threads, one per workspace. */
-async function setup(options: { enabled?: boolean; ghFails?: boolean } = {}) {
+async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string } } = {}) {
   let clock = T0;
   const kv = new Map<string, unknown>();
   const tools = new Map<string, { execute: (params: unknown, ctx: { threadId: string }) => Promise<unknown> }>();
@@ -70,6 +70,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean } = {}) {
   const unarchived: string[] = [];
   const read: string[] = [];
   const ghCalls: string[][] = [];
+  const archived: string[] = [];
   let spawnCount = 0;
   const bb = {
     pluginId: "jb-flow",
@@ -113,6 +114,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean } = {}) {
         markRead: async ({ threadId }: { threadId: string }) => void read.push(threadId),
         markUnread: async () => undefined,
         output: async () => ({ output: "Done." }),
+        events: { list: async () => [{ data: { tokenUsage: { last: { totalTokens: 1_500_000 } } } }] },
       },
     },
   } as unknown as BbPluginApi;
@@ -129,14 +131,20 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean } = {}) {
     listThreads: async () => [...threads.values()].filter((t) => t.visibility === "visible" && t.archivedAt === null) as never,
     flow: async () => ({ awaiting: {}, promised: {}, waitingOthers: {}, readyToGo: {}, watching: {}, threadPrs: {}, focused: {}, due: {} }),
     snoozedSection: async () => null,
-    threadStatus: async () => null,
+    threadStatus: async () =>
+      options.report
+        ? ({ threadId: "thr_a", report: { goal: "", done: "", next: options.report.next, blocked: "", milestones: [], capturedAt: T0 }, latest: "", latestAt: T0, replyHash: "" } as never)
+        : null,
     prsByThread: async () => ({
       thr_a: [{ repo: "acme/web-app", number: 12, state: "open", attention: "ready_to_merge", title: "Fix export" }],
       thr_b: [{ repo: "acme/api", number: 3, state: "open", attention: "ready_to_merge", title: "Add route" }],
     }) as never,
     snooze: async () => ({ until: T0 + 3_600_000 }),
     unsnooze: async () => true,
-    archive: async (ids) => ({ archived: ids.length, failed: [] }),
+    archive: async (ids) => {
+      archived.push(...ids);
+      return { archived: ids.length, failed: [] };
+    },
     focus: async (_id, focused) => focused,
     changed: () => undefined,
     gh: async (args) => {
@@ -161,6 +169,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean } = {}) {
     unarchived,
     read,
     ghCalls,
+    archived,
     settings,
     fire,
     call,
@@ -271,7 +280,7 @@ test("a deleted conductor is respawned at the next wake-up", async () => {
   const { threadId } = await conductor.start("ws");
   threads.get(threadId)!.deletedAt = T0;
   await fire("thread.deleted", { thread: threads.get(threadId) });
-  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged." }]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "Something unusual on web-app#12." }]);
   advance(11 * 60_000);
   assert.equal(await conductor.wake("ws"), "woken");
   assert.equal(spawns.length, 2);
@@ -280,9 +289,9 @@ test("a deleted conductor is respawned at the next wake-up", async () => {
 test("a wake-up waits for the batch window and for an idle conductor, then carries everything once", async () => {
   const { conductor, sent, threads, advance } = await setup();
   const { threadId } = await conductor.start("ws");
-  await conductor.sink.deliver("thr_a", "ws", [{ kind: "green", text: "✅ CI is green on web-app#12 (abc1234): 3 checks passed.", meta: { repo: "acme/web-app", pr: 12, afterGreen: "merge" } }]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merge-refused", text: "Autopilot couldn't merge web-app#12: a review is required.", meta: { repo: "acme/web-app", pr: 12, afterGreen: "merge" } }]);
   advance(MINUTE);
-  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#11 is now merged." }]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "Something unusual on web-app#11." }]);
   assert.equal(await conductor.wake("ws"), "waiting");
   advance(10 * MINUTE);
   threads.get(threadId)!.status = "active";
@@ -292,7 +301,7 @@ test("a wake-up waits for the batch window and for an idle conductor, then carri
   assert.equal(sent.length, 1);
   assert.equal(sent[0]!.mode, "start");
   assert.match(sent[0]!.text, /^\[conductor inbox\] 2 new events:/);
-  assert.match(sent[0]!.text, /\[green\] "Thread thr_a" \(thr_a\) · acme\/web-app#12 · after_green: merge/);
+  assert.match(sent[0]!.text, /\[merge-refused\] "Thread thr_a" \(thr_a\) · acme\/web-app#12 · after_green: merge/);
   assert.equal(await conductor.wake("ws"), "nothing", "delivered events aren't sent again");
 });
 
@@ -320,19 +329,19 @@ test("a hand-back that waits on someone else isn't news for the conductor", asyn
 test("the first wake-up of a day compacts the conductor first", async () => {
   const { conductor, sent, advance } = await setup();
   await conductor.start("ws");
-  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "one" }]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "one" }]);
   advance(11 * MINUTE);
   await conductor.wake("ws");
   assert.equal(sent[0]!.compactFirst, undefined, "its very first wake-up has nothing to compact");
-  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "one more" }]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "one more" }]);
   advance(11 * MINUTE);
   await conductor.wake("ws");
   assert.equal(sent[1]!.compactFirst, undefined, "nor does a second one the same day");
-  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "two" }]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "two" }]);
   advance(24 * 60 * MINUTE);
   await conductor.wake("ws");
   assert.equal(sent[2]!.compactFirst, true);
-  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "three" }]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "three" }]);
   advance(11 * MINUTE);
   await conductor.wake("ws");
   assert.equal(sent[3]!.compactFirst, undefined, "once a day");
@@ -391,4 +400,77 @@ test("a new briefing brings back a card only if the conductor lists it again", a
   await call("post_briefing", { items: [{ threadId: "thr_a", kind: "blocked", summary: "Now it's blocked" }] }, threadId);
   assert.deepEqual((await conductor.page("ws")).resolved, []);
   assert.equal((await conductor.status())[0]!.needsYou, 1);
+});
+
+// --- autopilot ----------------------------------------------------------------
+
+const greenEvent = (fields: Record<string, unknown> = {}) => ({
+  kind: "green",
+  text: "✅ CI is green on web-app#12 (abc1234): 3 checks passed.",
+  meta: { repo: "acme/web-app", pr: 12, headSha: "abc1234def", ...fields },
+});
+
+test("autopilot merges a green PR the worker said it would merge, only that commit, waking no one", async () => {
+  const { conductor, ghCalls, sent, store, advance } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.deepEqual(ghCalls.find((args) => args[0] === "pr"), ["pr", "merge", "12", "-R", "acme/web-app", "--squash", "--match-head-commit", "abc1234def"]);
+  assert.equal(sent.length, 0, "no worker and no conductor woken");
+  assert.equal(store.open("ws").length, 0);
+  const entry = conductor.log("ws")[0]!;
+  assert.equal(entry.kind, "auto-merged");
+  assert.equal(entry.savedTokens, 1_500_000, "costed at the worker's last turn");
+  advance(60 * MINUTE);
+  assert.equal(await conductor.wake("ws"), "nothing");
+});
+
+test("the worker's status report counts as merge intent", async () => {
+  const { conductor, ghCalls } = await setup({ report: { next: "Merge once CI is green, then archive." } });
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent()]);
+  assert.ok(ghCalls.some((args) => args[0] === "pr" && args[1] === "merge"));
+});
+
+test("green the worker didn't ask about is only noted", async () => {
+  const { conductor, ghCalls, sent } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent()]);
+  assert.equal(ghCalls.length, 0);
+  assert.equal(sent.length, 0);
+  assert.equal(conductor.log("ws")[0]!.kind, "absorbed");
+});
+
+test("its merged PR archives the thread when nothing else is open", async () => {
+  const { conductor, archived } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(archived, ["thr_a"]);
+  assert.equal(conductor.log("ws")[0]!.kind, "auto-archived");
+});
+
+test("a merge GitHub refuses goes to the conductor to brief", async () => {
+  const { conductor, store, sent, advance } = await setup({ ghFails: true });
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.deepEqual(store.open("ws").map((event) => event.kind), ["merge-refused"]);
+  advance(11 * MINUTE);
+  assert.equal(await conductor.wake("ws"), "woken");
+  assert.match(sent.at(-1)!.text, /\[merge-refused\].*base branch policy/);
+});
+
+test("what the worker must act on is forwarded to it", async () => {
+  const { conductor, sent } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "closed", text: "PR web-app#12 is now closed.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(sent.map((message) => [message.threadId, message.text]), [["thr_a", "[ci watcher] PR web-app#12 is now closed."]]);
+  assert.equal(conductor.log("ws")[0]!.kind, "forwarded");
+});
+
+test("a retried delivery acts only once", async () => {
+  const { conductor, ghCalls } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.equal(ghCalls.filter((args) => args[0] === "pr").length, 1);
 });

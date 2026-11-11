@@ -33,6 +33,7 @@ import { DigestSection } from "./digest";
 import { LaneSettings, MigrationSettings } from "./settings-panels";
 import { EXPAND_PLANS_FLAG, mountPlanExpander } from "./plan-expander";
 import { CONDUCTOR_PANEL, ConductorPage, ConductorSettings, useConductorBadge } from "./conductor-page";
+import { DoneForYouSection } from "./conductor-brief";
 
 // --- thread header: status strip + Pull requests panel ------------------------------
 
@@ -443,6 +444,11 @@ export default definePluginApp((app) => {
       const { state } = useFlowState();
       return <YourMoveSection lead={<CatchUpHomeEntry flow={state} />} />;
     },
+  });
+  app.slots.homepageSection({
+    id: "conductor-feed",
+    title: "Done for you",
+    component: DoneForYouSection,
   });
   app.slots.homepageSection({
     id: "stale-digest",

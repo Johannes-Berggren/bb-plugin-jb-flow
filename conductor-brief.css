@@ -1,0 +1,181 @@
+/* The conductor's brief on a Catch up card, and the home page's "done for you" feed. */
+.jf-brief,
+.jf-feed {
+  --cd-decision: var(--primary, #6d5bc2);
+  --cd-blocked: var(--warning, #aa6c16);
+  --cd-ready: var(--success, #28724e);
+  --cd-fyi: var(--muted-foreground, #8a8790);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.jf-brief {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 8px 0 4px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in oklch, var(--cd-kind, var(--cd-decision)) 30%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--cd-kind, var(--cd-decision)) 6%, transparent);
+}
+.jf-brief[data-kind="decision"] {
+  --cd-kind: var(--cd-decision);
+}
+.jf-brief[data-kind="blocked"] {
+  --cd-kind: var(--cd-blocked);
+}
+.jf-brief[data-kind="ready"] {
+  --cd-kind: var(--cd-ready);
+}
+.jf-brief[data-kind="fyi"] {
+  --cd-kind: var(--cd-fyi);
+}
+.jf-brief-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--cd-kind, var(--cd-decision));
+  background: color-mix(in oklch, var(--cd-kind, var(--cd-decision)) 14%, transparent);
+}
+.jf-brief-icon [data-icon-root] {
+  width: 13px;
+  height: 13px;
+}
+.jf-brief-main {
+  flex: 1;
+  min-width: 0;
+}
+.jf-brief-headline {
+  margin: 0;
+  font-weight: 600;
+}
+.jf-brief-rec {
+  margin: 1px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-brief-error {
+  margin: 4px 0 0;
+  color: var(--destructive-text, var(--destructive));
+  font-size: 12px;
+}
+.jf-brief-send {
+  flex: none;
+  align-self: center;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.jf-brief-send:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* --- done for you --- */
+.jf-feed-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 6px;
+  font-weight: 500;
+}
+.jf-feed-summary > [data-icon-root] {
+  width: 14px;
+  height: 14px;
+  color: var(--cd-decision);
+}
+.jf-feed-refused {
+  color: var(--cd-blocked);
+  font-size: 12px;
+}
+.jf-feed-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jf-feed-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.jf-feed-list li + li {
+  border-top: 1px solid var(--border-hairline, var(--border));
+}
+.jf-feed-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+.jf-feed-icon [data-icon-root] {
+  width: 12px;
+  height: 12px;
+}
+.jf-feed-list li[data-kind="auto-merged"] .jf-feed-icon {
+  color: var(--pr-merged, var(--cd-decision));
+  background: color-mix(in oklch, var(--pr-merged, var(--cd-decision)) 12%, transparent);
+}
+.jf-feed-list li[data-kind="merge-refused"] .jf-feed-icon {
+  color: var(--cd-blocked);
+  background: color-mix(in oklch, var(--cd-blocked) 12%, transparent);
+}
+.jf-feed-main {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.jf-feed-title {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  cursor: pointer;
+}
+.jf-feed-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.jf-feed-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+}
+.jf-feed-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.jf-feed-undo,
+.jf-feed-more {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.jf-feed-undo:hover,
+.jf-feed-more:hover {
+  color: var(--foreground);
+}

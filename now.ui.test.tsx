@@ -77,6 +77,7 @@ async function mount(options: {
   focusSet?: (input: { threadId: string; focused: boolean }) => unknown;
   dueSet?: (input: { threadId: string; at: number | null; reason: string | null }) => unknown;
   stateGet?: () => unknown;
+  rpc?: Record<string, (input: never) => unknown>;
 }) {
   const app = await loadPluginApp(() => import("./app"));
   const list = app.threadLists.find((item) => item.id === "triage")!;
@@ -91,6 +92,7 @@ async function mount(options: {
         workspaces_get: () => ({ workspaces: [], threadWorkspaces: {} }),
         focus_set: options.focusSet ?? ((input: { focused: boolean }) => ({ focused: input.focused })),
         due_set: options.dueSet ?? (() => ({ ok: true })),
+        ...options.rpc,
       } as never,
       sidebarThreads: { status: "ready", threads: options.threads, projects, sections: [] },
     },
@@ -204,6 +206,29 @@ describe("Now and Focus", () => {
     expect(slot.container.querySelectorAll('[data-jb-flow-row="asked"]').length).toBe(1);
     expect(slot.container.querySelector('[data-jb-flow-row="lane-row"]')).not.toBeNull();
     expect(rowsUnder(slot.container, "Now")).not.toContain("lane-row");
+  });
+
+  it("a thread the conductor briefed says what's needed instead of who holds it", async () => {
+    const slot = await mount({
+      threads: [thread("asked", { latestAttentionAt: NOW - 18 * HOUR })],
+      state: { awaiting: { asked: NOW - 18 * HOUR } },
+      settings: { conductor: true },
+      rpc: {
+        conductor_briefs: () => ({
+          briefs: [
+            {
+              workspaceId: "ws",
+              threadId: "asked",
+              at: NOW,
+              item: { threadId: "asked", kind: "decision", headline: "Pick a chart library", summary: "Two fit.", recommendation: "Option 2" },
+            },
+          ],
+        }),
+      },
+    });
+    const reason = (id: string) => slot.container.querySelector<HTMLElement>(`[data-jb-flow-row="${id}"] [data-jb-flow-reason]`);
+    await waitFor(() => expect(reason("asked")?.textContent).toBe("Pick a chart library"));
+    expect(reason("asked")?.title).toBe("Pick a chart library\n→ Option 2\nyou · 18h");
   });
 
   it("a focused ask you've read stays in Now", async () => {

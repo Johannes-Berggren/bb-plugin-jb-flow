@@ -11,6 +11,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { handBack } from "./awaiting.ts";
+import { decide, mergeIntent } from "./autopilot.ts";
 import { nextMove } from "./decisions.ts";
 import { isGoneError } from "./ci-watch.ts";
 import { gh as runGh } from "./gh.ts";
@@ -31,6 +32,7 @@ import {
   wakeMessage,
   type Briefing,
   type BriefingContext,
+  type BriefingItem,
   type ConductorRecord,
 } from "./conductor-model.ts";
 import type { ConductorInboxEvent, ConductorSink } from "./conductor-routing.ts";
@@ -55,6 +57,10 @@ export const CONDUCTOR_TOOLS = [
   "conductor_memory",
 ] as const;
 
+/** What autopilot logs, for the "done for you" feed. */
+export const AUTOPILOT_KINDS = ["auto-merged", "auto-archived", "absorbed", "forwarded", "merge-refused"] as const;
+/** Entries that each spared a worker a wake-up. */
+const SPARED_KINDS: ReadonlySet<string> = new Set(["auto-merged", "auto-archived", "absorbed"]);
 /** Something the user did on the conductor page, so the conductor knows at its next wake-up. */
 export const USER_ACTION = "user-action";
 /** Inbox kinds that describe a worker's turn; stale once the user has read the thread or it runs again. */
@@ -121,9 +127,9 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   async function refreshNames() {
     for (const workspace of (await deps.workspaces()).workspaces) names.set(workspace.id, workspace.name);
   }
-  const log = (workspaceId: string, kind: string, threadId: string | null, text: string) => {
+  const log = (workspaceId: string, kind: string, threadId: string | null, text: string, savedTokens: number | null = null) => {
     try {
-      deps.store.log(workspaceId, kind, threadId, text, now());
+      deps.store.log(workspaceId, kind, threadId, text, now(), savedTokens);
     } catch (error) {
       bb.log.warn(`conductor log: ${String(error)}`);
     }
@@ -152,10 +158,103 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     return workspaceId !== null && active(workspaceId) && records[workspaceId]!.threadId !== null ? workspaceId : null;
   }
 
+  // --- autopilot ---------------------------------------------------------------
+  // Routine PR news is handled here, without waking anyone: see autopilot.ts.
+
+  /** The PRs autopilot merged itself ("owner/repo#n" → when), so their merge archives the thread. */
+  const AUTO_MERGED_KEY = "autopilotMerged";
+
+  async function mergePr(repo: string, number: number, headSha?: string): Promise<void> {
+    const info = JSON.parse(await gh(["repo", "view", repo, "--json", "viewerDefaultMergeMethod"])) as { viewerDefaultMergeMethod?: string };
+    // Only the commit that went green: a push since then waits for its own checks.
+    await gh(["pr", "merge", String(number), "-R", repo, mergeFlag(info.viewerDefaultMergeMethod), ...(headSha ? ["--match-head-commit", headSha] : [])], 120_000);
+  }
+
+  /** What waking this thread costs: its last turn's tokens, when bb has them. */
+  async function lastTurnTokens(threadId: string): Promise<number | null> {
+    try {
+      const [row] = await bb.sdk.threads.events.list({ threadId, types: ["thread/tokenUsage/updated"], order: "desc", limit: "1" });
+      const total = (row as { data?: { tokenUsage?: { last?: { totalTokens?: unknown } } } } | undefined)?.data?.tokenUsage?.last?.totalTokens;
+      return typeof total === "number" && total > 0 ? total : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const shortPr = (meta: { repo?: unknown; pr?: unknown }) =>
+    typeof meta.repo === "string" && typeof meta.pr === "number" ? `${meta.repo.split("/")[1]}#${meta.pr}` : "the PR";
+
+  /** One routed event: act on it, or leave it in the inbox for the conductor. */
+  async function autopilot(threadId: string, workspaceId: string, event: ConductorInboxEvent, id: number): Promise<void> {
+    const meta = (event.meta ?? {}) as { repo?: string; pr?: number; afterGreen?: "merge" | "continue" | "nothing"; headSha?: string };
+    const [status, prs, merged] = await Promise.all([
+      deps.threadStatus(threadId).catch(() => null),
+      deps.prsByThread().catch(() => ({}) as Record<string, PrStatus[]>),
+      kv.get<Record<string, number>>(AUTO_MERGED_KEY).then((value) => value ?? {}),
+    ]);
+    const own = prs[threadId] ?? [];
+    const pr = own.find((candidate) => candidate.repo === meta.repo && candidate.number === meta.pr) ?? null;
+    const key = `${meta.repo}#${meta.pr}`;
+    const decision = decide({
+      kind: event.kind,
+      afterGreen: meta.afterGreen,
+      mergeIntent: mergeIntent(status?.report?.next, status?.report?.doingNow, status?.latest),
+      pr: pr ? { state: pr.state, attention: pr.attention } : null,
+      otherOpenPrs: own.filter((candidate) => candidate !== pr && (candidate.state === "open" || candidate.state === "draft")).length,
+      mergedByAutopilot: merged[key] !== undefined,
+    });
+    const done = (kind: string, text: string, saved: number | null) => {
+      deps.store.ack(workspaceId, [id], now());
+      log(workspaceId, kind, threadId, text, saved);
+      deps.changed();
+    };
+    switch (decision.action) {
+      case "conductor":
+        return; // stays in the inbox for its next wake-up
+      case "record":
+        return done("absorbed", `${event.text} (${decision.reason})`, await lastTurnTokens(threadId));
+      case "forward":
+        await bb.sdk.threads.send({
+          threadId,
+          mode: "queue-if-active",
+          input: [{ type: "text", text: event.kind === "release" ? event.text : `[ci watcher] ${event.text}`, mentions: [] }],
+        });
+        return done("forwarded", `${event.text} (${decision.reason})`, null);
+      case "merge": {
+        if (typeof meta.repo !== "string" || typeof meta.pr !== "number") return;
+        try {
+          await mergePr(meta.repo, meta.pr, meta.headSha);
+        } catch (error) {
+          // Protection, a required review, a newer push: the conductor briefs the user.
+          log(workspaceId, "merge-refused", threadId, `${shortPr(meta)}: ${String(error).slice(0, 300)}`);
+          deps.store.add(workspaceId, threadId, [{ kind: "merge-refused", text: `Autopilot couldn't merge ${shortPr(meta)}: ${String(error).slice(0, 300)}`, meta }], now());
+          deps.store.ack(workspaceId, [id], now());
+          return;
+        }
+        for (const [old, at] of Object.entries(merged)) if (now() - at > 30 * 24 * 3_600_000) delete merged[old];
+        merged[key] = now();
+        await kv.set(AUTO_MERGED_KEY, merged);
+        return done("auto-merged", `Merged ${shortPr(meta)} once it was green (${decision.reason}).`, await lastTurnTokens(threadId));
+      }
+      case "archive": {
+        const result = await deps.archive([threadId]);
+        if (result.failed.length > 0) return;
+        return done("auto-archived", `${shortPr(meta)} merged and nothing else was open, so the thread is archived.`, await lastTurnTokens(threadId));
+      }
+    }
+  }
+
   const sink: ConductorSink = {
     workspaceFor,
     deliver: async (threadId, workspaceId, events) => {
-      deps.store.add(workspaceId, threadId, events, now());
+      for (const event of events) {
+        // Stored first: a retried delivery finds it and does nothing twice.
+        const id = deps.store.addOne(workspaceId, threadId, event, now());
+        if (id === null) continue;
+        await autopilot(threadId, workspaceId, event, id).catch((error) => {
+          bb.log.warn(`autopilot ${threadId} ${event.kind}: ${String(error)}`);
+        });
+      }
     },
   };
 
@@ -515,9 +614,8 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     z.object({ repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).describe("owner/name"), number: z.number().int().positive() }),
     async ({ repo, number }, workspaceId) => {
       const { thread } = await prOwner(workspaceId, repo, number);
-      const info = JSON.parse(await gh(["repo", "view", repo, "--json", "viewerDefaultMergeMethod"])) as { viewerDefaultMergeMethod?: string };
       try {
-        await gh(["pr", "merge", String(number), "-R", repo, mergeFlag(info.viewerDefaultMergeMethod)], 120_000);
+        await mergePr(repo, number);
       } catch (error) {
         log(workspaceId, "merge-refused", thread.id, `${repo}#${number}: ${String(error).slice(0, 300)}`);
         throw new Error(`GitHub didn't merge ${repo}#${number}: ${error instanceof Error ? error.message : String(error)}`);
@@ -770,6 +868,63 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     };
   }
 
+  /**
+   * The conductor's current brief for each thread that needs the user, for
+   * Catch up and Now. A brief older than the thread's latest news is left out:
+   * the conductor hasn't seen what happened since.
+   */
+  async function briefs(): Promise<Array<{ workspaceId: string; threadId: string; at: number; item: BriefingItem }>> {
+    if (!deps.options().enabled) return [];
+    const threads = await deps.listThreads();
+    const attention = new Map(threads.map((thread) => [thread.id, thread.latestAttentionAt ?? thread.createdAt]));
+    const result: Array<{ workspaceId: string; threadId: string; at: number; item: BriefingItem }> = [];
+    for (const workspaceId of Object.keys(records)) {
+      if (!active(workspaceId)) continue;
+      const [current, done] = await Promise.all([briefing(workspaceId), resolved(workspaceId)]);
+      if (!current) continue;
+      for (const item of current.items) {
+        const latest = attention.get(item.threadId);
+        if (done[item.threadId] === current.at || latest === undefined || latest > current.at) continue;
+        result.push({ workspaceId, threadId: item.threadId, at: current.at, item });
+      }
+    }
+    return result;
+  }
+
+  /** What autopilot did since `since`, every workspace, with totals: the "done for you" feed. */
+  async function feed(since: number) {
+    const entries = deps.store.feed(AUTOPILOT_KINDS, since, 200);
+    const spared = entries.filter((entry) => SPARED_KINDS.has(entry.kind));
+    const titles = new Map((await deps.listThreads()).map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""]));
+    const missing = [...new Set(entries.slice(0, 30).flatMap((entry) => (entry.threadId && !titles.has(entry.threadId) ? [entry.threadId] : [])))];
+    await Promise.all(
+      missing.map(async (threadId) => {
+        const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
+        if (thread) titles.set(threadId, thread.title ?? "");
+      }),
+    );
+    return {
+      since,
+      merged: entries.filter((entry) => entry.kind === "auto-merged").length,
+      archived: entries.filter((entry) => entry.kind === "auto-archived").length,
+      forwarded: entries.filter((entry) => entry.kind === "forwarded").length,
+      refused: entries.filter((entry) => entry.kind === "merge-refused").length,
+      wakeupsSpared: spared.length,
+      tokensSpared: spared.reduce((sum, entry) => sum + (entry.savedTokens ?? 0), 0),
+      entries: entries.slice(0, 30).map((entry) => ({
+        id: entry.id,
+        at: entry.at,
+        kind: entry.kind,
+        workspaceId: entry.workspaceId,
+        workspace: names.get(entry.workspaceId) ?? entry.workspaceId,
+        threadId: entry.threadId,
+        title: entry.threadId ? (titles.get(entry.threadId) ?? "") : "",
+        text: entry.text,
+        savedTokens: entry.savedTokens,
+      })),
+    };
+  }
+
   /** Everything the conductor page shows for one workspace. */
   async function page(workspaceId: string) {
     const record = records[workspaceId] ?? null;
@@ -832,6 +987,8 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     tick,
     status,
     briefing,
+    briefs,
+    feed,
     fleet,
     cardAction,
     page,
