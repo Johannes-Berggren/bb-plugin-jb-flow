@@ -474,3 +474,13 @@ test("a retried delivery acts only once", async () => {
   await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
   assert.equal(ghCalls.filter((args) => args[0] === "pr").length, 1);
 });
+
+test("nothing merges a PR while its worker is running", async () => {
+  const { conductor, call, ghCalls, threads } = await setup();
+  const { threadId } = await conductor.start("ws");
+  threads.get("thr_a")!.status = "active";
+  assert.match(errorText(await call("merge_pr", { repo: "acme/web-app", number: 12 }, threadId))!, /is running; leave the merge to it/);
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.equal(ghCalls.filter((args) => args[0] === "pr").length, 0);
+  assert.match(conductor.log("ws")[0]!.text, /the worker is running, so it merges itself/);
+});

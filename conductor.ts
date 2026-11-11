@@ -222,6 +222,11 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
         return done("forwarded", `${event.text} (${decision.reason})`, null);
       case "merge": {
         if (typeof meta.repo !== "string" || typeof meta.pr !== "number") return;
+        // The worker woke up meanwhile (you replied to it): it merges itself.
+        const current = await bb.sdk.threads.get({ threadId }).catch(() => null);
+        if (current && BUSY.has(current.status)) {
+          return done("absorbed", `${event.text} (the worker is running, so it merges itself)`, null);
+        }
         try {
           await mergePr(meta.repo, meta.pr, meta.headSha);
         } catch (error) {
@@ -610,10 +615,12 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
 
   tool(
     "merge_pr",
-    "Merge a workspace thread's PR with the repo's default merge method. Never bypasses branch protection or required reviews: if GitHub refuses, the reason is returned; put it in the briefing.",
+    "Merge a workspace thread's PR with the repo's default merge method, only when its worker said it merges once green and the worker isn't running. Never bypasses branch protection or required reviews: if GitHub refuses, the reason is returned; put it in the briefing.",
     z.object({ repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).describe("owner/name"), number: z.number().int().positive() }),
     async ({ repo, number }, workspaceId) => {
       const { thread } = await prOwner(workspaceId, repo, number);
+      // A running worker may be merging it this very moment: two merges race and confuse it.
+      if (BUSY.has(thread.status)) throw new Error(`The worker on ${repo}#${number} is running; leave the merge to it.`);
       try {
         await mergePr(repo, number);
       } catch (error) {
