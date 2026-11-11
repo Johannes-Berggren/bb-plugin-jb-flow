@@ -402,6 +402,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - It messages the thread when checks finish (with the failed log), when reviews or comments arrive, or when the PR merges.
   - A thread that is still working gets nothing. Once it goes idle, the next check sends one message with the current state of all its PRs.
   - Checks are waited for up to 3 hours and reviews up to 7 days. The thread is told when a watch runs out.
+  - Agents can say what they'll do once checks pass with `after_green`: `merge`, `continue` (more work follows) or `nothing`.
 - **Wake-ups aren't lost.** A CI or release watch ends only after its message has been sent. A failed send is tried again on the next check, for about an hour, unless the thread is gone.
 
 ### Focus tracking (for Stream Deck and scripts)
@@ -470,7 +471,7 @@ bb jb-flow unsnooze <thread-id|--self>
 bb jb-flow snoozed [--json]
 bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]
 bb jb-flow digest [--refresh] [--json]
-bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]
+bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]
 bb jb-flow release-wait [--self|<thread-id>]
 bb jb-flow prs [--self|<thread-id>] [--json]
 bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]

@@ -26,6 +26,7 @@ import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
+import { AFTER_GREEN, type AfterGreen } from "./conductor-routing";
 import { wakeDueSnoozes } from "./snooze-wake";
 import { quietFor, staleThreads } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
@@ -807,7 +808,7 @@ export default async function plugin(bb: BbPluginApi) {
   /** Watch every open PR the thread created; fall back to its branch PR. */
   async function watchThreadCi(
     threadId: string,
-    options: { pr?: number; repo?: string; watchFor?: "checks" | "reviews" | "both" },
+    options: { pr?: number; repo?: string; watchFor?: "checks" | "reviews" | "both"; afterGreen?: AfterGreen },
   ) {
     // A bare PR number: use the repo of this thread's own PR with that number.
     if (options.pr !== undefined && options.repo === undefined) {
@@ -1205,7 +1206,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     description:
       "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
     instructions:
-      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\".",
+      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\". Say what you'll do once checks pass with after_green: \"merge\" when merging is part of your task, \"continue\" when you have more to do (the next PR in a stack, a deploy step), \"nothing\" when green needs no action from you.",
     parameters: z.object({
       pr: z.number().int().positive().optional().describe("PR number; defaults to every open PR this thread created (all repos), else this branch's PR"),
       repo: z
@@ -1214,10 +1215,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         .optional()
         .describe("owner/name of the PR's repo. Needed when the PR is not in this thread's project repo and this thread didn't create it"),
       for: z.enum(["checks", "reviews", "both"]).optional().describe("What to wait for (default both)"),
+      after_green: z
+        .enum(AFTER_GREEN)
+        .optional()
+        .describe("What you'll do once checks pass: merge (merging is part of your task), continue (more work follows), nothing. A workspace conductor, if enabled, handles merge and nothing for you."),
     }),
-    async execute({ pr, repo, for: watchFor }, ctx) {
+    async execute({ pr, repo, for: watchFor, after_green: afterGreen }, ctx) {
       try {
-        const watches = await watchThreadCi(ctx.threadId, { pr, repo, watchFor });
+        const watches = await watchThreadCi(ctx.threadId, { pr, repo, watchFor, afterGreen });
         return `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}. End your turn now; a message will arrive when there's news.`;
       } catch (error) {
         return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
@@ -1306,7 +1311,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     "  bb jb-flow tell <text…> [--thread <id>]              Send a message (default: focused thread)",
     "  bb jb-flow needs-me [--json]                         Threads waiting on you",
     "  bb jb-flow next                                      Open the next thread that needs you",
-    "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]",
+    "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]",
     "  bb jb-flow watches [--json]                          Auto-continues, release waiters, CI watches",
     "  bb jb-flow prs [--self|<thread-id>] [--json]         PRs a thread created (all repos, stack order)",
     "  bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]",
@@ -1487,7 +1492,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
       { name: "now", summary: "List the Now queue in order, and what's Moving", usage: "bb jb-flow now [--json]" },
-      { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
+      { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]" },
       { name: "prs", summary: "List the PRs a thread created, across repos, in stack order", usage: "bb jb-flow prs [--self|<thread-id>] [--json]" },
       { name: "pr-link", summary: "Link (or --remove) a PR to a thread", usage: "bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]" },
       { name: "watches", summary: "List auto-continues, release waiters and CI watches", usage: "bb jb-flow watches [--json]" },
@@ -1574,10 +1579,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             const prFlag = args.indexOf("--pr");
             const forFlag = args.indexOf("--for");
             const repoFlag = args.indexOf("--repo");
+            const afterFlag = args.indexOf("--after-green");
             const positional = args.filter((arg, index) => {
               if (prFlag !== -1 && (index === prFlag || index === prFlag + 1)) return false;
               if (forFlag !== -1 && (index === forFlag || index === forFlag + 1)) return false;
               if (repoFlag !== -1 && (index === repoFlag || index === repoFlag + 1)) return false;
+              if (afterFlag !== -1 && (index === afterFlag || index === afterFlag + 1)) return false;
               return true;
             });
             const threadId = resolveThread(positional[0] ?? "--self");
@@ -1587,6 +1594,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               pr: prFlag === -1 ? undefined : Number(args[prFlag + 1]),
               watchFor,
               repo: repoFlag === -1 ? undefined : args[repoFlag + 1],
+              afterGreen: afterFlag === -1 ? undefined : z.enum(AFTER_GREEN).parse(args[afterFlag + 1]),
             });
             return {
               exitCode: 0,
