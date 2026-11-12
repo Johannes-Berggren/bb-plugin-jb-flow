@@ -56,7 +56,7 @@ const workspaceState: WorkspaceState = {
 };
 
 /** A conductor over a fake bb: two worker threads, one per workspace. */
-async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string } } = {}) {
+async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string }; personal?: boolean } = {}) {
   let clock = T0;
   const kv = new Map<string, unknown>();
   const tools = new Map<string, { execute: (params: unknown, ctx: { threadId: string }) => Promise<unknown> }>();
@@ -89,7 +89,13 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
     },
     background: { schedule: () => undefined },
     sdk: {
-      projects: { list: async () => [{ id: "proj_web" }] },
+      projects: {
+        list: async () => [{ id: "proj_web" }],
+        get: async ({ projectId }: { projectId: string }) => {
+          if (options.personal && projectId === "proj_personal") return { id: "proj_personal", kind: "personal" };
+          throw Object.assign(new Error("HTTP 404: not found"), { status: 404 });
+        },
+      },
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
           const found = threads.get(threadId);
@@ -425,7 +431,7 @@ test("autopilot merges a green PR the worker said it would merge, only that comm
 });
 
 test("the worker's status report counts as merge intent", async () => {
-  const { conductor, ghCalls } = await setup({ report: { next: "Merge once CI is green, then archive." } });
+  const { conductor, ghCalls } = await setup({ report: { next: "Merge once CI is green." } });
   await conductor.start("ws");
   await conductor.sink.deliver("thr_a", "ws", [greenEvent()]);
   assert.ok(ghCalls.some((args) => args[0] === "pr" && args[1] === "merge"));
@@ -440,8 +446,8 @@ test("green the worker didn't ask about is only noted", async () => {
   assert.equal(conductor.log("ws")[0]!.kind, "absorbed");
 });
 
-test("its merged PR archives the thread when nothing else is open", async () => {
-  const { conductor, archived } = await setup();
+test("its merged PR archives the thread when its report says nothing is left", async () => {
+  const { conductor, archived } = await setup({ report: { next: "Merge once CI is green; nothing pending after that." } });
   await conductor.start("ws");
   await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
   await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
@@ -483,4 +489,11 @@ test("nothing merges a PR while its worker is running", async () => {
   await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
   assert.equal(ghCalls.filter((args) => args[0] === "pr").length, 0);
   assert.match(conductor.log("ws")[0]!.text, /the worker is running, so it merges itself/);
+});
+
+test("a conductor starts in bb's Personal project when there is one: a folder, not a checkout", async () => {
+  const { conductor, spawns } = await setup({ personal: true });
+  await conductor.start("ws");
+  assert.equal(spawns[0]!.projectId, "proj_personal");
+  assert.deepEqual(spawns[0]!.environment, { type: "host", workspace: { type: "personal" } });
 });

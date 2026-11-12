@@ -1033,16 +1033,18 @@ function ConductorSettingsRow({
   const sdk = useSdk();
   const { projects } = useSidebarThreads();
   const own = projects.filter((project) => workspace.projectIds.includes(project.id));
-  const [projectId, setProjectId] = useState(conductor?.projectId ?? own[0]?.id ?? "");
+  // Empty: bb's Personal project, a plain folder rather than a checkout of the workspace's code.
+  const [projectId, setProjectId] = useState(conductor?.projectId ?? "");
   const [agent, setAgent] = useState<ExperimentalProviderModelPickerValue | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasThread = conductor?.threadId != null;
   useEffect(() => {
-    if (hasThread || !projectId) return;
+    const forDefaults = projectId || own[0]?.id;
+    if (hasThread || !forDefaults) return;
     let live = true;
     sdk.projects
-      .defaultExecutionOptions({ projectId })
+      .defaultExecutionOptions({ projectId: forDefaults })
       .then((defaults) => {
         if (live && defaults) setAgent({ providerId: defaults.providerId, model: defaults.model, reasoningLevel: defaults.reasoningLevel as ExperimentalProviderModelPickerValue["reasoningLevel"] });
       })
@@ -1050,7 +1052,7 @@ function ConductorSettingsRow({
     return () => {
       live = false;
     };
-  }, [sdk, projectId, hasThread]);
+  }, [sdk, projectId, hasThread, own]);
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -1097,6 +1099,7 @@ function ConductorSettingsRow({
           <label>
             <span className="jf-cd-muted">Lives in </span>
             <select value={projectId} onChange={(event) => setProjectId(event.target.value)} aria-label={`Project for ${workspace.name}'s conductor`}>
+              <option value="">Personal (no checkout)</option>
               {(own.length > 0 ? own : projects).map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}

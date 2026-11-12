@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decide, mergeIntent, type AutopilotInput } from "./autopilot.ts";
+import { decide, followUpsAfterMerge, mergeIntent, nothingLeft, type AutopilotInput } from "./autopilot.ts";
 
 const input = (fields: Partial<AutopilotInput>): AutopilotInput => ({
   kind: "green",
   mergeIntent: false,
   pr: { state: "open", attention: "ready_to_merge" },
   otherOpenPrs: 0,
-  mergedByAutopilot: false,
+  followUps: false,
+  nothingLeft: false,
   ...fields,
 });
 
@@ -46,11 +47,37 @@ test("a PR that can't merge goes to the conductor instead", () => {
   assert.equal(decide(input({ afterGreen: "merge", pr: { state: "draft", attention: "draft" } })).action, "conductor");
 });
 
-test("a merged last PR that was meant to merge archives the thread; a stack goes on", () => {
-  assert.equal(decide(input({ kind: "merged", mergedByAutopilot: true })).action, "archive");
-  assert.equal(decide(input({ kind: "merged", afterGreen: "merge" })).action, "archive");
-  assert.equal(decide(input({ kind: "merged", mergedByAutopilot: true, otherOpenPrs: 1 })).action, "forward");
-  assert.equal(decide(input({ kind: "merged" })).action, "record");
+test("only the worker's own 'nothing pending' archives a thread whose last PR merged", () => {
+  assert.equal(decide(input({ kind: "merged", nothingLeft: true })).action, "archive");
+  // Meaning to merge isn't proof the work is done (a release thread still had to check the deploy).
+  assert.equal(decide(input({ kind: "merged", afterGreen: "merge" })).action, "record");
+  assert.equal(decide(input({ kind: "merged", mergeIntent: true })).action, "record");
+  assert.equal(decide(input({ kind: "merged", nothingLeft: true, otherOpenPrs: 1 })).action, "forward");
+  assert.equal(decide(input({ kind: "merged", followUps: true })).action, "forward");
+});
+
+test("green with more steps after the merge wakes the worker instead of merging for it", () => {
+  assert.equal(decide(input({ afterGreen: "merge", followUps: true })).action, "forward");
+  assert.equal(decide(input({ mergeIntent: true, followUps: true })).action, "forward");
+});
+
+test("follow-up steps are read from the worker's own words", () => {
+  // Real phrasings from a night of use: each had more to do after the merge.
+  assert.equal(followUpsAfterMerge("Once its CI is green I'll merge it, bring it into the cycle branch, rerun the desktop lane and open the cycle's PR."), true);
+  assert.equal(followUpsAfterMerge("Once `ci` is green on the reviewed head I'll merge it and close out the cycle."), true);
+  assert.equal(followUpsAfterMerge("Once green I'll merge #2799, then start a staging deploy."), true);
+  // ...and these had nothing after it.
+  assert.equal(followUpsAfterMerge("The CI watcher is on the new commit, and I'll merge once it's green."), false);
+  assert.equal(followUpsAfterMerge("#2801 merges itself once CI is green."), false);
+  assert.equal(followUpsAfterMerge("Merge once CI is green; nothing pending after that."), false);
+  assert.equal(followUpsAfterMerge(null, undefined), false);
+});
+
+test("nothing left means the worker said so", () => {
+  assert.equal(nothingLeft("Nothing pending."), true);
+  assert.equal(nothingLeft("Nothing else; all done."), true);
+  assert.equal(nothingLeft("Once a reviewer approves, check the prod deploy."), false);
+  assert.equal(nothingLeft(null), false);
 });
 
 test("what the worker must act on is forwarded", () => {

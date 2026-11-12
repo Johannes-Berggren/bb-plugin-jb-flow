@@ -19,12 +19,14 @@ export type AutopilotInput = {
   afterGreen?: AfterGreen;
   /** The worker's own words say it merges once checks pass. */
   mergeIntent: boolean;
+  /** Its words name more steps after the merge (deploy, rerun, open the next PR): it has to be woken anyway. */
+  followUps: boolean;
+  /** Its last status report says nothing is left. */
+  nothingLeft: boolean;
   /** The PR as last read (prs.ts), or null when it isn't tracked. */
   pr: { state: string; attention: string } | null;
   /** Open PRs on the thread besides this one. */
   otherOpenPrs: number;
-  /** Autopilot merged this PR itself. */
-  mergedByAutopilot: boolean;
 };
 
 export type AutopilotDecision = { action: AutopilotAction; reason: string };
@@ -46,14 +48,17 @@ export function decide(input: AutopilotInput): AutopilotDecision {
           ? { action: "record", reason: "green; the worker didn't say it merges" }
           : { action: "record", reason: "no checks; the worker didn't say it merges" };
       }
+      // More steps follow the merge: the worker merges and carries on in one turn, so waking it is the saving.
+      if (input.followUps) return { action: "forward", reason: "the worker has more to do after merging" };
       if (input.pr?.state === "draft") return { action: "conductor", reason: "the worker meant to merge, but the PR is a draft" };
       const blocked = input.pr ? BLOCKED_ATTENTION[input.pr.attention] : undefined;
       if (blocked) return { action: "conductor", reason: `the worker meant to merge, but ${blocked}` };
       return { action: "merge", reason: "green, and the worker said it merges" };
     }
     case "merged":
-      if (input.otherOpenPrs > 0) return { action: "forward", reason: "the thread has more PRs open" };
-      if (input.mergedByAutopilot || wantsMerge) return { action: "archive", reason: "its last PR merged as planned" };
+      if (input.otherOpenPrs > 0 || input.followUps) return { action: "forward", reason: "the worker has more to do" };
+      // Only the worker's own "nothing pending" closes a thread: a merge alone isn't proof the work is done.
+      if (input.nothingLeft) return { action: "archive", reason: "its last PR merged and its report says nothing is left" };
       return { action: "record", reason: "merged; left for you to close" };
     case "closed":
     case "timeout":
@@ -71,6 +76,29 @@ const THEN_MERGE = /\b(?:once|when|after|as soon as)\b[^.\n]{0,40}\b(?:green|ci|
 const AUTO_MERGE = /\bauto-?merg(?:e|es|ing)\b/i;
 // "don't merge", "wait for review before merging", "ask before merging": the user decides.
 const HOLD = /\b(?:don'?t|do not|won'?t|will not|not yet|never|before)\b[^.\n]{0,25}\bmerg(?:e|ing)\b|\bmerg(?:e|ing)\b[^.\n]{0,30}\b(?:your (?:ok|go|approval)|you (?:say|approve|confirm)|approval|review)\b/i;
+
+// What comes after the merge in the same breath: "merge it, then deploy", "merge and close out the cycle".
+const AFTER_MERGE = /\bmerg(?:e|es|ing)\b([^.\n]{0,200})/i;
+const FOLLOW_UP = /\b(?:then|after that|afterwards|bring|deploy|release|rerun|re-run|open|start|close out|check|verify|monitor|report|approve|ship|publish|tag|backport|cherry-pick|retarget|rebase|update)\b/i;
+// "once CI is green", "when checks pass": the condition, not a next step.
+const CONDITION = /\b(?:once|when|after|as soon as)\b[^,]*?\b(?:green|ci|checks?|pass(?:es|ing)?)\b/gi;
+
+/** Whether the worker's words name more steps after merging. */
+export function followUpsAfterMerge(...texts: Array<string | null | undefined>): boolean {
+  for (const text of texts) {
+    const after = text ? AFTER_MERGE.exec(text)?.[1] : undefined;
+    // "merge once green; nothing pending after that" ends the plan.
+    if (after && !NOTHING_LEFT.test(after) && FOLLOW_UP.test(after.replace(CONDITION, ""))) return true;
+  }
+  return false;
+}
+
+const NOTHING_LEFT = /\b(?:nothing (?:pending|left|else|more|to do)|no (?:next step|further steps?|follow-?ups?)|all done)\b/i;
+
+/** Whether a status report's Next says the work is finished. */
+export function nothingLeft(next: string | null | undefined): boolean {
+  return !!next && NOTHING_LEFT.test(next);
+}
 
 /** Whether the worker's own words say it merges once checks pass, and nothing says to hold. */
 export function mergeIntent(...texts: Array<string | null | undefined>): boolean {

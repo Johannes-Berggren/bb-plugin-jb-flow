@@ -11,7 +11,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { handBack } from "./awaiting.ts";
-import { decide, mergeIntent } from "./autopilot.ts";
+import { decide, followUpsAfterMerge, mergeIntent, nothingLeft } from "./autopilot.ts";
 import { nextMove } from "./decisions.ts";
 import { isGoneError } from "./ci-watch.ts";
 import { gh as runGh } from "./gh.ts";
@@ -93,6 +93,8 @@ export type ConductorDeps = {
 };
 
 const RECORDS_KEY = "conductors";
+/** bb's own id for the Personal project, the one project whose threads get a plain folder. */
+const PERSONAL_PROJECT_ID = "proj_personal";
 const briefingKey = (workspaceId: string) => `conductorBriefing:${workspaceId}`;
 const memoryKey = (workspaceId: string) => `conductorMemory:${workspaceId}`;
 const RERUNS_KEY = "conductorReruns";
@@ -199,9 +201,11 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
       kind: event.kind,
       afterGreen: meta.afterGreen,
       mergeIntent: mergeIntent(status?.report?.next, status?.report?.doingNow, status?.latest),
+      followUps: followUpsAfterMerge(status?.report?.next, status?.report?.doingNow, status?.latest),
+      // A report's Next, or the "Next:" line of a reply that had no full report.
+      nothingLeft: nothingLeft(status?.report?.next ?? /\bNext:\**\s*(.+)/i.exec(status?.latest ?? "")?.[1]),
       pr: pr ? { state: pr.state, attention: pr.attention } : null,
       otherOpenPrs: own.filter((candidate) => candidate !== pr && (candidate.state === "open" || candidate.state === "draft")).length,
-      mergedByAutopilot: merged[key] !== undefined,
     });
     const done = (kind: string, text: string, saved: number | null) => {
       deps.store.ack(workspaceId, [id], now());
@@ -219,6 +223,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
           mode: "queue-if-active",
           input: [{ type: "text", text: event.kind === "release" ? event.text : `[ci watcher] ${event.text}`, mentions: [] }],
         });
+        // The worker merges and carries on itself: tell it in the words it was waiting for.
         return done("forwarded", `${event.text} (${decision.reason})`, null);
       case "merge": {
         if (typeof meta.repo !== "string" || typeof meta.pr !== "number") return;
@@ -269,7 +274,16 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     const record = records[workspaceId]!;
     const workspace = (await deps.workspaces()).workspaces.find((candidate) => candidate.id === workspaceId);
     if (!workspace) throw new Error(`Workspace ${workspaceId} no longer exists.`);
-    const projectId = record.projectId ?? workspace.projectIds[0] ?? (await bb.sdk.projects.list())[0]?.id;
+    // bb's Personal project takes a plain folder; any other project would give the conductor a git checkout.
+    const personal = await (async () => {
+      try {
+        const project = await bb.sdk.projects.get({ projectId: PERSONAL_PROJECT_ID });
+        return project.kind === "personal" ? project.id : null;
+      } catch {
+        return null;
+      }
+    })();
+    const projectId = record.projectId ?? personal ?? workspace.projectIds[0] ?? (await bb.sdk.projects.list())[0]?.id;
     if (!projectId) throw new Error("Add a project to this workspace first; the conductor lives in one.");
     const memory = memories.get(workspaceId) ?? "";
     const base = {
