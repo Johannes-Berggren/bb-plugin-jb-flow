@@ -114,3 +114,20 @@ test("next move: one number, go, and earlier prose stay as they were", () => {
   // Plural asks are still choices for the parser the deck and palette use.
   assert.equal(parseDecisionOptions("Two ways forward:\n1. Merge now\n2. Wait for review\n\nReply with the numbers.").length, 2);
 });
+
+test("a choice word used in passing doesn't make a plain list a choice", () => {
+  // "reply" and "which" here aren't asking anything.
+  const open = "With the reply to Olai sent, there's nothing left to do this session. Two things remain open.\n\n1. **Weekly audit check:** runs Monday.\n2. **One SSO connection:** your call.\n\n<sub>2026-09-29 21:42 CEST</sub>";
+  assert.deepEqual(nextMove(open).options, []);
+  assert.deepEqual(parseDecisionOptions("Beyond #8438, which you already knew about, the scan surfaced four you didn't:\n1. #8443 injects the token\n2. #8432 accepts any code"), []);
+  // The asking forms still count.
+  assert.equal(parseDecisionOptions("Which one?\n1. Merge now\n2. Wait for review").length, 2);
+  assert.equal(parseDecisionOptions("Done with the fix. Which do you want next:\n1. Merge now\n2. Wait for review").length, 2);
+  assert.equal(nextMove('> **Optional, reply "go" to run either:**\n> 1. Run the check\n> 2. Run it in a subagent').mode, "go");
+});
+
+test("a list followed by a new section isn't the message's ending", () => {
+  const text = "Pick one:\n1. Merge now\n2. Wait for review\n\n## Also\n\nThe deploy is still pending.";
+  assert.deepEqual(parseDecisionOptions(text), []);
+  assert.deepEqual(parseDecisionOptions(text, { strict: false }), []);
+});
