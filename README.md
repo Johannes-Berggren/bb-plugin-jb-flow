@@ -309,6 +309,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **Filters** above the list (Needs me, Your move, Running and so on) narrow it while keeping your sections, each expanded. Done stays one list, with Archive all.
 - **Machines**: once threads run on more than one machine, each machine gets a filter chip with its thread count (e.g. *Mac Studio 48*, *MacBook Air 2*); click one to see that machine's threads across all sections. Rows on a machine other than the one BB runs on carry a short tag (*Air*, *MBP*), and the hover preview always names the machine.
 - **Rows** show a project chip with a stable colour per project, tags, and an age fade for idle threads.
+- **Subthreads** (threads an agent spawned under another, and forks) sit under their parent's row, indented, at any depth. They start unfolded, as in bb's own list. The chevron beside a parent, or `←`/`→` on its row, folds them into a count. The count turns amber when a folded subthread needs you, and blue while one runs. A subthread whose parent is archived gets a row of its own.
 - **Keyboard**, on a focused row:
   - `1`–`5` move it to a lane
   - `s` snooze
@@ -317,6 +318,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `d` set or clear a due date
   - `e` archive
   - `u` toggle unread
+  - `←`/`→` fold or unfold its subthreads
   - `j`/`k` move up and down
 - **Right-click menu:**
   - open / open in split view
