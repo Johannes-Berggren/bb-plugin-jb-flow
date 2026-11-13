@@ -131,3 +131,12 @@ test("a list followed by a new section isn't the message's ending", () => {
   assert.deepEqual(parseDecisionOptions(text), []);
   assert.deepEqual(parseDecisionOptions(text, { strict: false }), []);
 });
+
+test("option text keeps names: underscores inside words, # and > mid-text", () => {
+  const options = "> 1. Delete seven, keep `TAURI_SIGNING_PRIVATE_KEY` until PR #64 lands (recommended)\n> 2. Move a -> b, _then_ stop\n>\n> Reply with the number.";
+  const expected = ["Delete seven, keep TAURI_SIGNING_PRIVATE_KEY until PR #64 lands", "Move a -> b, then stop"];
+  // A bare decision, and the same options in a status report's Next steps.
+  assert.deepEqual(nextMove(`> **Decision needed:** which?\n${options}`).options.map((option) => option.text), expected);
+  const report = nextMove(`**Goal:** Tidy secrets\n**Done:** Checked them\n\n### Next steps\n> [!TIP]\n> **Decision needed:** which?\n${options}\n\n_2026-11-14 10:00 CET_`);
+  assert.deepEqual(report.options.map((option) => option.text), expected);
+});

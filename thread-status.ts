@@ -44,10 +44,17 @@ export const threadStatusSchema = z.object({
 });
 export type ThreadStatus = z.infer<typeof threadStatusSchema>;
 export type StatusReport = z.infer<typeof statusReportSchema>;
-const plain = (text: string) =>
+/**
+ * Text without Markdown: links, emphasis, code marks, and quote or heading markers
+ * at the start of a line. Underscores inside words and "#" or ">" mid-text stay, so
+ * `TAURI_SIGNING_KEY`, "PR #64" and "a -> b" read as written.
+ */
+export const plain = (text: string) =>
   text
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/[*_`>#]+/g, "")
+    .replace(/^[ \t]*(?:>[ \t]*)*(?:#{1,6}[ \t]+)?/gm, "")
+    .replace(/[*`]+/g, "")
+    .replace(/(?<![\p{L}\p{N}])_+|_+(?![\p{L}\p{N}])/gu, "")
     .replace(/\s+/g, " ")
     .trim();
 
