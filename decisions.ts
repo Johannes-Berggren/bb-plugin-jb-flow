@@ -1,6 +1,6 @@
 // Finds the numbered options an agent ends its message with ("1. … 2. …"),
 // so the composer can offer them as one-click replies.
-import { MULTI_REPLY, parseStatusReport } from "./thread-status.ts";
+import { MULTI_REPLY, parseStatusReport, plain } from "./thread-status.ts";
 
 export type DecisionOption = { n: number; text: string; recommended: boolean };
 /**
@@ -9,12 +9,6 @@ export type DecisionOption = { n: number; text: string; recommended: boolean };
  */
 export type DecisionMode = "go" | "choice" | "multi";
 
-const plain = (text: string) =>
-  text
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/[*_`]+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 
 // Words in the line before a list that make it a choice for the user. Only its
 // last sentence counts, and "which", "reply", "either" and "paths" only in their
