@@ -16,9 +16,14 @@ const plain = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-// Words in the line before a list that make it a choice for the user.
+// Words in the line before a list that make it a choice for the user. Only its
+// last sentence counts, and "which", "reply", "either" and "paths" only in their
+// asking sense: "With the reply to Olai sent, two things remain open." and
+// "#8438, which you knew about, plus four more:" introduce a plain list.
 const CHOICE_INTRO =
-  /\?\s*\**\s*$|\b(options?|alternatives?|choose|choices?|pick|which|prefer|either|decide|decision|want me to|should (i|we)|shall (i|we)|how (should|do) (i|we)|what (should|do) (i|we)|reply|recommended|your call|ways? (forward|to)|approaches|paths?)\b/i;
+  /\?\s*$|^(which|reply|either)\b|\breply (with|["“']?go\b)|[:—–]\s*(which|reply)\b|\bwhich (one|ones|options?|of (these|them|the)|(do|would|should) (you|i|we))\b|\b(options?|alternatives?|choose|choices?|pick|prefer|decide|decision|want me to|should (i|we)|shall (i|we)|how (should|do) (i|we)|what (should|do) (i|we)|recommended|your call|ways? (forward|to)|approaches|paths? (forward|to))\b/i;
+/** The last sentence of the line before a list, without markup or quote markers. */
+const lastSentence = (line: string) => plain(line.replace(/^\s*(?:>\s*)*/, "")).split(/(?<=[.!?])\s+(?=[A-Z])/).pop() ?? "";
 // "Reply go for all, or go 1,3", "Reply `go` for the next slice": the list is answered with go.
 const GO_REPLY = /\b(reply|say|write|type|send)\s+[*_`"“']*go\b|\bgo[*_`]*\s+(for all|\d)/i;
 // Text after a list that asks for one of its numbers.
@@ -79,7 +84,9 @@ function findDecision(message: string, strict: boolean): Decision {
   if (options.some((option, index) => option.n !== index + 1)) return none();
   // "Manual fallback: 1. Finance verifies… 2. …" describes steps; no buttons.
   const outro = lines.slice(end + 1).join("\n");
-  const asks = CHOICE_INTRO.test(intro) || CHOICE_OUTRO.test(outro) || MULTI_REPLY.test(`${intro}\n${outro}`);
+  // A heading after the list starts a new section: the list isn't what the message ends with.
+  if (/^\s*(?:>\s*)*#{1,6}\s/m.test(outro)) return none();
+  const asks = CHOICE_INTRO.test(lastSentence(intro)) || CHOICE_OUTRO.test(outro) || MULTI_REPLY.test(`${intro}\n${outro}`);
   if (strict && !recommended && !asks) return none();
   return { options, intro, outro };
 }
