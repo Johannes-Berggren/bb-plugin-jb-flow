@@ -31,6 +31,7 @@ import { quietFor, staleThreads } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 import { replyQueued } from "./needs-me";
+import { approvePlan, planModels } from "./plan-model";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
 const CHANGED = "jb-flow-changed";
@@ -245,6 +246,18 @@ export const rpcContract = defineRpcContract({
     input: z.object({ archiveThreadId: z.string().nullable() }),
     output: z.object({ opened: z.string().nullable() }),
   },
+  plan_models: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({
+      pending: z.boolean(),
+      current: z.string().nullable(),
+      models: z.array(z.object({ model: z.string(), name: z.string() })),
+    }),
+  },
+  plan_approve: {
+    input: z.object({ threadId: z.string(), model: z.string().min(1).nullable() }),
+    output: z.object({ ok: z.boolean() }),
+  },
   decision_options: {
     input: z.object({ threadId: z.string() }),
     output: z.object({
@@ -423,6 +436,13 @@ export default async function plugin(bb: BbPluginApi) {
       description:
         "When Claude Code stops on a session limit, send \"continue\" 90 seconds after the limit resets. Each thread can switch it on or off in the thread monitor.",
       default: false,
+    },
+    planModelChoice: {
+      type: "boolean",
+      label: "Model choice on plan approval",
+      description:
+        "Adds a model menu next to Approve plan, so a plan can be implemented on another of the thread's models (for example plan on one model, build on another). The last choice is remembered.",
+      default: true,
     },
     expandPlans: {
       type: "boolean",
@@ -1070,6 +1090,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       if (nextId === null) return { opened: null };
       await bb.sdk.threads.open({ threadId: nextId, file: null });
       return { opened: nextId };
+    },
+    plan_models: ({ threadId }) => planModels(bb.sdk, threadId),
+    plan_approve: async ({ threadId, model }) => {
+      await approvePlan(bb.sdk, { threadId, model });
+      return { ok: true };
     },
     decision_options: async ({ threadId }) => {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));

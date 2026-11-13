@@ -16,7 +16,7 @@
 
 Each can be switched in the plugin settings:
 
-- On by default: the restyled interface, the thread monitor, status reports at hand-back, and expanded, resizable plan reviews.
+- On by default: the restyled interface, the thread monitor, status reports at hand-back, expanded, resizable plan reviews, and approving a plan on another model.
 - Off by default: "continue" after a Claude Code usage limit resets, swiping between workspaces, and copy buttons on inline code.
 - Wake threads waiting for a release once it ships (per-project JSON config).
 
