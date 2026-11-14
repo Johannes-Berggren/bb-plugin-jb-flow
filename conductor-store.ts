@@ -138,13 +138,21 @@ export function createConductorStore(db: () => Db) {
     return rows.map(fromLogRow);
   }
 
+  /** Marks every open event of these kinds handled, in every workspace. Returns how many. */
+  function ackKinds(kinds: readonly string[], at: number): number {
+    if (kinds.length === 0) return 0;
+    return db()
+      .prepare(`UPDATE conductor_events SET acked_at = ? WHERE acked_at IS NULL AND kind IN (${kinds.map(() => "?").join(", ")})`)
+      .run(at, ...kinds).changes;
+  }
+
   /** Forgets events and log entries older than `before`, handled or not. Returns how many events. */
   function prune(before: number): number {
     db().prepare("DELETE FROM conductor_log WHERE at < ?").run(before);
     return db().prepare("DELETE FROM conductor_events WHERE created_at < ?").run(before).changes;
   }
 
-  return { add, addOne, open, undelivered, markDelivered, ack, log, recentLog, feed, prune };
+  return { add, addOne, open, undelivered, markDelivered, ack, ackKinds, log, recentLog, feed, prune };
 }
 
 export type ConductorStore = ReturnType<typeof createConductorStore>;

@@ -56,7 +56,7 @@ const workspaceState: WorkspaceState = {
 };
 
 /** A conductor over a fake bb: two worker threads, one per workspace. */
-async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string }; personal?: boolean } = {}) {
+async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string }; personal?: boolean; flow?: Record<string, Record<string, number>>; status?: Record<string, unknown> } = {}) {
   let clock = T0;
   const kv = new Map<string, unknown>();
   const tools = new Map<string, { execute: (params: unknown, ctx: { threadId: string }) => Promise<unknown> }>();
@@ -135,10 +135,12 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
     workspaces: async () => workspaceState,
     assignWorkspace: async () => undefined,
     listThreads: async () => [...threads.values()].filter((t) => t.visibility === "visible" && t.archivedAt === null) as never,
-    flow: async () => ({ awaiting: {}, promised: {}, waitingOthers: {}, readyToGo: {}, watching: {}, threadPrs: {}, focused: {}, due: {} }),
+    flow: async () => ({ awaiting: {}, promised: {}, waitingOthers: {}, readyToGo: {}, watching: {}, threadPrs: {}, focused: {}, due: {}, ...options.flow }),
     snoozedSection: async () => null,
     threadStatus: async () =>
-      options.report
+      options.status
+        ? (options.status as never)
+        : options.report
         ? ({ threadId: "thr_a", report: { goal: "", done: "", next: options.report.next, blocked: "", milestones: [], capturedAt: T0 }, latest: "", latestAt: T0, replyHash: "" } as never)
         : null,
     prsByThread: async () => ({
@@ -311,27 +313,6 @@ test("a wake-up waits for the batch window and for an idle conductor, then carri
   assert.equal(await conductor.wake("ws"), "nothing", "delivered events aren't sent again");
 });
 
-test("hand-backs the user has read since don't wake the conductor", async () => {
-  const { conductor, fire, threads, sent, store, advance } = await setup();
-  await conductor.start("ws");
-  await fire("thread.idle", { thread: threads.get("thr_a"), lastAssistantText: "Which option do you want? 1. A 2. B" });
-  assert.equal(store.open("ws").length, 1);
-  advance(11 * MINUTE);
-  threads.get("thr_a")!.lastReadAt = T0 + 5 * MINUTE;
-  assert.equal(await conductor.wake("ws"), "nothing");
-  assert.equal(sent.length, 0);
-  assert.equal(store.open("ws").length, 0, "acknowledged as seen");
-});
-
-test("a hand-back that waits on someone else isn't news for the conductor", async () => {
-  const { conductor, fire, threads, store } = await setup();
-  await conductor.start("ws");
-  await fire("thread.idle", { thread: threads.get("thr_a"), lastAssistantText: "Waiting for Sam to review the PR before I continue." });
-  await fire("thread.idle", { thread: threads.get("thr_b"), lastAssistantText: "Which option do you want?" });
-  assert.equal(store.open("ws").length, 0);
-  assert.equal(store.open("other").length, 0);
-});
-
 test("the first wake-up of a day compacts the conductor first", async () => {
   const { conductor, sent, advance } = await setup();
   await conductor.start("ws");
@@ -390,7 +371,7 @@ test("Go on a card sends the reply as the user's, marks the thread read and puts
   assert.deepEqual(sent.map((message) => [message.threadId, message.text]), [["thr_a", "2"]], "no [conductor] prefix: it's the user's answer");
   assert.deepEqual(read, ["thr_a"]);
   const page = await conductor.page("ws");
-  assert.deepEqual(page.resolved, ["thr_a"]);
+  assert.deepEqual(page.briefing?.items.map((item) => item.threadId) ?? [], [], "put away");
   assert.equal((await conductor.status())[0]!.needsYou, 0);
   assert.equal(store.open("ws")[0]!.kind, "user-action");
   advance(60 * MINUTE);
@@ -496,4 +477,38 @@ test("a conductor starts in bb's Personal project when there is one: a folder, n
   await conductor.start("ws");
   assert.equal(spawns[0]!.projectId, "proj_personal");
   assert.deepEqual(spawns[0]!.environment, { type: "host", workspace: { type: "personal" } });
+});
+
+test("a worker asking you shows as a brief from its own report, without waking the conductor", async () => {
+  const { conductor, store, sent, advance } = await setup({
+    flow: { awaiting: { thr_a: T0 } },
+    status: {
+      threadId: "thr_a",
+      report: { goal: "Ship charts", done: "Both wired up.", next: "Waiting on your pick", blocked: "", milestones: [], steps: { mode: "choice", question: "Which chart library?", items: ["Recharts", "uPlot"], recommended: [2] }, capturedAt: T0 },
+      latest: "Which chart library?",
+      latestAt: T0,
+      replyHash: "",
+    },
+  });
+  await conductor.start("ws");
+  const [brief] = await conductor.briefs();
+  assert.equal(brief!.threadId, "thr_a");
+  assert.equal(brief!.item.headline, "Which chart library?");
+  assert.equal(brief!.item.reply, "2");
+  assert.equal(store.open("ws").length, 0, "nothing for the conductor to wake for");
+  advance(60 * MINUTE);
+  assert.equal(await conductor.wake("ws"), "nothing");
+  assert.equal(sent.length, 0);
+  // Go sends the worker's own recommended answer, and the brief is put away until there's news.
+  await conductor.cardAction("ws", "thr_a", "go");
+  assert.deepEqual(sent.map((message) => [message.threadId, message.text]), [["thr_a", "2"]]);
+  assert.deepEqual(await conductor.briefs(), []);
+});
+
+test("the conductor's own item for a thread wins over the automatic one", async () => {
+  const { conductor, call } = await setup({ flow: { awaiting: { thr_a: T0 } } });
+  const { threadId } = await conductor.start("ws");
+  await call("post_briefing", { items: [{ threadId: "thr_a", kind: "blocked", headline: "Merge refused: needs a review", summary: "GitHub wants an approval." }] }, threadId);
+  const [brief] = await conductor.briefs();
+  assert.equal(brief!.item.headline, "Merge refused: needs a review");
 });

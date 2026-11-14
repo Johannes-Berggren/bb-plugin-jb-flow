@@ -89,3 +89,12 @@ test("the feed lists chosen kinds across workspaces, with what they saved", () =
     ["ws", "auto-merged", 900_000],
   ]);
 });
+
+test("open events of retired kinds can be cleared everywhere at once", () => {
+  const inbox = store();
+  inbox.add("ws", "thr_a", [{ kind: "needs-you", text: "a" }, { kind: "merge-refused", text: "b" }], 1);
+  inbox.add("other", "thr_b", [{ kind: "finished", text: "c" }], 1);
+  assert.equal(inbox.ackKinds(["needs-you", "finished"], 5), 2);
+  assert.deepEqual(inbox.open("ws").map((event) => event.kind), ["merge-refused"]);
+  assert.deepEqual(inbox.open("other"), []);
+});

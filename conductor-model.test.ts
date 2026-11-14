@@ -4,7 +4,8 @@ import {
   compactToday,
   conductorInstructions,
   failedRunIds,
-  handBackEvent,
+  briefFromThread,
+  NUDGE_REPLY,
   mergeFlag,
   relayText,
   wakeDue,
@@ -52,12 +53,56 @@ test("the first wake-up of a day compacts, but never the very first", () => {
   assert.equal(compactToday({ lastWakeAt: 1, compactedOn: "2026-03-03" }, morning).compact, false);
 });
 
-test("hand-backs become inbox events, except waiting on others", () => {
-  assert.equal(handBackEvent("waiting", "Waiting for Sam.", null), null);
-  assert.deepEqual(handBackEvent("asks", "…Which one?", null), { kind: "needs-you", text: "…Which one?" });
-  assert.equal(handBackEvent("ready", "", { next: "Merge after review", blocked: "" })!.text, "Next: Merge after review");
-  assert.equal(handBackEvent("none", "All done.", { next: "Nothing pending.", blocked: "Needs a key" })!.kind, "finished");
-  assert.equal(handBackEvent("none", "All done.", { next: "Nothing pending.", blocked: "Needs a key" })!.text, "Blocked: Needs a key · Next: Nothing pending.");
+const ask = (fields: Record<string, unknown> = {}) => ({
+  ball: "yours",
+  report: null,
+  latest: "",
+  move: { mode: "choice" as const, options: [] as Array<{ n: number; text: string; recommended: boolean }> },
+  pending: null,
+  ...fields,
+});
+
+test("a decision the worker's report asks for, with the option it recommends as the reply", () => {
+  const item = briefFromThread("thr_a", ask({
+    report: { next: "Waiting on your pick", blocked: "", done: "Both libraries are wired up behind a flag.", steps: { mode: "choice", question: "Which chart library should ship?", items: ["Recharts", "uPlot"], recommended: [2] } },
+    move: { mode: "choice", options: [{ n: 1, text: "Recharts: familiar", recommended: false }, { n: 2, text: "uPlot: smaller bundle", recommended: true }] },
+  }) as never)!;
+  assert.deepEqual(
+    { kind: item.kind, headline: item.headline, recommendation: item.recommendation, reply: item.reply, summary: item.summary },
+    { kind: "decision", headline: "Which chart library should ship?", recommendation: "2. uPlot: smaller bundle", reply: "2", summary: "Both libraries are wired up behind a flag." },
+  );
+});
+
+test("steps to run answer with go, or go with the recommended ones", () => {
+  const options = [{ n: 1, text: "Deploy", recommended: true }, { n: 2, text: "Announce", recommended: false }];
+  const some = briefFromThread("thr_a", ask({ ball: "go", report: { next: "Deploy, then announce", blocked: "", done: "" }, move: { mode: "go", options } }) as never)!;
+  assert.deepEqual([some.kind, some.reply, some.recommendation], ["ready", "go 1", "1. Deploy"]);
+  const all = briefFromThread("thr_a", ask({ ball: "go", move: { mode: "go", options: options.map((o) => ({ ...o, recommended: false })) } }) as never)!;
+  assert.deepEqual([all.reply, all.headline], ["go", "Ready for your go"]);
+});
+
+test("what it's blocked on, when it offers no options", () => {
+  const item = briefFromThread("thr_a", ask({ report: { next: "Run the import once the key is in", blocked: "Needs the **API key** for billing-api", done: "" } }) as never)!;
+  assert.deepEqual([item.kind, item.headline, item.recommendation, item.reply], ["blocked", "Needs the API key for billing-api", "Run the import once the key is in", undefined]);
+  // "Blocked: none" isn't a blocker.
+  const free = briefFromThread("thr_a", ask({ report: { next: "Tell me which date works", blocked: "none", done: "" } }) as never)!;
+  assert.equal(free.kind, "decision");
+});
+
+test("the question a reply ends with, when there's no report", () => {
+  const item = briefFromThread("thr_a", ask({ latest: "I checked both.\n\nShould I also update the docs?\n" }) as never)!;
+  assert.deepEqual([item.kind, item.headline], ["decision", "Should I also update the docs?"]);
+});
+
+test("a stalled worker gets a one-click nudge; waiting input and failures say so", () => {
+  const stalled = briefFromThread("thr_a", ask({ ball: "stalled" }) as never)!;
+  assert.equal(stalled.reply, NUDGE_REPLY);
+  assert.equal(briefFromThread("thr_a", ask({ ball: "blocked", pending: "input" }) as never)!.headline, "Waiting for your answer to a question or permission");
+  assert.equal(briefFromThread("thr_a", ask({ ball: "blocked", pending: "failed" }) as never)!.headline, "Its last turn failed");
+});
+
+test("threads that don't need you get no brief", () => {
+  for (const ball of ["running", "others", "watched", "recent", "cold", "pr"]) assert.equal(briefFromThread("thr_a", ask({ ball }) as never), null, ball);
 });
 
 test("instructions stay within bb's limit, cutting the user's text first", () => {
