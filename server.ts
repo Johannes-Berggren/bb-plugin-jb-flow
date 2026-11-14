@@ -26,7 +26,10 @@ import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
-import { AFTER_GREEN, type AfterGreen } from "./conductor-routing";
+import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
+import { createConductor, type Conductor } from "./conductor";
+import { createConductorStore } from "./conductor-store";
+import { migrate } from "./migrations";
 import { wakeDueSnoozes } from "./snooze-wake";
 import { quietFor, staleThreads } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
@@ -444,6 +447,26 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Hovering an inline code snippet in a chat message shows a button that copies it.",
       default: false,
     },
+    conductor: {
+      type: "boolean",
+      label: "Conductor",
+      description:
+        "One permanent agent thread per workspace that takes its threads' routine news (CI green, merged PRs, releases, finished turns), merges and cleans up on its own, wakes a worker only when it must act, and leaves you one briefing. Start one per workspace in Settings → Workspaces. Uses your agent's quota.",
+      default: false,
+    },
+    conductorBatchMinutes: {
+      type: "number",
+      label: "Conductor: minutes to collect news before waking it",
+      description: "A conductor is woken once the oldest unhandled news is this old, with everything that arrived meanwhile in one message. Fewer, larger batches use less quota.",
+      default: 10,
+    },
+    conductorPrompt: {
+      type: "string",
+      label: "Conductor: your instructions",
+      description: "Added to every conductor's instructions, e.g. which PRs it may merge on its own or when to leave a thread alone. Empty uses only the built-in role.",
+      experimental_multiline: true,
+      default: "",
+    },
     advancedConfig: {
       type: "string",
       label: "Advanced config (JSON)",
@@ -762,6 +785,8 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function archive(threadIds: string[]) {
     const failed: string[] = [];
+    // A conductor is permanent; archiving one in bulk would only bring it straight back.
+    threadIds = threadIds.filter((threadId) => !conductor?.isConductor(threadId));
     for (const threadId of threadIds) {
       try {
         await bb.sdk.threads.archive({ threadId });
@@ -790,8 +815,22 @@ export default async function plugin(bb: BbPluginApi) {
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
-  const watchers = createWatchers(bb, localConfig.releaseWatch, async (threadId) => (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue, changed, async (threadId) =>
-    ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
+  // Created further down, once the stores it reads exist; until then threads hear their own news.
+  let conductor: Conductor | null = null;
+  const conductorSink: ConductorSink = {
+    workspaceFor: async (threadId) => (conductor ? conductor.sink.workspaceFor(threadId) : null),
+    deliver: async (threadId, workspaceId, events) => {
+      if (!conductor) throw new Error("The conductor isn't loaded yet.");
+      await conductor.sink.deliver(threadId, workspaceId, events);
+    },
+  };
+  const watchers = createWatchers(
+    bb,
+    localConfig.releaseWatch,
+    async (threadId) => (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
+    changed,
+    async (threadId) => ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
+    conductorSink,
   );
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
@@ -1140,6 +1179,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const digest = await buildDigest();
     bb.log.info(`digest: ${digest.items.length} stale thread(s)`);
     await pruneThreadData().catch((error) => bb.log.warn(`prune: ${String(error)}`));
+    try {
+      conductor?.prune();
+    } catch (error) {
+      bb.log.warn(`conductor prune: ${String(error)}`);
+    }
   });
 
   // Tags, "keep" marks and dev-server runs are per thread; drop them once the
@@ -1288,13 +1332,51 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       }
     },
   });
-  bb.agents.configure(() => ({
-    tools: ["snooze_thread", "wait_for_ci", "pr_status", ...(agentSettings.nowQueue ? ["set_thread_due"] : [])],
-    skills: [],
-    ...(agentSettings.autoStatus && agentSettings.threadMonitor
-      ? { instructions: handBackInstructions(agentSettings.statusPrompt, agentSettings.nowQueue) }
-      : {}),
-  }));
+  migrate(bb);
+  conductor = await createConductor(bb, {
+    store: createConductorStore(() => bb.storage.database()),
+    options: () => ({
+      enabled: agentSettings.conductor === true,
+      batchMinutes: Number(agentSettings.conductorBatchMinutes) || 0,
+      prompt: agentSettings.conductorPrompt ?? "",
+    }),
+    workspaces: () => workspaces.read(),
+    assignWorkspace: (threadId, workspaceId) => workspaces.assign(threadId, workspaceId, false),
+    listThreads: () => listThreadsCached(),
+    flow: async () => {
+      const [waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due] = await Promise.all([
+        awaiting.all(),
+        awaiting.promised(),
+        awaiting.waitingOthers(),
+        awaiting.readyToGo(),
+        watchingByThread(),
+        prTracker.byThread(),
+        nowStore.all(),
+        nowStore.dueAll(),
+      ]);
+      return { awaiting: waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due };
+    },
+    snoozedSection: () => findSnoozedSection(),
+    threadStatus: (threadId) => threadStatus.get(threadId, false),
+    prsByThread: () => prTracker.byThread(),
+    snooze: (threadId, when, note) => snooze(threadId, when, note),
+    unsnooze: (threadId) => unsnooze(threadId),
+    archive: (threadIds) => archive(threadIds),
+    focus: (threadId, focused) => nowStore.set(threadId, focused),
+    changed,
+  });
+  bb.agents.configure((context) => {
+    // A conductor gets its own tools and role; every other thread, the usual ones.
+    const asConductor = conductor?.configureFor(context);
+    if (asConductor) return asConductor;
+    return {
+      tools: ["snooze_thread", "wait_for_ci", "pr_status", ...(agentSettings.nowQueue ? ["set_thread_due"] : [])],
+      skills: [],
+      ...(agentSettings.autoStatus && agentSettings.threadMonitor
+        ? { instructions: handBackInstructions(agentSettings.statusPrompt, agentSettings.nowQueue) }
+        : {}),
+    };
+  });
 
   // --- CLI ------------------------------------------------------------------
 
@@ -1313,6 +1395,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     "  bb jb-flow next                                      Open the next thread that needs you",
     "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]",
     "  bb jb-flow watches [--json]                          Auto-continues, release waiters, CI watches",
+    "  bb jb-flow conductor [status|start|stop|wake|inbox|briefing|log] [<workspace-id>] [--json]",
     "  bb jb-flow prs [--self|<thread-id>] [--json]         PRs a thread created (all repos, stack order)",
     "  bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]",
     "  bb jb-flow release-wait [--self|<thread-id>]         Wake this thread on the next release",
@@ -1506,6 +1589,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         name: "digest",
         summary: "List stale unsectioned threads",
         usage: "bb jb-flow digest [--refresh] [--json]",
+      },
+      {
+        name: "conductor",
+        summary: "Workspace conductors: status, start, stop, wake, inbox, briefing, log",
+        usage: "bb jb-flow conductor [status|start <workspace-id> [--project <id>] [--provider <id>] [--model <id>]|stop <workspace-id>|wake <workspace-id>|inbox <workspace-id>|briefing <workspace-id>|log <workspace-id>] [--json]",
       },
     ],
     async run(argv, ctx) {
@@ -1720,6 +1808,61 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             if (!match || threadId === undefined) break;
             await prTracker.link(threadId, { repo: match[1]!, number: Number(match[2]) }, remove);
             return { exitCode: 0, stdout: `${remove ? "Unlinked" : "Linked"} ${match[1]}#${match[2]}.` };
+          }
+          case "conductor": {
+            if (!conductor) throw new Error("The conductor isn't loaded.");
+            const [action = "status", workspaceId] = args;
+            const flag = (name: string) => {
+              const index = args.indexOf(name);
+              return index === -1 ? undefined : args[index + 1];
+            };
+            const out = (value: unknown, text: string) => ({ exitCode: 0, stdout: json ? JSON.stringify(value) : text });
+            if (action === "status") {
+              const all = conductor.status();
+              return out(
+                all,
+                all.length === 0
+                  ? "No conductors. Turn on Conductor in the settings, then: bb jb-flow conductor start <workspace-id>"
+                  : all
+                      .map((entry) => `${entry.workspaceId}  ${entry.name}  ${entry.active ? "on" : "off"}  thread ${entry.threadId ?? "-"}  inbox ${entry.open} open, ${entry.undelivered} waiting`)
+                      .join("\n"),
+              );
+            }
+            if (!workspaceId) throw new Error(`Use conductor ${action} <workspace-id>; bb jb-flow workspaces lists them.`);
+            switch (action) {
+              case "start": {
+                const result = await conductor.start(workspaceId, { projectId: flag("--project"), providerId: flag("--provider"), model: flag("--model") });
+                return out(result, `Conductor for ${workspaceId}: ${result.threadId}`);
+              }
+              case "stop":
+                return out({ stopped: await conductor.stop(workspaceId) }, `Stopped the conductor for ${workspaceId}; its thread stays.`);
+              case "wake": {
+                const result = await conductor.wake(workspaceId, true);
+                return out({ result }, result);
+              }
+              case "inbox": {
+                const events = conductor.inbox(workspaceId);
+                return out(events, events.length === 0 ? "Inbox empty." : events.map((event) => `#${event.id} [${event.kind}] ${event.threadId} ${event.deliveredAt ? "sent" : "waiting"} · ${event.text}`).join("\n"));
+              }
+              case "briefing": {
+                const briefing = await conductor.briefing(workspaceId);
+                return out(
+                  briefing,
+                  briefing === null
+                    ? "No briefing yet."
+                    : [
+                        `Briefing from ${formatWhen(briefing.at)}:`,
+                        ...briefing.items.map((item, index) => `${index + 1}. [${item.kind}] ${item.threadId} · ${item.summary}${item.recommendation ? ` → ${item.recommendation}` : ""}`),
+                        ...briefing.handled.map((entry) => `✓ ${entry.what}`),
+                      ].join("\n"),
+                );
+              }
+              case "log": {
+                const entries = conductor.log(workspaceId, 50);
+                return out(entries, entries.map((entry) => `${formatWhen(entry.at)}  ${entry.kind.padEnd(13)} ${entry.threadId ?? ""}  ${entry.text}`).join("\n") || "Nothing logged.");
+              }
+            }
+            throw new Error("Use conductor status|start|stop|wake|inbox|briefing|log.");
           }
           case "watches": {
             const result = await watchers.status();

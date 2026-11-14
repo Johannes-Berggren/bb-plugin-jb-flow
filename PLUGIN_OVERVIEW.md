@@ -19,6 +19,7 @@ Each can be switched in the plugin settings:
 - On by default: the restyled interface, the thread monitor, status reports at hand-back, and expanded, resizable plan reviews.
 - Off by default: "continue" after a Claude Code usage limit resets, swiping between workspaces, and copy buttons on inline code.
 - Wake threads waiting for a release once it ships (per-project JSON config).
+- Off by default: a **Conductor** per workspace that merges and archives routine PR work itself and briefs you on the rest (uses your agent's quota).
 
 ## Requirements
 
