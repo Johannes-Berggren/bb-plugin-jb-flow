@@ -9,6 +9,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { anySignal, ghGraphql, type GhError } from "./gh.ts";
 import { listLiveThreads } from "./thread-list.ts";
+import { migrate } from "./migrations.ts";
 
 export const prAttention = z.enum([
   "merged",
@@ -193,10 +194,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
   // PR data lives in the plugin's own SQLite database: kv values are capped at
   // 256KB, and a busy user links hundreds of PRs a month.
   const db = () => bb.storage.database();
-  bb.storage.migrate(db(), [
-    "CREATE TABLE pr_status (key TEXT PRIMARY KEY, json TEXT NOT NULL)",
-    "CREATE TABLE thread_prs (thread_id TEXT PRIMARY KEY, json TEXT NOT NULL)",
-  ]);
+  migrate(bb);
   function readTable<T>(table: "pr_status" | "thread_prs", column: "key" | "thread_id"): Record<string, T> {
     const rows = db().prepare(`SELECT ${column} AS id, json FROM ${table}`).all() as Array<{ id: string; json: string }>;
     return Object.fromEntries(rows.map((row) => [row.id, JSON.parse(row.json) as T]));

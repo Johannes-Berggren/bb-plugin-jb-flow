@@ -72,6 +72,12 @@
     "catch-up-model.ts",
     "catch-up-model.test.ts",
     "catch-up.tsx",
-    "catch-up.ui.test.tsx"
+    "catch-up.ui.test.tsx",
+    "migrations.ts",
+    "conductor-routing.ts",
+    "conductor-routing.test.ts",
+    "conductor-store.ts",
+    "conductor-store.test.ts",
+    "ci-watch.test.ts"
   ]
 }

@@ -13,6 +13,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { applyCiChanges, isGoneError, isThreadGone, MAX_SEND_FAILURES, runCiCycle, visibleChange, type CiWatch, type PrState } from "./ci-watch";
+import { noteEvent, type AfterGreen, type ConductorSink } from "./conductor-routing";
 import { gh as runGh, GH_MISSING } from "./gh";
 import { parseLimitHit } from "./limits";
 import { RELEASE_WAIT, releaseWaitEnded, releaseWaitStated } from "./release-wait";
@@ -81,6 +82,8 @@ export function createWatchers(
   changed: () => void,
   /** The PRs a thread created, for cross-repo release waits. */
   threadPrs: (threadId: string) => Promise<ThreadPrRef[]> = async () => [],
+  /** Workspace conductors that take routine news instead of the worker; null for none. */
+  conductor: ConductorSink | null = null,
 ) {
   const kv = bb.storage.kv;
   // Aborted on dispose: a running gh is killed, and a cycle stops before its
@@ -110,6 +113,16 @@ export function createWatchers(
       input: [{ type: "text", text, mentions: [] }],
       ...(sendAt === undefined ? {} : { sendAt }),
     });
+  }
+
+  /**
+   * Routine news (a release shipped): to the thread's conductor when its workspace
+   * has one, else to the thread itself. A failed lookup tells the thread, as before.
+   */
+  async function tellOrRoute(threadId: string, kind: string, text: string) {
+    const workspaceId = conductor ? await conductor.workspaceFor(threadId).catch(() => null) : null;
+    if (workspaceId === null) return tell(threadId, text);
+    await conductor!.deliver(threadId, workspaceId, [{ kind, text }]);
   }
 
   async function projectFor(thread: Pick<Thread, "projectId">) {
@@ -224,7 +237,7 @@ export function createWatchers(
       const since = Math.min(Date.now(), thread.updatedAt);
       const latest = await latestRelease(name).catch(() => null);
       if (latest && latest.at > since + 60_000 && Date.now() - latest.at > 30 * 60_000) {
-        const told = await tell(thread.id, releasedMessage(name, latest, [])).then(
+        const told = await tellOrRoute(thread.id, "release", releasedMessage(name, latest, [])).then(
           () => true,
           (error) => {
             bb.log.warn(`release catch-up ${thread.id}: ${String(error)}`);
@@ -369,7 +382,7 @@ export function createWatchers(
               .map((run) => `${run.name} (${run.url})`)
               .join(", ")}. Check whether that affects you before continuing.`;
       const delivery = await deliverToWaiters(targets, {
-        send: (threadId) => tell(threadId, message),
+        send: (threadId) => tellOrRoute(threadId, "release", message),
         threadGone: (threadId) => isThreadGone(() => bb.sdk.threads.get({ threadId })),
         settle: async (waiterId) => {
           await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
@@ -403,7 +416,7 @@ export function createWatchers(
 
   async function watchCi(
     threadId: string,
-    options: { pr?: number; watchFor?: CiWatch["watchFor"]; repo?: string },
+    options: { pr?: number; watchFor?: CiWatch["watchFor"]; repo?: string; afterGreen?: AfterGreen },
   ) {
     const thread = await bb.sdk.threads.get({ threadId });
     const slug = options.repo ?? (await projectFor(thread)).slug;
@@ -432,7 +445,15 @@ export function createWatchers(
       );
     }
     const key = `${threadId}:${slug}#${pr}`;
-    const watch: CiWatch = { threadId, repo: slug, pr, watchFor: options.watchFor ?? "both", since: Date.now(), headSha: null };
+    const watch: CiWatch = {
+      threadId,
+      repo: slug,
+      pr,
+      watchFor: options.watchFor ?? "both",
+      since: Date.now(),
+      headSha: null,
+      ...(options.afterGreen ? { afterGreen: options.afterGreen } : {}),
+    };
     await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
       all[key] = watch;
     });
@@ -473,6 +494,12 @@ export function createWatchers(
       me: () => (me ??= gh(["api", "user", "-q", ".login"]).then((login) => login.trim(), () => "")),
       failedLog,
       send: (threadId, text) => tell(threadId, text),
+      ...(conductor
+        ? {
+            conductorFor: (threadId: string) => conductor.workspaceFor(threadId),
+            toConductor: (threadId: string, workspaceId: string, notes) => conductor.deliver(threadId, workspaceId, notes.map(noteEvent)),
+          }
+        : {}),
       threadGone: (threadId) => isThreadGone(() => bb.sdk.threads.get({ threadId })),
       warn: (message) => bb.log.warn(message),
     });
