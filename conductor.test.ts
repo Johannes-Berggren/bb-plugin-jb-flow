@@ -71,6 +71,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
   const read: string[] = [];
   const ghCalls: string[][] = [];
   const archived: string[] = [];
+  const threadArchives: string[] = [];
   let spawnCount = 0;
   const bb = {
     pluginId: "jb-flow",
@@ -112,6 +113,10 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
         send: async ({ threadId, input, mode, compactFirst }: { threadId: string; input: Array<{ text: string }>; mode: string; compactFirst?: boolean }) => {
           sent.push({ threadId, text: input[0]!.text, mode, ...(compactFirst ? { compactFirst } : {}) });
           return { delivery: "sent" };
+        },
+        archive: async ({ threadId }: { threadId: string }) => {
+          threadArchives.push(threadId);
+          threads.get(threadId)!.archivedAt = T0;
         },
         unarchive: async ({ threadId }: { threadId: string }) => {
           unarchived.push(threadId);
@@ -178,6 +183,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
     read,
     ghCalls,
     archived,
+    threadArchives,
     settings,
     fire,
     call,
@@ -511,4 +517,22 @@ test("the conductor's own item for a thread wins over the automatic one", async 
   await call("post_briefing", { items: [{ threadId: "thr_a", kind: "blocked", headline: "Merge refused: needs a review", summary: "GitHub wants an approval." }] }, threadId);
   const [brief] = await conductor.briefs();
   assert.equal(brief!.item.headline, "Merge refused: needs a review");
+});
+
+test("restarting gives a conductor a fresh thread; the old one is archived and stays archived", async () => {
+  const { conductor, fire, threads, spawns, unarchived, call, threadArchives } = await setup({ personal: true });
+  const { threadId: first } = await conductor.start("ws");
+  await call("conductor_memory", { set: "Never merge on Fridays." }, first);
+  const { previous, threadId: second } = await conductor.restart("ws");
+  assert.equal(previous, first);
+  assert.notEqual(second, first);
+  assert.equal(spawns.length, 2);
+  assert.equal(spawns[1]!.projectId, "proj_personal");
+  assert.deepEqual(threadArchives, [first]);
+  // bb reports the archive; the old thread is no longer a conductor, so it isn't brought back.
+  await fire("thread.archived", { thread: threads.get(first) });
+  assert.deepEqual(unarchived, []);
+  const base = { pluginMetadata: {}, origin: { kind: null, pluginId: null } };
+  assert.equal(conductor.configureFor({ ...base, thread: { id: first, title: null, parentThreadId: null, sourceThreadId: null } }), null);
+  assert.match(conductor.configureFor({ ...base, thread: { id: second, title: null, parentThreadId: null, sourceThreadId: null } })!.instructions, /Never merge on Fridays/);
 });

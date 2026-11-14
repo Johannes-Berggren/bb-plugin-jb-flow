@@ -355,6 +355,31 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     return { workspaceId, threadId };
   }
 
+  /**
+   * A fresh thread for a workspace's conductor, in bb's Personal project when it exists. The old
+   * thread is archived first (no longer protected), so bb can clean up its folder or checkout.
+   * Its standing preferences and briefing carry over; only the conversation starts anew.
+   */
+  async function restart(workspaceId: string) {
+    if (!deps.options().enabled) throw new Error("Turn on Conductor in the JB Flow settings first.");
+    const record = records[workspaceId];
+    if (!record) throw new Error(`Workspace ${workspaceId} has no conductor.`);
+    const previous = record.threadId;
+    if (previous) byThread.delete(previous);
+    const fresh: ConductorRecord = { ...record, enabled: true, threadId: null };
+    delete fresh.lastWakeAt;
+    delete fresh.compactedOn;
+    records[workspaceId] = fresh;
+    await save();
+    if (previous) {
+      await bb.sdk.threads.archive({ threadId: previous }).catch((error) => bb.log.warn(`conductor restart archive: ${String(error)}`));
+      log(workspaceId, "restarted", previous, "Archived the conductor's old thread to start a fresh one.");
+    }
+    const threadId = await spawn(workspaceId);
+    deps.changed();
+    return { workspaceId, previous, threadId };
+  }
+
   /** Stops routing and waking. The thread stays, so starting again carries on where it left off. */
   async function stop(workspaceId: string) {
     const record = records[workspaceId];
@@ -993,6 +1018,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     configureFor,
     isConductor: (threadId: string) => byThread.has(threadId),
     start,
+    restart,
     stop,
     wake,
     tick,

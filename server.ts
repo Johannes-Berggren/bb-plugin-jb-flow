@@ -1707,7 +1707,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       {
         name: "conductor",
         summary: "Workspace conductors: status, start, stop, wake, inbox, briefing, log",
-        usage: "bb jb-flow conductor [status|start <workspace-id> [--project <id>] [--provider <id>] [--model <id>]|stop <workspace-id>|wake <workspace-id>|inbox <workspace-id>|briefing <workspace-id>|log <workspace-id>] [--json]",
+        usage: "bb jb-flow conductor [status|start <workspace-id> [--project <id>] [--provider <id>] [--model <id>]|restart <workspace-id>|stop <workspace-id>|wake <workspace-id>|inbox <workspace-id>|briefing <workspace-id>|log <workspace-id>] [--json]",
       },
     ],
     async run(argv, ctx) {
@@ -1948,6 +1948,10 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 const result = await conductor.start(workspaceId, { projectId: flag("--project"), providerId: flag("--provider"), model: flag("--model") });
                 return out(result, `Conductor for ${workspaceId}: ${result.threadId}`);
               }
+              case "restart": {
+                const result = await conductor.restart(workspaceId);
+                return out(result, `Conductor for ${workspaceId}: ${result.threadId}${result.previous ? ` (archived ${result.previous})` : ""}`);
+              }
               case "stop":
                 return out({ stopped: await conductor.stop(workspaceId) }, `Stopped the conductor for ${workspaceId}; its thread stays.`);
               case "wake": {
@@ -1976,7 +1980,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 return out(entries, entries.map((entry) => `${formatWhen(entry.at)}  ${entry.kind.padEnd(13)} ${entry.threadId ?? ""}  ${entry.text}`).join("\n") || "Nothing logged.");
               }
             }
-            throw new Error("Use conductor status|start|stop|wake|inbox|briefing|log.");
+            throw new Error("Use conductor status|start|restart|stop|wake|inbox|briefing|log.");
           }
           case "watches": {
             const result = await watchers.status();
