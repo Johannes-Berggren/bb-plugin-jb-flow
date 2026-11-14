@@ -28,6 +28,7 @@ import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when
 import { isGoneError } from "./ci-watch";
 import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
+import { briefingContextSchema, briefingItemSchema, briefingSchema } from "./conductor-model";
 import { createConductorStore } from "./conductor-store";
 import { migrate } from "./migrations";
 import { wakeDueSnoozes } from "./snooze-wake";
@@ -141,7 +142,103 @@ const stateSchema = z.object({
 });
 export type FlowState = z.infer<typeof stateSchema>;
 
+const conductorStatusSchema = z.object({
+  workspaceId: z.string(),
+  name: z.string(),
+  enabled: z.boolean(),
+  active: z.boolean(),
+  threadId: z.string().nullable(),
+  open: z.number(),
+  undelivered: z.number(),
+  needsYou: z.number(),
+  lastWakeAt: z.number().optional(),
+  projectId: z.string().optional(),
+  providerId: z.string().optional(),
+  model: z.string().optional(),
+});
+export type ConductorStatus = z.infer<typeof conductorStatusSchema>;
+const conductorPageSchema = z.object({
+  workspaceId: z.string(),
+  contexts: z.record(z.string(), briefingContextSchema),
+  threadId: z.string().nullable(),
+  threadStatus: z.string().nullable(),
+  active: z.boolean(),
+  briefing: briefingSchema.nullable(),
+  resolved: z.array(z.string()),
+  log: z.array(z.object({ id: z.number(), at: z.number(), kind: z.string(), threadId: z.string().nullable(), text: z.string() })),
+  open: z.number(),
+  lastWakeAt: z.number().nullable(),
+});
+export type ConductorPage = z.infer<typeof conductorPageSchema>;
+const fleetRowSchema = z.object({
+  threadId: z.string(),
+  title: z.string(),
+  projectId: z.string(),
+  state: z.string(),
+  reason: z.string(),
+  needsYou: z.boolean(),
+  unread: z.boolean(),
+  prs: z.array(z.object({ repo: z.string(), number: z.number(), attention: z.string(), url: z.string() })),
+  next: z.string().nullable(),
+  blocked: z.string().nullable(),
+});
+export type ConductorFleetRow = z.infer<typeof fleetRowSchema>;
+const conductorBriefSchema = z.object({ workspaceId: z.string(), threadId: z.string(), at: z.number(), item: briefingItemSchema });
+export type ConductorBrief = z.infer<typeof conductorBriefSchema>;
+const conductorFeedSchema = z.object({
+  since: z.number(),
+  merged: z.number(),
+  archived: z.number(),
+  forwarded: z.number(),
+  refused: z.number(),
+  wakeupsSpared: z.number(),
+  tokensSpared: z.number(),
+  entries: z.array(
+    z.object({
+      id: z.number(),
+      at: z.number(),
+      kind: z.string(),
+      workspaceId: z.string(),
+      workspace: z.string(),
+      threadId: z.string().nullable(),
+      title: z.string(),
+      text: z.string(),
+      savedTokens: z.number().nullable(),
+    }),
+  ),
+});
+export type ConductorFeed = z.infer<typeof conductorFeedSchema>;
+
 export const rpcContract = defineRpcContract({
+  conductor_list: {
+    input: z.null(),
+    output: z.object({ enabled: z.boolean(), conductors: z.array(conductorStatusSchema) }),
+  },
+  conductor_page: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: conductorPageSchema },
+  conductor_briefs: { input: z.null(), output: z.object({ briefs: z.array(conductorBriefSchema) }) },
+  conductor_feed: { input: z.object({ since: z.number() }), output: conductorFeedSchema },
+  conductor_fleet: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.array(fleetRowSchema) },
+  conductor_card: {
+    input: z.object({
+      workspaceId: z.string().min(1).max(80),
+      threadId: z.string().min(1).max(200),
+      action: z.enum(["go", "reply", "snooze", "dismiss"]),
+      text: z.string().max(20_000).optional(),
+      until: z.string().max(40).optional(),
+    }),
+    output: z.object({ done: z.string() }),
+  },
+  conductor_start: {
+    input: z.object({
+      workspaceId: z.string().min(1).max(80),
+      projectId: z.string().max(200).optional(),
+      providerId: z.string().max(200).optional(),
+      model: z.string().max(200).optional(),
+    }),
+    output: z.object({ threadId: z.string() }),
+  },
+  conductor_stop: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.object({ ok: z.boolean() }) },
+  conductor_wake: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.object({ result: z.string() }) },
   workspaces_get: { input: z.null(), output: workspaceStateSchema },
   workspace_save: { input: workspaceSchema.extend({ id: z.string().nullable() }), output: workspaceSchema },
   workspace_remove: { input: z.object({ id: z.string() }), output: z.object({ ok: z.boolean() }) },
@@ -451,7 +548,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Conductor",
       description:
-        "One permanent agent thread per workspace that takes its threads' routine news (CI green, merged PRs, releases, finished turns), merges and cleans up on its own, wakes a worker only when it must act, and leaves you one briefing. Start one per workspace in Settings → Workspaces. Uses your agent's quota.",
+        "Routine PR news for a workspace's threads is handled for them: green PRs a worker said it would merge are merged, finished threads archived, and what each thread needs from you is briefed in Catch up and Now from its own status report. A permanent agent thread per workspace takes the judgement calls. Start one per workspace under Settings → Conductors or on the Conductor page. The agent uses your quota, only when woken.",
       default: false,
     },
     conductorBatchMinutes: {
@@ -817,6 +914,10 @@ export default async function plugin(bb: BbPluginApi) {
   const prTracker = createPrTracker(bb, changed);
   // Created further down, once the stores it reads exist; until then threads hear their own news.
   let conductor: Conductor | null = null;
+  const loadedConductor = () => {
+    if (!conductor) throw new Error("The conductor is still loading; try again in a moment.");
+    return conductor;
+  };
   const conductorSink: ConductorSink = {
     workspaceFor: async (threadId) => (conductor ? conductor.sink.workspaceFor(threadId) : null),
     deliver: async (threadId, workspaceId, events) => {
@@ -1115,6 +1216,19 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
       return nextMove(output.output ?? "");
     },
+    conductor_list: async () => ({ enabled: (await settings.get()).conductor === true, conductors: await loadedConductor().status() }),
+    conductor_page: ({ workspaceId }) => loadedConductor().page(workspaceId),
+    conductor_briefs: async () => ({ briefs: conductor ? await conductor.briefs() : [] }),
+    conductor_feed: ({ since }) => loadedConductor().feed(since),
+    conductor_fleet: ({ workspaceId }) => loadedConductor().fleet(workspaceId),
+    conductor_card: async ({ workspaceId, threadId, action, text, until }) => ({
+      done: await loadedConductor().cardAction(workspaceId, threadId, action, { text, until }),
+    }),
+    conductor_start: async ({ workspaceId, projectId, providerId, model }) => ({
+      threadId: (await loadedConductor().start(workspaceId, { projectId, providerId, model })).threadId,
+    }),
+    conductor_stop: async ({ workspaceId }) => ({ ok: await loadedConductor().stop(workspaceId) }),
+    conductor_wake: async ({ workspaceId }) => ({ result: await loadedConductor().wake(workspaceId, true) }),
     thread_reply: async ({ threadId, text }) => {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
@@ -1593,7 +1707,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       {
         name: "conductor",
         summary: "Workspace conductors: status, start, stop, wake, inbox, briefing, log",
-        usage: "bb jb-flow conductor [status|start <workspace-id> [--project <id>] [--provider <id>] [--model <id>]|stop <workspace-id>|wake <workspace-id>|inbox <workspace-id>|briefing <workspace-id>|log <workspace-id>] [--json]",
+        usage: "bb jb-flow conductor [status|start <workspace-id> [--project <id>] [--provider <id>] [--model <id>]|restart <workspace-id>|stop <workspace-id>|wake <workspace-id>|inbox <workspace-id>|briefing <workspace-id>|log <workspace-id>] [--json]",
       },
     ],
     async run(argv, ctx) {
@@ -1818,7 +1932,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             };
             const out = (value: unknown, text: string) => ({ exitCode: 0, stdout: json ? JSON.stringify(value) : text });
             if (action === "status") {
-              const all = conductor.status();
+              const all = await conductor.status();
               return out(
                 all,
                 all.length === 0
@@ -1833,6 +1947,10 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               case "start": {
                 const result = await conductor.start(workspaceId, { projectId: flag("--project"), providerId: flag("--provider"), model: flag("--model") });
                 return out(result, `Conductor for ${workspaceId}: ${result.threadId}`);
+              }
+              case "restart": {
+                const result = await conductor.restart(workspaceId);
+                return out(result, `Conductor for ${workspaceId}: ${result.threadId}${result.previous ? ` (archived ${result.previous})` : ""}`);
               }
               case "stop":
                 return out({ stopped: await conductor.stop(workspaceId) }, `Stopped the conductor for ${workspaceId}; its thread stays.`);
@@ -1862,7 +1980,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 return out(entries, entries.map((entry) => `${formatWhen(entry.at)}  ${entry.kind.padEnd(13)} ${entry.threadId ?? ""}  ${entry.text}`).join("\n") || "Nothing logged.");
               }
             }
-            throw new Error("Use conductor status|start|stop|wake|inbox|briefing|log.");
+            throw new Error("Use conductor status|start|restart|stop|wake|inbox|briefing|log.");
           }
           case "watches": {
             const result = await watchers.status();

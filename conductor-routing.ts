@@ -32,6 +32,8 @@ export type CiNote = {
   repo: string;
   pr: number;
   afterGreen?: AfterGreen;
+  /** The commit the news is about (checks), so a merge can't take a newer, unchecked push. */
+  headSha?: string;
 };
 
 export type Route = "worker" | "conductor";
@@ -76,6 +78,11 @@ export function noteEvent(note: CiNote): ConductorInboxEvent {
   return {
     kind: note.kind,
     text: note.text,
-    meta: { repo: note.repo, pr: note.pr, ...(note.afterGreen ? { afterGreen: note.afterGreen } : {}) },
+    meta: {
+      repo: note.repo,
+      pr: note.pr,
+      ...(note.afterGreen ? { afterGreen: note.afterGreen } : {}),
+      ...(note.headSha ? { headSha: note.headSha } : {}),
+    },
   };
 }

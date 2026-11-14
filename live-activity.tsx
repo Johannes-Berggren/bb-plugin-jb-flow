@@ -18,6 +18,7 @@ import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
 import { statusPrompt } from "./status-prompt";
+import { useConductorThreadIds } from "./conductor-client";
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -1096,8 +1097,10 @@ export function LiveActivityBanner({
     thread?.status === "active" ||
     thread?.status === "starting" ||
     thread?.status === "stopping";
+  // A conductor's conversation has its own page and status; the monitor stays out of it.
+  const conductors = useConductorThreadIds();
   const enabled =
-    !!threadId && values?.threadMonitor === true && !thread?.isArchived;
+    !!threadId && values?.threadMonitor === true && !thread?.isArchived && !conductors.has(threadId);
   const wakeups = useWakeups(threadId ?? "", enabled);
   const { data, updatedAt } = useActivity(threadId ?? "", enabled);
   const monitor = useThreadStatus(threadId ?? "", enabled, running);
