@@ -151,6 +151,19 @@ const clean = (text: string) =>
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 const NOT_BLOCKED = /^(?:none|nothing|no|n\/a|-)\.?$/i;
 
+/** The last real sentence of a reply, skipping dates, links-only lines and sign-offs. */
+function lastSentence(text: string): string | null {
+  const lines = text
+    .trim()
+    .split("\n")
+    .map(clean)
+    .filter((line) => line.length > 12 && !/^\d{4}-\d{2}-\d{2}|^_?\d{1,2}[./]\d{1,2}|^(?:goal|done|next|blocked|stack|progress)\b/i.test(line));
+  const last = lines.at(-1);
+  if (!last) return null;
+  const sentences = last.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.length > 12);
+  return sentences.at(-1) ?? last;
+}
+
 /** The last line of a reply that asks something. */
 function questionIn(text: string): string | null {
   const lines = text.trim().split("\n").slice(-20).reverse();
@@ -221,7 +234,7 @@ export function briefFromThread(threadId: string, ask: ThreadAsk): BriefingItem 
     const headline = clip(blocked, 120);
     return { threadId, kind: "blocked", headline, summary: summaryOf(headline), ...(report?.next ? { recommendation: clip(clean(report.next), 300) } : {}) };
   }
-  const headline = clip(questionIn(ask.latest) || clean(report?.next || "") || "It handed the next step to you", 120);
+  const headline = clip(questionIn(ask.latest) || clean(report?.next || "") || lastSentence(ask.latest) || "It handed the next step to you", 120);
   return { threadId, kind: "decision", headline, summary: summaryOf(headline) };
 }
 

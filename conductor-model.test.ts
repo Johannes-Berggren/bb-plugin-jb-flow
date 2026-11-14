@@ -94,6 +94,11 @@ test("the question a reply ends with, when there's no report", () => {
   assert.deepEqual([item.kind, item.headline], ["decision", "Should I also update the docs?"]);
 });
 
+test("with nothing else to go on, the reply's last sentence", () => {
+  const item = briefFromThread("thr_a", ask({ latest: "Pushed the fix.\n\nThe migration needs your call on the old rows before it runs." }) as never)!;
+  assert.equal(item.headline, "The migration needs your call on the old rows before it runs.");
+});
+
 test("a stalled worker gets a one-click nudge; waiting input and failures say so", () => {
   const stalled = briefFromThread("thr_a", ask({ ball: "stalled" }) as never)!;
   assert.equal(stalled.reply, NUDGE_REPLY);
