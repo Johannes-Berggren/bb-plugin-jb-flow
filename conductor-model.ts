@@ -238,9 +238,9 @@ export function briefFromThread(threadId: string, ask: ThreadAsk): BriefingItem 
   return { threadId, kind: "decision", headline, summary: summaryOf(headline) };
 }
 
-/** What the conductor's first message says. */
+/** What the conductor's first message says: a cheap start, since briefs come from the workers' own reports. */
 export function bootPrompt(workspaceName: string): string {
-  return `You are now the conductor for the "${oneLine(workspaceName, 60)}" workspace. Call fleet_status to see its threads, then post your first briefing with post_briefing.`;
+  return `You are now the conductor for the "${oneLine(workspaceName, 60)}" workspace. The user's briefs come from the workers' own status reports; you'll be woken only for judgement calls. Reply "Ready." and nothing else; don't call any tools now.`;
 }
 
 /** A conductor's message to a worker, so the worker carries on instead of answering back. */
