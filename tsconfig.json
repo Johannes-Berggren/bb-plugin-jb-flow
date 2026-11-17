@@ -35,6 +35,7 @@
     "repo-panel.tsx",
     "when.ts",
     "server.ts",
+    "rpc-contract.ts",
     "local-config.ts",
     "changes.ts",
     "thread-cache.ts",
