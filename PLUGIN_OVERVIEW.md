@@ -1,6 +1,6 @@
 ## What you get
 
-- **Triage thread list.** A replacement sidebar. A ranked *Now* group on top holds what's blocked on you, threads you mark as Focus (`f`) and deadlines coming up (`d`, or set by agents). Below are numbered lanes (Priority, Active, Waiting for others, Pick up later, Low priority). Row keys: `1`–`5` lane, `s` snooze, `t` tag, `e` archive, `j`/`k` move.
+- **Triage thread list.** A replacement sidebar. A ranked *Now* group on top holds what's blocked on you, threads you mark as Focus (`f`) and deadlines coming up (`d`, or set by agents). Below are numbered lanes (Priority, Active, Waiting for others, Pick up later, Low priority). Row keys: `1`–`5` lane, `s` snooze, `t` tag, `e` archive (not pinned threads), `j`/`k` move.
 - **Status reports.** Agents end each reply that hands a thread back to you with a short report: goal, done, next and blocked, then the thread's PRs, progress bars, architecture changes and next steps you start with **go**. The thread monitor keeps it in view while the thread is idle, and the Triage list reads it. Use your own format, or turn hand-back reports off and press **Update status**.
 - **Decision buttons.** When an agent ends with numbered options, they appear as one-click replies above the composer. Tick several to send them together.
 - **Workspaces.** Workspace tabs across the top group projects, threads, sections and plugin navigation, optionally by project; All and No workspace keep everything reachable. They change what navigation shows, not what plugins can access.
