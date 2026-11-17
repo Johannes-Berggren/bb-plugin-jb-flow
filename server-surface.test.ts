@@ -110,6 +110,7 @@ describe("server surface", () => {
         "leftovers_clean",
         "leftovers_get",
         "migrate_areas",
+        "needs_me_queue",
         "next_needs_me",
         "plan_approve",
         "plan_models",
@@ -507,6 +508,13 @@ describe("server handlers", () => {
     await plugin(bb);
     expect(await harness.callRpc("next_needs_me", { archiveThreadId: null })).toEqual({ opened: "thr_a" });
     expect(harness.sdk.callsTo("threads.open")).toEqual([[{ threadId: "thr_a", file: null }]]);
+  });
+
+  it("lists the threads that need you, most urgent first", async () => {
+    const { bb, harness } = host({ threads: [thread("thr_a", { status: "error" }), thread("thr_b"), thread("thr_c", { status: "error" })] });
+    await plugin(bb);
+    const { threadIds } = (await harness.callRpc("needs_me_queue", null)) as { threadIds: string[] };
+    expect([...threadIds].sort()).toEqual(["thr_a", "thr_c"]);
   });
 
   it("lists the conductor rpc state while the setting is on", async () => {
