@@ -511,6 +511,13 @@ export default async function plugin(bb: BbPluginApi) {
         "When a split has more panes than fit at the minimum pane width, it scrolls sideways instead of squeezing them, and the pane you focus is brought into view. Off restores BB's fit-to-window split.",
       default: true,
     },
+    paneStrip: {
+      type: "boolean",
+      label: "Pane strip in the workspace bar",
+      description:
+        "While a split is open, the workspace bar lists its panes: each one's workspace color, title, and whether the thread is working, waiting on you or finished. Panes scrolled out of view are dimmed; click one to go to it. Needs Workspaces on.",
+      default: true,
+    },
     splitMinPaneWidth: {
       type: "number",
       label: "Minimum pane width",
