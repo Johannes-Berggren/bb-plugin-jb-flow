@@ -1,0 +1,159 @@
+/* The Ctrl+Tab switcher: a floating card of recent threads, with workspace tabs above. */
+.jf-switcher {
+  position: fixed;
+  top: 28vh;
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  max-height: 56vh;
+  overflow: hidden;
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--popover, var(--background)) 88%, transparent);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  box-shadow:
+    0 1px 0 color-mix(in oklab, var(--foreground) 4%, transparent) inset,
+    0 24px 60px -12px rgb(0 0 0 / 0.35),
+    0 8px 20px -8px rgb(0 0 0 / 0.2);
+  color: var(--popover-foreground, var(--foreground));
+  font-size: 13px;
+  line-height: 1.35;
+  user-select: none;
+  animation: jf-switcher-in 90ms ease-out;
+}
+
+/* --- workspace tabs --- */
+.jf-switcher-workspaces {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+}
+.jf-switcher-workspace {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  cursor: default;
+  transition: background-color 80ms, color 80ms;
+}
+.jf-switcher-workspace[data-current] {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.jf-switcher-workspace[aria-selected="true"] {
+  border-color: color-mix(in oklab, var(--primary) 45%, transparent);
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  color: var(--foreground);
+}
+.jf-switcher-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 9%, transparent);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* --- threads --- */
+.jf-switcher-threads {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+.jf-switcher-thread {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  cursor: default;
+  transition: background-color 80ms;
+}
+.jf-switcher-thread[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground, var(--foreground));
+}
+.jf-switcher-threads:not([data-active]) .jf-switcher-thread[aria-selected="true"] {
+  background: transparent;
+}
+.jf-switcher-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.jf-switcher-title {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-switcher-meta {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-switcher-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+/* --- hint --- */
+.jf-switcher-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 7px 14px 8px;
+  border-top: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.jf-switcher-hint-go {
+  margin-left: auto;
+}
+.jf-switcher-hint kbd {
+  margin-right: 3px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+@keyframes jf-switcher-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-switcher {
+    animation: none;
+  }
+  .jf-switcher-thread,
+  .jf-switcher-workspace {
+    transition: none;
+  }
+}
