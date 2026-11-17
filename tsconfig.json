@@ -39,6 +39,7 @@
     "local-config.ts",
     "changes.ts",
     "thread-cache.ts",
+    "snooze.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",
