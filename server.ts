@@ -29,9 +29,10 @@ import { createNowQueue, registerDueFromStatus, registerDueTool } from "./now-qu
 import { createDeck } from "./deck";
 import { createTriageState } from "./triage-state";
 import { threadPreviewRpc } from "./thread-preview";
+import { createConductorWiring } from "./conductor-wiring";
 import { formatDue, formatWhen, parseDue } from "./when";
-import { AFTER_GREEN, type ConductorSink } from "./conductor-routing";
-import { createConductor, type Conductor } from "./conductor";
+import { AFTER_GREEN } from "./conductor-routing";
+import { createConductor } from "./conductor";
 import { createConductorStore } from "./conductor-store";
 import { migrate } from "./migrations";
 import { quietFor } from "./sidebar-groups";
@@ -252,19 +253,8 @@ export default async function plugin(bb: BbPluginApi) {
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
-  // Created further down, once the stores it reads exist; until then threads hear their own news.
-  let conductor: Conductor | null = null;
-  const loadedConductor = () => {
-    if (!conductor) throw new Error("The conductor is still loading; try again in a moment.");
-    return conductor;
-  };
-  const conductorSink: ConductorSink = {
-    workspaceFor: async (threadId) => (conductor ? conductor.sink.workspaceFor(threadId) : null),
-    deliver: async (threadId, workspaceId, events) => {
-      if (!conductor) throw new Error("The conductor isn't loaded yet.");
-      await conductor.sink.deliver(threadId, workspaceId, events);
-    },
-  };
+  const conductorWiring = createConductorWiring(settings);
+  const { conductorSink } = conductorWiring;
   const watchers = createWatchers(
     bb,
     localConfig.releaseWatch,
@@ -283,7 +273,7 @@ export default async function plugin(bb: BbPluginApi) {
   const nowStore = createNowStore(bb, changed);
   const snoozes = createSnoozes(bb, { changed, awaiting });
   const { getSnoozes, findSnoozedSection, snooze, unsnooze, wakeDue } = snoozes;
-  const staleDigest = createStaleDigest(bb, { settings, changed, getSnoozes, listAllActiveThreads, conductor: () => conductor });
+  const staleDigest = createStaleDigest(bb, { settings, changed, getSnoozes, listAllActiveThreads, conductor: conductorWiring.current });
   const { getKept, buildDigest, readDigest, archive } = staleDigest;
   registerDueFromStatus(bb, { settings, nowStore });
   const nowAndNext = createNowQueue(bb, { settings, awaiting, prTracker, nowStore, focus, findSnoozedSection, watchingByThread, listAllActiveThreads });
@@ -320,6 +310,7 @@ export default async function plugin(bb: BbPluginApi) {
     ...nowAndNext.rpc,
     ...triage.rpc,
     ...threadPreviewRpc(bb),
+    ...conductorWiring.rpc,
     workspaces_get: () => workspaces.read(),
     workspace_save: (input) => workspaces.save(input),
     workspace_remove: async ({ id }) => { await workspaces.remove(id); return { ok: true }; },
@@ -334,16 +325,6 @@ export default async function plugin(bb: BbPluginApi) {
       await approvePlan(bb.sdk, { threadId, model });
       return { ok: true };
     },
-    conductor_list: async () => ({ enabled: (await settings.get()).conductor === true, conductors: await loadedConductor().status() }),
-    conductor_page: ({ workspaceId }) => loadedConductor().page(workspaceId),
-    conductor_briefs: async () => ({ briefs: conductor ? await conductor.briefs() : [] }),
-    conductor_feed: ({ since }) => loadedConductor().feed(since),
-    conductor_fleet: ({ workspaceId }) => loadedConductor().fleet(workspaceId),
-    conductor_start: async ({ workspaceId, projectId, providerId, model }) => ({
-      threadId: (await loadedConductor().start(workspaceId, { projectId, providerId, model })).threadId,
-    }),
-    conductor_stop: async ({ workspaceId }) => ({ ok: await loadedConductor().stop(workspaceId) }),
-    conductor_wake: async ({ workspaceId }) => ({ result: await loadedConductor().wake(workspaceId, true) }),
     thread_reply: async ({ threadId, text }) => {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
@@ -378,7 +359,7 @@ export default async function plugin(bb: BbPluginApi) {
     bb.log.info(`digest: ${digest.items.length} stale thread(s)`);
     await pruneThreadData().catch((error) => bb.log.warn(`prune: ${String(error)}`));
     try {
-      conductor?.prune();
+      conductorWiring.current()?.prune();
     } catch (error) {
       bb.log.warn(`conductor prune: ${String(error)}`);
     }
@@ -397,7 +378,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
   registerDueTool(bb, nowStore);
   migrate(bb);
-  conductor = await createConductor(bb, {
+  await conductorWiring.load(createConductor(bb, {
     store: createConductorStore(() => bb.storage.database()),
     options: () => ({
       enabled: agentSettings.conductor === true,
@@ -428,10 +409,10 @@ export default async function plugin(bb: BbPluginApi) {
     archive: (threadIds) => archive(threadIds),
     focus: (threadId, focused) => nowStore.set(threadId, focused),
     changed,
-  });
+  }));
   bb.agents.configure((context) => {
     // A conductor gets its own tools and role; every other thread, the usual ones.
-    const asConductor = conductor?.configureFor(context);
+    const asConductor = conductorWiring.current()?.configureFor(context);
     if (asConductor) return asConductor;
     return {
       tools: ["snooze_thread", "wait_for_ci", "pr_status", ...(agentSettings.nowQueue ? ["set_thread_due"] : [])],
@@ -743,6 +724,7 @@ export default async function plugin(bb: BbPluginApi) {
             return { exitCode: 0, stdout: `${remove ? "Unlinked" : "Linked"} ${match[1]}#${match[2]}.` };
           }
           case "conductor": {
+            const conductor = conductorWiring.current();
             if (!conductor) throw new Error("The conductor isn't loaded.");
             const [action = "status", workspaceId] = args;
             const flag = (name: string) => {

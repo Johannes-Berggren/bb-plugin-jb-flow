@@ -47,6 +47,7 @@
     "deck.ts",
     "triage-state.ts",
     "thread-preview.ts",
+    "conductor-wiring.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",
