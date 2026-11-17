@@ -15,6 +15,7 @@ import {
   type CiWatch,
   type PrState,
 } from "./ci-watch.ts";
+import type { CiNote } from "./conductor-routing.ts";
 
 const T0 = Date.parse("2026-03-02T09:00:00Z");
 const HOUR = 3_600_000;
@@ -78,7 +79,7 @@ test("checks finishing reports once and keeps listening for reviews", async () =
   assert.equal(result.done, false);
   assert.equal(result.watch.watchFor, "reviews");
   assert.equal(result.watch.quiet, true);
-  assert.match(result.notes[0]!, /CI is green on web-app#12/);
+  assert.match(result.notes[0]!.text, /CI is green on web-app#12/);
 });
 
 test("a review watch outlasts the 3-hour CI limit", async () => {
@@ -94,7 +95,7 @@ test("a review arriving a day later wakes the thread", async () => {
   const now = T0 + 24 * HOUR;
   const result = await evaluateWatch(quiet, prState({ reviews: [review(now - 1000)] }), now, "me", noLog);
   assert.equal(result.done, true);
-  assert.match(result.notes[0]!, /Review from alex: APPROVED/);
+  assert.match(result.notes[0]!.text, /Review from alex: APPROVED/);
 });
 
 test("a review watch that expires says so", async () => {
@@ -103,14 +104,14 @@ test("a review watch that expires says so", async () => {
   assert.equal(result.done, true);
   assert.equal(result.report, true);
   assert.equal(result.notes.length, 1);
-  assert.match(result.notes[0]!, /No review on web-app#12 after 7 days; stopped watching/);
+  assert.match(result.notes[0]!.text, /No review on web-app#12 after 7 days; stopped watching/);
 });
 
 test("a checks watch still ends at 3 hours", async () => {
   const stuck = prState({ statusCheckRollup: [pending] });
   const result = await evaluateWatch(watch({ watchFor: "checks" }), stuck, T0 + CI_TIMEOUT_MS + 1, "me", noLog);
   assert.equal(result.done, true);
-  assert.match(result.notes[0]!, /after 3 hours/);
+  assert.match(result.notes[0]!.text, /after 3 hours/);
 });
 
 test("a new push restarts the wait but keeps reviews from before it", async () => {
@@ -119,7 +120,7 @@ test("a new push restarts the wait but keeps reviews from before it", async () =
   const result = await evaluateWatch(watch(), pr, now, "me", noLog);
   assert.equal(result.watch.since, now);
   assert.equal(result.watch.headSha, "bbbbbbb2");
-  assert.ok(result.notes.some((note) => note.includes("Review from alex")), "the review before the push is reported");
+  assert.ok(result.notes.some((note) => note.text.includes("Review from alex")), "the review before the push is reported");
 });
 
 test("your own and bot reviews don't wake the thread", async () => {
@@ -376,4 +377,122 @@ test("only a removed watch or a new kind of wait counts as a visible change", ()
   assert.equal(visibleChange(seen, new Map([["k", { ...seen.k, lastCheckedAt: T0 }]])), false);
   assert.equal(visibleChange(seen, new Map([["k", { ...seen.k, watchFor: "reviews" as const, quiet: true }]])), true);
   assert.equal(visibleChange(seen, new Map([["k", null]])), true);
+});
+
+// --- routing to a workspace's conductor ---------------------------------------
+
+const failedRun = { __typename: "CheckRun", name: "lint", status: "COMPLETED", conclusion: "FAILURE" };
+
+/** A cycle whose thread has a conductor in workspace "ws"; records what reached its inbox. */
+function conducted(watches: Record<string, CiWatch>, pr: PrState | ((watch: CiWatch) => PrState), fields: Partial<CiCycle> = {}) {
+  const inbox: Array<{ threadId: string; workspaceId: string; kinds: string[] }> = [];
+  const base = cycle(watches, typeof pr === "function" ? prState() : pr, {
+    ...(typeof pr === "function" ? { readPr: async (watch: CiWatch) => pr(watch) } : {}),
+    conductorFor: async () => "ws",
+    toConductor: async (threadId, workspaceId, notes) => {
+      inbox.push({ threadId, workspaceId, kinds: notes.map((note) => note.kind) });
+    },
+    ...fields,
+  });
+  return { ...base, inbox };
+}
+
+test("with a conductor, green goes to its inbox and the worker isn't woken", async () => {
+  const { config, sent, inbox } = conducted({ k: watch({ watchFor: "checks" }) }, prState({ statusCheckRollup: [green] }));
+  const changes = await runCiCycle(config);
+  assert.equal(sent.length, 0);
+  assert.deepEqual(inbox, [{ threadId: "thr_a", workspaceId: "ws", kinds: ["green"] }]);
+  assert.equal(changes.get("k"), null, "the watch is done once the conductor has it");
+});
+
+test("with a conductor, a failure still wakes the worker directly", async () => {
+  const { config, sent, inbox } = conducted({ k: watch({ watchFor: "checks" }) }, prState({ statusCheckRollup: [failedRun] }));
+  await runCiCycle(config);
+  assert.equal(inbox.length, 0);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!.text, /^\[ci watcher\] ❌ CI failed on web-app#12/);
+});
+
+test("green goes to the worker when it said it has more to do", async () => {
+  const { config, sent, inbox } = conducted({ k: watch({ watchFor: "checks", afterGreen: "continue" }) }, prState({ statusCheckRollup: [green] }));
+  await runCiCycle(config);
+  assert.equal(inbox.length, 0);
+  assert.match(sent[0]!.text, /CI is green/);
+});
+
+test("the conductor's note carries what the worker said it would do", async () => {
+  const notes: CiNote[] = [];
+  const { config } = conducted({ k: watch({ watchFor: "checks", afterGreen: "merge" }) }, prState({ statusCheckRollup: [green] }), {
+    toConductor: async (_threadId, _workspaceId, routed) => {
+      notes.push(...routed);
+    },
+  });
+  await runCiCycle(config);
+  assert.deepEqual(
+    notes.map(({ kind, repo, pr, afterGreen }) => ({ kind, repo, pr, afterGreen })),
+    [{ kind: "green", repo: "acme/web-app", pr: 12, afterGreen: "merge" }],
+  );
+});
+
+test("one thread's news is split: failures to the worker, the rest to the conductor", async () => {
+  const { config, sent, inbox } = conducted(
+    { a: watch({ pr: 1, watchFor: "checks" }), b: watch({ pr: 2, watchFor: "checks" }) },
+    (w) => prState({ statusCheckRollup: [w.pr === 1 ? green : failedRun] }),
+  );
+  await runCiCycle(config);
+  assert.deepEqual(inbox.map((entry) => entry.kinds), [["green"]]);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!.text, /web-app#2/);
+  assert.doesNotMatch(sent[0]!.text, /web-app#1/);
+});
+
+test("merged and closed PRs go to the conductor, review feedback to the worker", async () => {
+  const merged = conducted({ k: watch() }, prState({ state: "MERGED" }));
+  await runCiCycle(merged.config);
+  assert.deepEqual(merged.inbox.map((entry) => entry.kinds), [["merged"]]);
+  assert.equal(merged.sent.length, 0);
+
+  const closed = conducted({ k: watch() }, prState({ state: "CLOSED" }));
+  await runCiCycle(closed.config);
+  assert.deepEqual(closed.inbox.map((entry) => entry.kinds), [["closed"]]);
+
+  const changes = conducted(
+    { k: watch({ watchFor: "reviews", quiet: true }) },
+    prState({ reviews: [{ ...review(T0 + HOUR, "sam", "CHANGES_REQUESTED"), body: "Rename this" }] }),
+    { now: () => T0 + 2 * HOUR },
+  );
+  await runCiCycle(changes.config);
+  assert.equal(changes.inbox.length, 0);
+  assert.match(changes.sent[0]!.text, /Review from sam: CHANGES_REQUESTED — Rename this/);
+});
+
+test("a thread without a conductor hears everything, as before", async () => {
+  const { config, sent, inbox } = conducted({ k: watch({ watchFor: "checks" }) }, prState({ statusCheckRollup: [green] }), {
+    conductorFor: async () => null,
+  });
+  await runCiCycle(config);
+  assert.equal(inbox.length, 0);
+  assert.match(sent[0]!.text, /CI is green/);
+});
+
+test("a failed conductor lookup falls back to waking the worker", async () => {
+  const { config, sent, inbox } = conducted({ k: watch({ watchFor: "checks" }) }, prState({ statusCheckRollup: [green] }), {
+    conductorFor: async () => {
+      throw new Error("kv unavailable");
+    },
+  });
+  await runCiCycle(config);
+  assert.equal(inbox.length, 0);
+  assert.equal(sent.length, 1);
+});
+
+test("an inbox that can't be written keeps the watch, so the next cycle tries again", async () => {
+  const { config, sent } = conducted({ k: watch({ watchFor: "checks" }) }, prState({ statusCheckRollup: [green] }), {
+    toConductor: async () => {
+      throw new Error("SQLITE_BUSY");
+    },
+  });
+  const changes = await runCiCycle(config);
+  assert.equal(sent.length, 0);
+  assert.equal(changes.get("k")?.sendFailures, 1);
 });

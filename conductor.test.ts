@@ -1,0 +1,527 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import Database from "better-sqlite3";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { createConductor, type ConductorDeps } from "./conductor.ts";
+import { createConductorStore } from "./conductor-store.ts";
+import { MIGRATIONS } from "./migrations.ts";
+import type { WorkspaceState } from "./workspaces.ts";
+
+const T0 = Date.parse("2026-03-02T09:00:00Z");
+const MINUTE = 60_000;
+
+type FakeThread = {
+  id: string;
+  projectId: string;
+  sectionId: string | null;
+  parentThreadId: string | null;
+  status: string;
+  title: string;
+  titleFallback: string | null;
+  visibility: "visible" | "hidden";
+  lastReadAt: number | null;
+  latestAttentionAt: number | null;
+  createdAt: number;
+  hasPendingInteraction: boolean;
+  queuedWork: string;
+  archivedAt: number | null;
+  deletedAt: number | null;
+};
+
+const thread = (id: string, projectId: string, fields: Partial<FakeThread> = {}): FakeThread => ({
+  id,
+  projectId,
+  sectionId: null,
+  parentThreadId: null,
+  status: "idle",
+  title: `Thread ${id}`,
+  titleFallback: null,
+  visibility: "visible",
+  lastReadAt: null,
+  latestAttentionAt: T0,
+  createdAt: T0 - 60 * MINUTE,
+  hasPendingInteraction: false,
+  queuedWork: "none",
+  archivedAt: null,
+  deletedAt: null,
+  ...fields,
+});
+
+const workspaceState: WorkspaceState = {
+  workspaces: [
+    { id: "ws", name: "Web", projectIds: ["proj_web"], sectionIds: [], pluginIds: [], sectionOrder: [] },
+    { id: "other", name: "Api", projectIds: ["proj_api"], sectionIds: [], pluginIds: [], sectionOrder: [] },
+  ],
+  threadWorkspaces: {},
+};
+
+/** A conductor over a fake bb: two worker threads, one per workspace. */
+async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string }; personal?: boolean; flow?: Record<string, Record<string, number>>; status?: Record<string, unknown>; output?: string } = {}) {
+  let clock = T0;
+  const kv = new Map<string, unknown>();
+  const tools = new Map<string, { execute: (params: unknown, ctx: { threadId: string }) => Promise<unknown> }>();
+  const handlers = new Map<string, Array<(payload: unknown) => Promise<void> | void>>();
+  const threads = new Map<string, FakeThread>([
+    ["thr_a", thread("thr_a", "proj_web")],
+    ["thr_b", thread("thr_b", "proj_api")],
+  ]);
+  const sent: Array<{ threadId: string; text: string; mode: string; compactFirst?: boolean }> = [];
+  const spawns: Array<Record<string, unknown>> = [];
+  const unarchived: string[] = [];
+  const read: string[] = [];
+  const ghCalls: string[][] = [];
+  const archived: string[] = [];
+  const threadArchives: string[] = [];
+  let spawnCount = 0;
+  const bb = {
+    pluginId: "jb-flow",
+    log: { info() {}, warn() {}, error() {} },
+    storage: {
+      kv: {
+        get: async (key: string) => (kv.has(key) ? structuredClone(kv.get(key)) : undefined),
+        set: async (key: string, value: unknown) => void kv.set(key, structuredClone(value)),
+        delete: async (key: string) => void kv.delete(key),
+        list: async (prefix: string) => [...kv.keys()].filter((key) => key.startsWith(prefix)),
+      },
+    },
+    agents: { registerTool: (tool: { name: string; execute: never }) => void tools.set(tool.name, tool) },
+    events: {
+      on: (name: string, handler: (payload: unknown) => void) => void handlers.set(name, [...(handlers.get(name) ?? []), handler]),
+    },
+    background: { schedule: () => undefined },
+    sdk: {
+      projects: {
+        list: async () => [{ id: "proj_web" }],
+        get: async ({ projectId }: { projectId: string }) => {
+          if (options.personal && projectId === "proj_personal") return { id: "proj_personal", kind: "personal" };
+          throw Object.assign(new Error("HTTP 404: not found"), { status: 404 });
+        },
+      },
+      threads: {
+        get: async ({ threadId }: { threadId: string }) => {
+          const found = threads.get(threadId);
+          if (!found) throw Object.assign(new Error("HTTP 404: not found"), { status: 404 });
+          return { ...found };
+        },
+        list: async ({ threadIds }: { threadIds?: string[] }) => [...threads.values()].filter((t) => !threadIds || threadIds.includes(t.id)),
+        spawn: async (args: Record<string, unknown>) => {
+          spawns.push(args);
+          const id = `thr_conductor${++spawnCount}`;
+          threads.set(id, thread(id, String(args.projectId), { visibility: "hidden", title: String(args.title) }));
+          return { id };
+        },
+        send: async ({ threadId, input, mode, compactFirst }: { threadId: string; input: Array<{ text: string }>; mode: string; compactFirst?: boolean }) => {
+          sent.push({ threadId, text: input[0]!.text, mode, ...(compactFirst ? { compactFirst } : {}) });
+          return { delivery: "sent" };
+        },
+        archive: async ({ threadId }: { threadId: string }) => {
+          threadArchives.push(threadId);
+          threads.get(threadId)!.archivedAt = T0;
+        },
+        unarchive: async ({ threadId }: { threadId: string }) => {
+          unarchived.push(threadId);
+          threads.get(threadId)!.archivedAt = null;
+        },
+        markRead: async ({ threadId }: { threadId: string }) => void read.push(threadId),
+        markUnread: async () => undefined,
+        output: async () => ({ output: options.output ?? "Done." }),
+        events: { list: async () => [{ data: { tokenUsage: { last: { totalTokens: 1_500_000 } } } }] },
+      },
+    },
+  } as unknown as BbPluginApi;
+
+  const db = new Database(":memory:");
+  for (const statement of MIGRATIONS) db.exec(statement);
+  const store = createConductorStore(() => db as never);
+  const settings = { enabled: options.enabled ?? true, batchMinutes: 10, prompt: "" };
+  const deps: ConductorDeps = {
+    store,
+    options: () => settings,
+    workspaces: async () => workspaceState,
+    assignWorkspace: async () => undefined,
+    listThreads: async () => [...threads.values()].filter((t) => t.visibility === "visible" && t.archivedAt === null) as never,
+    flow: async () => ({ awaiting: {}, promised: {}, waitingOthers: {}, readyToGo: {}, watching: {}, threadPrs: {}, focused: {}, due: {}, ...options.flow }),
+    snoozedSection: async () => null,
+    threadStatus: async () =>
+      options.status
+        ? (options.status as never)
+        : options.report
+        ? ({ threadId: "thr_a", report: { goal: "", done: "", next: options.report.next, blocked: "", milestones: [], capturedAt: T0 }, latest: "", latestAt: T0, replyHash: "" } as never)
+        : null,
+    prsByThread: async () => ({
+      thr_a: [{ repo: "acme/web-app", number: 12, state: "open", attention: "ready_to_merge", title: "Fix export" }],
+      thr_b: [{ repo: "acme/api", number: 3, state: "open", attention: "ready_to_merge", title: "Add route" }],
+    }) as never,
+    snooze: async () => ({ until: T0 + 3_600_000 }),
+    unsnooze: async () => true,
+    archive: async (ids) => {
+      archived.push(...ids);
+      return { archived: ids.length, failed: [] };
+    },
+    focus: async (_id, focused) => focused,
+    changed: () => undefined,
+    gh: async (args) => {
+      ghCalls.push(args);
+      if (args[0] === "repo") return JSON.stringify({ viewerDefaultMergeMethod: "SQUASH" });
+      if (options.ghFails) throw new Error("Pull request is not mergeable: the base branch policy prohibits the merge");
+      return "";
+    },
+    now: () => clock,
+  };
+  const conductor = await createConductor(bb, deps);
+  const fire = async (event: string, payload: unknown) => {
+    for (const handler of handlers.get(event) ?? []) await handler(payload);
+  };
+  const call = (name: string, params: unknown, threadId: string) => tools.get(name)!.execute(params, { threadId });
+  return {
+    conductor,
+    store,
+    threads,
+    sent,
+    spawns,
+    unarchived,
+    read,
+    ghCalls,
+    archived,
+    threadArchives,
+    settings,
+    fire,
+    call,
+    advance: (ms: number) => (clock += ms),
+  };
+}
+
+const errorText = (result: unknown) => {
+  const value = result as { isError?: boolean; content?: Array<{ text: string }> };
+  return value.isError ? value.content![0]!.text : null;
+};
+
+test("starting a conductor spawns one hidden thread in the workspace's project", async () => {
+  const { conductor, spawns } = await setup();
+  const { threadId } = await conductor.start("ws");
+  assert.equal(threadId, "thr_conductor1");
+  assert.equal(spawns.length, 1);
+  assert.equal(spawns[0]!.visibility, "hidden");
+  assert.equal(spawns[0]!.projectId, "proj_web");
+  assert.deepEqual(spawns[0]!.pluginMetadata, { role: "conductor", workspaceId: "ws" });
+  assert.ok(Number(spawns[0]!.sendAt) > T0, "its first turn waits until its id is known");
+  await conductor.start("ws");
+  assert.equal(spawns.length, 1, "starting again reuses the thread");
+});
+
+test("only the conductor gets the conductor tools", async () => {
+  const { conductor } = await setup();
+  const { threadId } = await conductor.start("ws");
+  const base = { pluginMetadata: {}, origin: { kind: null, pluginId: null } };
+  const own = conductor.configureFor({ ...base, thread: { id: threadId, title: null, parentThreadId: null, sourceThreadId: null } });
+  assert.ok(own?.tools.includes("merge_pr"));
+  assert.match(own!.instructions, /conductor of the "Web" workspace/);
+  assert.equal(conductor.configureFor({ ...base, thread: { id: "thr_a", title: null, parentThreadId: null, sourceThreadId: null } }), null);
+});
+
+test("a just-spawned conductor is known by its origin, which an agent can't fake", async () => {
+  const { conductor } = await setup();
+  await conductor.start("ws");
+  const thread = { id: "thr_new", title: null, parentThreadId: null, sourceThreadId: null };
+  const pluginMetadata = { role: "conductor", workspaceId: "ws" };
+  assert.ok(conductor.configureFor({ thread, pluginMetadata, origin: { kind: null, pluginId: "jb-flow" } }));
+  assert.equal(conductor.configureFor({ thread, pluginMetadata, origin: { kind: null, pluginId: null } }), null);
+});
+
+test("with the setting off, nothing is routed and no thread gets the tools", async () => {
+  const { conductor, settings } = await setup();
+  const { threadId } = await conductor.start("ws");
+  settings.enabled = false;
+  assert.equal(await conductor.sink.workspaceFor("thr_a"), null);
+  const base = { pluginMetadata: {}, origin: { kind: null, pluginId: null } };
+  assert.equal(conductor.configureFor({ ...base, thread: { id: threadId, title: null, parentThreadId: null, sourceThreadId: null } }), null);
+  await assert.rejects(conductor.start("other"), /Turn on Conductor/);
+});
+
+test("news is routed only for threads in a workspace with a running conductor", async () => {
+  const { conductor } = await setup();
+  assert.equal(await conductor.sink.workspaceFor("thr_a"), null, "no conductor yet");
+  const { threadId } = await conductor.start("ws");
+  assert.equal(await conductor.sink.workspaceFor("thr_a"), "ws");
+  assert.equal(await conductor.sink.workspaceFor("thr_b"), null, "its workspace has no conductor");
+  assert.equal(await conductor.sink.workspaceFor(threadId), null, "a conductor's own news isn't routed to itself");
+  await conductor.stop("ws");
+  assert.equal(await conductor.sink.workspaceFor("thr_a"), null, "stopped");
+});
+
+test("tools refuse other callers and threads outside the conductor's workspace", async () => {
+  const { conductor, call, sent, read } = await setup();
+  const { threadId } = await conductor.start("ws");
+  assert.match(errorText(await call("forward_to_thread", { thread_id: "thr_a", message: "go" }, "thr_a"))!, /Only a workspace's conductor/);
+  assert.match(errorText(await call("forward_to_thread", { thread_id: "thr_b", message: "go" }, threadId))!, /isn't in this conductor's workspace/);
+  assert.equal(errorText(await call("forward_to_thread", { thread_id: "thr_a", message: "Merge it.", mark_read: true }, threadId)), null);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!.text, /^\[conductor\] Merge it\./);
+  assert.match(sent[0]!.text, /don't message the conductor back/);
+  assert.deepEqual(read, ["thr_a"]);
+});
+
+test("merge_pr merges only this workspace's PRs, with the repo's method and no bypass", async () => {
+  const { conductor, call, ghCalls } = await setup();
+  const { threadId } = await conductor.start("ws");
+  assert.equal(await call("merge_pr", { repo: "acme/web-app", number: 12 }, threadId), "Merged acme/web-app#12.");
+  const merge = ghCalls.find((args) => args[0] === "pr")!;
+  assert.deepEqual(merge, ["pr", "merge", "12", "-R", "acme/web-app", "--squash"]);
+  assert.ok(!ghCalls.flat().includes("--admin"));
+  assert.match(errorText(await call("merge_pr", { repo: "acme/api", number: 3 }, threadId))!, /isn't linked to a thread in this workspace/);
+  assert.deepEqual(conductor.log("ws").map((entry) => entry.kind).slice(0, 1), ["merged"]);
+});
+
+test("a merge GitHub refuses comes back as the reason, and is logged", async () => {
+  const { conductor, call } = await setup({ ghFails: true });
+  const { threadId } = await conductor.start("ws");
+  assert.match(errorText(await call("merge_pr", { repo: "acme/web-app", number: 12 }, threadId))!, /base branch policy/);
+  assert.equal(conductor.log("ws")[0]!.kind, "merge-refused");
+});
+
+test("archiving a conductor brings it straight back", async () => {
+  const { conductor, fire, unarchived, threads } = await setup();
+  const { threadId } = await conductor.start("ws");
+  threads.get(threadId)!.archivedAt = T0;
+  await fire("thread.archived", { thread: threads.get(threadId) });
+  assert.deepEqual(unarchived, [threadId]);
+  await fire("thread.archived", { thread: threads.get("thr_a") });
+  assert.deepEqual(unarchived, [threadId], "workers stay archived");
+});
+
+test("a deleted conductor is respawned at the next wake-up", async () => {
+  const { conductor, fire, threads, spawns, advance } = await setup();
+  const { threadId } = await conductor.start("ws");
+  threads.get(threadId)!.deletedAt = T0;
+  await fire("thread.deleted", { thread: threads.get(threadId) });
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "Something unusual on web-app#12." }]);
+  advance(11 * 60_000);
+  assert.equal(await conductor.wake("ws"), "woken");
+  assert.equal(spawns.length, 2);
+});
+
+test("a wake-up waits for the batch window and for an idle conductor, then carries everything once", async () => {
+  const { conductor, sent, threads, advance } = await setup();
+  const { threadId } = await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merge-refused", text: "Autopilot couldn't merge web-app#12: a review is required.", meta: { repo: "acme/web-app", pr: 12, afterGreen: "merge" } }]);
+  advance(MINUTE);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "Something unusual on web-app#11." }]);
+  assert.equal(await conductor.wake("ws"), "waiting");
+  advance(10 * MINUTE);
+  threads.get(threadId)!.status = "active";
+  assert.equal(await conductor.wake("ws"), "busy");
+  threads.get(threadId)!.status = "idle";
+  assert.equal(await conductor.wake("ws"), "woken");
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]!.mode, "start");
+  assert.match(sent[0]!.text, /^\[conductor inbox\] 2 new events:/);
+  assert.match(sent[0]!.text, /\[merge-refused\] "Thread thr_a" \(thr_a\) · acme\/web-app#12 · after_green: merge/);
+  assert.equal(await conductor.wake("ws"), "nothing", "delivered events aren't sent again");
+});
+
+test("the first wake-up of a day compacts the conductor first", async () => {
+  const { conductor, sent, advance } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "one" }]);
+  advance(11 * MINUTE);
+  await conductor.wake("ws");
+  assert.equal(sent[0]!.compactFirst, undefined, "its very first wake-up has nothing to compact");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "one more" }]);
+  advance(11 * MINUTE);
+  await conductor.wake("ws");
+  assert.equal(sent[1]!.compactFirst, undefined, "nor does a second one the same day");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "two" }]);
+  advance(24 * 60 * MINUTE);
+  await conductor.wake("ws");
+  assert.equal(sent[2]!.compactFirst, true);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "note", text: "three" }]);
+  advance(11 * MINUTE);
+  await conductor.wake("ws");
+  assert.equal(sent[3]!.compactFirst, undefined, "once a day");
+});
+
+test("a briefing keeps only items for open threads in the workspace", async () => {
+  const { conductor, call } = await setup();
+  const { threadId } = await conductor.start("ws");
+  const result = await call(
+    "post_briefing",
+    {
+      items: [
+        { threadId: "thr_a", kind: "decision", summary: "Pick a chart library", recommendation: "Option 2", reply: "2" },
+        { threadId: "thr_b", kind: "ready", summary: "Not ours" },
+      ],
+      handled: [{ threadId: "thr_a", what: "Merged acme/web-app#11" }],
+    },
+    threadId,
+  );
+  assert.match(String(result), /1 item\(s\)\. 1 item\(s\) skipped/);
+  const briefing = await conductor.briefing("ws");
+  assert.deepEqual(briefing?.items.map((item) => item.threadId), ["thr_a"]);
+  assert.equal(briefing?.handled.length, 1);
+});
+
+test("standing preferences are kept and put in the instructions", async () => {
+  const { conductor, call } = await setup();
+  const { threadId } = await conductor.start("ws");
+  await call("conductor_memory", { set: "Always merge dependency bumps." }, threadId);
+  const base = { pluginMetadata: {}, origin: { kind: null, pluginId: null } };
+  const config = conductor.configureFor({ ...base, thread: { id: threadId, title: null, parentThreadId: null, sourceThreadId: null } });
+  assert.match(config!.instructions, /Always merge dependency bumps\./);
+});
+
+// --- autopilot ----------------------------------------------------------------
+
+const greenEvent = (fields: Record<string, unknown> = {}) => ({
+  kind: "green",
+  text: "✅ CI is green on web-app#12 (abc1234): 3 checks passed.",
+  meta: { repo: "acme/web-app", pr: 12, headSha: "abc1234def", ...fields },
+});
+
+test("autopilot merges a green PR the worker said it would merge, only that commit, waking no one", async () => {
+  const { conductor, ghCalls, sent, store, advance } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.deepEqual(ghCalls.find((args) => args[0] === "pr"), ["pr", "merge", "12", "-R", "acme/web-app", "--squash", "--match-head-commit", "abc1234def"]);
+  assert.equal(sent.length, 0, "no worker and no conductor woken");
+  assert.equal(store.open("ws").length, 0);
+  const entry = conductor.log("ws")[0]!;
+  assert.equal(entry.kind, "auto-merged");
+  assert.equal(entry.savedTokens, 1_500_000, "costed at the worker's last turn");
+  advance(60 * MINUTE);
+  assert.equal(await conductor.wake("ws"), "nothing");
+});
+
+test("the worker's status report counts as merge intent", async () => {
+  const { conductor, ghCalls } = await setup({ report: { next: "Merge once CI is green." } });
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent()]);
+  assert.ok(ghCalls.some((args) => args[0] === "pr" && args[1] === "merge"));
+});
+
+test("green the worker didn't ask about is only noted", async () => {
+  const { conductor, ghCalls, sent } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent()]);
+  assert.equal(ghCalls.length, 0);
+  assert.equal(sent.length, 0);
+  assert.equal(conductor.log("ws")[0]!.kind, "absorbed");
+});
+
+test("its merged PR archives the thread when its report says nothing is left", async () => {
+  const { conductor, archived } = await setup({ report: { next: "Merge once CI is green; nothing pending after that." } });
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(archived, ["thr_a"]);
+  assert.equal(conductor.log("ws")[0]!.kind, "auto-archived");
+});
+
+test("a merge GitHub refuses goes to the conductor to brief", async () => {
+  const { conductor, store, sent, advance } = await setup({ ghFails: true });
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.deepEqual(store.open("ws").map((event) => event.kind), ["merge-refused"]);
+  advance(11 * MINUTE);
+  assert.equal(await conductor.wake("ws"), "woken");
+  assert.match(sent.at(-1)!.text, /\[merge-refused\].*base branch policy/);
+});
+
+test("what the worker must act on is forwarded to it", async () => {
+  const { conductor, sent } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "closed", text: "PR web-app#12 is now closed.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(sent.map((message) => [message.threadId, message.text]), [["thr_a", "[ci watcher] PR web-app#12 is now closed."]]);
+  assert.equal(conductor.log("ws")[0]!.kind, "forwarded");
+});
+
+test("a retried delivery acts only once", async () => {
+  const { conductor, ghCalls } = await setup();
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.equal(ghCalls.filter((args) => args[0] === "pr").length, 1);
+});
+
+test("nothing merges a PR while its worker is running", async () => {
+  const { conductor, call, ghCalls, threads } = await setup();
+  const { threadId } = await conductor.start("ws");
+  threads.get("thr_a")!.status = "active";
+  assert.match(errorText(await call("merge_pr", { repo: "acme/web-app", number: 12 }, threadId))!, /is running; leave the merge to it/);
+  await conductor.sink.deliver("thr_a", "ws", [greenEvent({ afterGreen: "merge" })]);
+  assert.equal(ghCalls.filter((args) => args[0] === "pr").length, 0);
+  assert.match(conductor.log("ws")[0]!.text, /the worker is running, so it merges itself/);
+});
+
+test("a conductor starts in bb's Personal project when there is one: a folder, not a checkout", async () => {
+  const { conductor, spawns } = await setup({ personal: true });
+  await conductor.start("ws");
+  assert.equal(spawns[0]!.projectId, "proj_personal");
+  assert.deepEqual(spawns[0]!.environment, { type: "host", workspace: { type: "personal" } });
+});
+
+test("a worker asking you shows as a brief from its own report, without waking the conductor", async () => {
+  const { conductor, store, sent, advance } = await setup({
+    flow: { awaiting: { thr_a: T0 } },
+    status: {
+      threadId: "thr_a",
+      report: { goal: "Ship charts", done: "Both wired up.", next: "Waiting on your pick", blocked: "", milestones: [], steps: { mode: "choice", question: "Which chart library?", items: ["Recharts", "uPlot"], recommended: [2] }, capturedAt: T0 },
+      latest: "Which chart library?",
+      latestAt: T0,
+      replyHash: "",
+    },
+  });
+  await conductor.start("ws");
+  const [brief] = await conductor.briefs();
+  assert.equal(brief!.threadId, "thr_a");
+  assert.equal(brief!.item.headline, "Which chart library?");
+  assert.equal(brief!.item.reply, "2");
+  assert.equal(store.open("ws").length, 0, "nothing for the conductor to wake for");
+  advance(60 * MINUTE);
+  assert.equal(await conductor.wake("ws"), "nothing");
+  assert.equal(sent.length, 0);
+});
+
+test("the conductor's own item for a thread wins over the automatic one", async () => {
+  const { conductor, call } = await setup({ flow: { awaiting: { thr_a: T0 } } });
+  const { threadId } = await conductor.start("ws");
+  await call("post_briefing", { items: [{ threadId: "thr_a", kind: "blocked", headline: "Merge refused: needs a review", summary: "GitHub wants an approval." }] }, threadId);
+  const [brief] = await conductor.briefs();
+  assert.equal(brief!.item.headline, "Merge refused: needs a review");
+});
+
+test("restarting gives a conductor a fresh thread; the old one is archived and stays archived", async () => {
+  const { conductor, fire, threads, spawns, unarchived, call, threadArchives } = await setup({ personal: true });
+  const { threadId: first } = await conductor.start("ws");
+  await call("conductor_memory", { set: "Never merge on Fridays." }, first);
+  const { previous, threadId: second } = await conductor.restart("ws");
+  assert.equal(previous, first);
+  assert.notEqual(second, first);
+  assert.equal(spawns.length, 2);
+  assert.equal(spawns[1]!.projectId, "proj_personal");
+  assert.deepEqual(threadArchives, [first]);
+  // bb reports the archive; the old thread is no longer a conductor, so it isn't brought back.
+  await fire("thread.archived", { thread: threads.get(first) });
+  assert.deepEqual(unarchived, []);
+  const base = { pluginMetadata: {}, origin: { kind: null, pluginId: null } };
+  assert.equal(conductor.configureFor({ ...base, thread: { id: first, title: null, parentThreadId: null, sourceThreadId: null } }), null);
+  assert.match(conductor.configureFor({ ...base, thread: { id: second, title: null, parentThreadId: null, sourceThreadId: null } })!.instructions, /Never merge on Fridays/);
+});
+
+test("a merged PR whose worker still asks you something isn't archived", async () => {
+  const { conductor, archived } = await setup({ report: { next: "Nothing pending on my side." } });
+  await conductor.start("ws");
+  // The fake thread's last reply ("Done.") asks nothing: archived.
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(archived, ["thr_a"]);
+});
+
+test("...and one that still asks you something stays put", async () => {
+  const { conductor, archived } = await setup({
+    report: { next: "Nothing pending on my side." },
+    output: "Merged.\n\n**Next:** Nothing pending on my side.\n\n### Next steps\n- The deck also renamed three other headings. Say if you want that reverted.",
+  });
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(archived, []);
+  assert.match(conductor.log("ws")[0]!.text, /merged; left for you to close/);
+});

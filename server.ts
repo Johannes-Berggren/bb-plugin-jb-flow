@@ -26,11 +26,17 @@ import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
+import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
+import { createConductor, type Conductor } from "./conductor";
+import { briefingItemSchema } from "./conductor-model";
+import { createConductorStore } from "./conductor-store";
+import { migrate } from "./migrations";
 import { wakeDueSnoozes } from "./snooze-wake";
 import { quietFor, staleThreads } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 import { replyQueued } from "./needs-me";
+import { approvePlan, planModels } from "./plan-model";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
 const CHANGED = "jb-flow-changed";
@@ -137,7 +143,89 @@ const stateSchema = z.object({
 });
 export type FlowState = z.infer<typeof stateSchema>;
 
+const conductorStatusSchema = z.object({
+  workspaceId: z.string(),
+  name: z.string(),
+  enabled: z.boolean(),
+  active: z.boolean(),
+  threadId: z.string().nullable(),
+  open: z.number(),
+  undelivered: z.number(),
+  lastWakeAt: z.number().optional(),
+  projectId: z.string().optional(),
+  providerId: z.string().optional(),
+  model: z.string().optional(),
+});
+export type ConductorStatus = z.infer<typeof conductorStatusSchema>;
+const conductorPageSchema = z.object({
+  workspaceId: z.string(),
+  threadId: z.string().nullable(),
+  threadStatus: z.string().nullable(),
+  active: z.boolean(),
+  log: z.array(z.object({ id: z.number(), at: z.number(), kind: z.string(), threadId: z.string().nullable(), text: z.string() })),
+  open: z.number(),
+  lastWakeAt: z.number().nullable(),
+});
+export type ConductorPage = z.infer<typeof conductorPageSchema>;
+const fleetRowSchema = z.object({
+  threadId: z.string(),
+  title: z.string(),
+  projectId: z.string(),
+  state: z.string(),
+  reason: z.string(),
+  needsYou: z.boolean(),
+  unread: z.boolean(),
+  prs: z.array(z.object({ repo: z.string(), number: z.number(), attention: z.string(), url: z.string() })),
+  next: z.string().nullable(),
+  blocked: z.string().nullable(),
+});
+export type ConductorFleetRow = z.infer<typeof fleetRowSchema>;
+const conductorBriefSchema = z.object({ workspaceId: z.string(), threadId: z.string(), at: z.number(), item: briefingItemSchema });
+export type ConductorBrief = z.infer<typeof conductorBriefSchema>;
+const conductorFeedSchema = z.object({
+  since: z.number(),
+  merged: z.number(),
+  archived: z.number(),
+  forwarded: z.number(),
+  refused: z.number(),
+  wakeupsSpared: z.number(),
+  tokensSpared: z.number(),
+  entries: z.array(
+    z.object({
+      id: z.number(),
+      at: z.number(),
+      kind: z.string(),
+      workspaceId: z.string(),
+      workspace: z.string(),
+      threadId: z.string().nullable(),
+      title: z.string(),
+      text: z.string(),
+      savedTokens: z.number().nullable(),
+    }),
+  ),
+});
+export type ConductorFeed = z.infer<typeof conductorFeedSchema>;
+
 export const rpcContract = defineRpcContract({
+  conductor_list: {
+    input: z.null(),
+    output: z.object({ enabled: z.boolean(), conductors: z.array(conductorStatusSchema) }),
+  },
+  conductor_page: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: conductorPageSchema },
+  conductor_briefs: { input: z.null(), output: z.object({ briefs: z.array(conductorBriefSchema) }) },
+  conductor_feed: { input: z.object({ since: z.number() }), output: conductorFeedSchema },
+  conductor_fleet: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.array(fleetRowSchema) },
+  conductor_start: {
+    input: z.object({
+      workspaceId: z.string().min(1).max(80),
+      projectId: z.string().max(200).optional(),
+      providerId: z.string().max(200).optional(),
+      model: z.string().max(200).optional(),
+    }),
+    output: z.object({ threadId: z.string() }),
+  },
+  conductor_stop: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.object({ ok: z.boolean() }) },
+  conductor_wake: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.object({ result: z.string() }) },
   workspaces_get: { input: z.null(), output: workspaceStateSchema },
   workspace_save: { input: workspaceSchema.extend({ id: z.string().nullable() }), output: workspaceSchema },
   workspace_remove: { input: z.object({ id: z.string() }), output: z.object({ ok: z.boolean() }) },
@@ -244,6 +332,18 @@ export const rpcContract = defineRpcContract({
   next_needs_me: {
     input: z.object({ archiveThreadId: z.string().nullable() }),
     output: z.object({ opened: z.string().nullable() }),
+  },
+  plan_models: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({
+      pending: z.boolean(),
+      current: z.string().nullable(),
+      models: z.array(z.object({ model: z.string(), name: z.string() })),
+    }),
+  },
+  plan_approve: {
+    input: z.object({ threadId: z.string(), model: z.string().min(1).nullable() }),
+    output: z.object({ ok: z.boolean() }),
   },
   decision_options: {
     input: z.object({ threadId: z.string() }),
@@ -457,6 +557,13 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Plans awaiting approval open expanded. Drag the handle under a plan to set its height.",
       default: true,
     },
+    planModelChoice: {
+      type: "boolean",
+      label: "Model choice on plan approval",
+      description:
+        "Adds a model menu next to Approve plan, so a plan can be implemented on another of the thread's models (for example plan on one model, build on another). The last choice is remembered.",
+      default: true,
+    },
     hideRepeatedChoices: {
       type: "boolean",
       label: "Hide options the reply buttons repeat",
@@ -469,6 +576,26 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Copy buttons on code",
       description: "Hovering an inline code snippet in a chat message shows a button that copies it.",
       default: false,
+    },
+    conductor: {
+      type: "boolean",
+      label: "Conductor",
+      description:
+        "Routine PR news for a workspace's threads is handled for them: green PRs a worker said it would merge are merged, finished threads archived, and what each thread needs from you is headlined in Now from its own status report. A permanent agent thread per workspace takes the judgement calls. Start one per workspace under Settings → Conductors or on the Conductor page. The agent uses your quota, only when woken.",
+      default: false,
+    },
+    conductorBatchMinutes: {
+      type: "number",
+      label: "Conductor: minutes to collect news before waking it",
+      description: "A conductor is woken once the oldest unhandled news is this old, with everything that arrived meanwhile in one message. Fewer, larger batches use less quota.",
+      default: 10,
+    },
+    conductorPrompt: {
+      type: "string",
+      label: "Conductor: your instructions",
+      description: "Added to every conductor's instructions, e.g. which PRs it may merge on its own or when to leave a thread alone. Empty uses only the built-in role.",
+      experimental_multiline: true,
+      default: "",
     },
     advancedConfig: {
       type: "string",
@@ -788,6 +915,8 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function archive(threadIds: string[]) {
     const failed: string[] = [];
+    // A conductor is permanent; archiving one in bulk would only bring it straight back.
+    threadIds = threadIds.filter((threadId) => !conductor?.isConductor(threadId));
     for (const threadId of threadIds) {
       try {
         await bb.sdk.threads.archive({ threadId });
@@ -816,8 +945,26 @@ export default async function plugin(bb: BbPluginApi) {
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
-  const watchers = createWatchers(bb, localConfig.releaseWatch, async (threadId) => (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue, changed, async (threadId) =>
-    ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
+  // Created further down, once the stores it reads exist; until then threads hear their own news.
+  let conductor: Conductor | null = null;
+  const loadedConductor = () => {
+    if (!conductor) throw new Error("The conductor is still loading; try again in a moment.");
+    return conductor;
+  };
+  const conductorSink: ConductorSink = {
+    workspaceFor: async (threadId) => (conductor ? conductor.sink.workspaceFor(threadId) : null),
+    deliver: async (threadId, workspaceId, events) => {
+      if (!conductor) throw new Error("The conductor isn't loaded yet.");
+      await conductor.sink.deliver(threadId, workspaceId, events);
+    },
+  };
+  const watchers = createWatchers(
+    bb,
+    localConfig.releaseWatch,
+    async (threadId) => (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
+    changed,
+    async (threadId) => ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
+    conductorSink,
   );
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
@@ -834,7 +981,7 @@ export default async function plugin(bb: BbPluginApi) {
   /** Watch every open PR the thread created; fall back to its branch PR. */
   async function watchThreadCi(
     threadId: string,
-    options: { pr?: number; repo?: string; watchFor?: "checks" | "reviews" | "both" },
+    options: { pr?: number; repo?: string; watchFor?: "checks" | "reviews" | "both"; afterGreen?: AfterGreen },
   ) {
     // A bare PR number: use the repo of this thread's own PR with that number.
     if (options.pr !== undefined && options.repo === undefined) {
@@ -1100,10 +1247,25 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await bb.sdk.threads.open({ threadId: nextId, file: null });
       return { opened: nextId };
     },
+    plan_models: ({ threadId }) => planModels(bb.sdk, threadId),
+    plan_approve: async ({ threadId, model }) => {
+      await approvePlan(bb.sdk, { threadId, model });
+      return { ok: true };
+    },
     decision_options: async ({ threadId }) => {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
       return nextMove(output.output ?? "");
     },
+    conductor_list: async () => ({ enabled: (await settings.get()).conductor === true, conductors: await loadedConductor().status() }),
+    conductor_page: ({ workspaceId }) => loadedConductor().page(workspaceId),
+    conductor_briefs: async () => ({ briefs: conductor ? await conductor.briefs() : [] }),
+    conductor_feed: ({ since }) => loadedConductor().feed(since),
+    conductor_fleet: ({ workspaceId }) => loadedConductor().fleet(workspaceId),
+    conductor_start: async ({ workspaceId, projectId, providerId, model }) => ({
+      threadId: (await loadedConductor().start(workspaceId, { projectId, providerId, model })).threadId,
+    }),
+    conductor_stop: async ({ workspaceId }) => ({ ok: await loadedConductor().stop(workspaceId) }),
+    conductor_wake: async ({ workspaceId }) => ({ result: await loadedConductor().wake(workspaceId, true) }),
     thread_reply: async ({ threadId, text }) => {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
@@ -1168,6 +1330,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     const digest = await buildDigest();
     bb.log.info(`digest: ${digest.items.length} stale thread(s)`);
     await pruneThreadData().catch((error) => bb.log.warn(`prune: ${String(error)}`));
+    try {
+      conductor?.prune();
+    } catch (error) {
+      bb.log.warn(`conductor prune: ${String(error)}`);
+    }
   });
 
   // Tags, "keep" marks and dev-server runs are per thread; drop them once the
@@ -1234,7 +1401,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     description:
       "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
     instructions:
-      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\".",
+      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\". Say what you'll do once checks pass with after_green: \"merge\" when merging is part of your task, \"continue\" when you have more to do (the next PR in a stack, a deploy step), \"nothing\" when green needs no action from you.",
     parameters: z.object({
       pr: z.number().int().positive().optional().describe("PR number; defaults to every open PR this thread created (all repos), else this branch's PR"),
       repo: z
@@ -1243,10 +1410,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         .optional()
         .describe("owner/name of the PR's repo. Needed when the PR is not in this thread's project repo and this thread didn't create it"),
       for: z.enum(["checks", "reviews", "both"]).optional().describe("What to wait for (default both)"),
+      after_green: z
+        .enum(AFTER_GREEN)
+        .optional()
+        .describe("What you'll do once checks pass: merge (merging is part of your task), continue (more work follows), nothing. A workspace conductor, if enabled, handles merge and nothing for you."),
     }),
-    async execute({ pr, repo, for: watchFor }, ctx) {
+    async execute({ pr, repo, for: watchFor, after_green: afterGreen }, ctx) {
       try {
-        const watches = await watchThreadCi(ctx.threadId, { pr, repo, watchFor });
+        const watches = await watchThreadCi(ctx.threadId, { pr, repo, watchFor, afterGreen });
         return `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}. End your turn now; a message will arrive when there's news.`;
       } catch (error) {
         return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
@@ -1312,13 +1483,51 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       }
     },
   });
-  bb.agents.configure(() => ({
-    tools: ["snooze_thread", "wait_for_ci", "pr_status", ...(agentSettings.nowQueue ? ["set_thread_due"] : [])],
-    skills: [],
-    ...(agentSettings.autoStatus && agentSettings.threadMonitor
-      ? { instructions: handBackInstructions(agentSettings.statusPrompt, agentSettings.nowQueue) }
-      : {}),
-  }));
+  migrate(bb);
+  conductor = await createConductor(bb, {
+    store: createConductorStore(() => bb.storage.database()),
+    options: () => ({
+      enabled: agentSettings.conductor === true,
+      batchMinutes: Number(agentSettings.conductorBatchMinutes) || 0,
+      prompt: agentSettings.conductorPrompt ?? "",
+    }),
+    workspaces: () => workspaces.read(),
+    assignWorkspace: (threadId, workspaceId) => workspaces.assign(threadId, workspaceId, false),
+    listThreads: () => listThreadsCached(),
+    flow: async () => {
+      const [waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due] = await Promise.all([
+        awaiting.all(),
+        awaiting.promised(),
+        awaiting.waitingOthers(),
+        awaiting.readyToGo(),
+        watchingByThread(),
+        prTracker.byThread(),
+        nowStore.all(),
+        nowStore.dueAll(),
+      ]);
+      return { awaiting: waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due };
+    },
+    snoozedSection: () => findSnoozedSection(),
+    threadStatus: (threadId) => threadStatus.get(threadId, false),
+    prsByThread: () => prTracker.byThread(),
+    snooze: (threadId, when, note) => snooze(threadId, when, note),
+    unsnooze: (threadId) => unsnooze(threadId),
+    archive: (threadIds) => archive(threadIds),
+    focus: (threadId, focused) => nowStore.set(threadId, focused),
+    changed,
+  });
+  bb.agents.configure((context) => {
+    // A conductor gets its own tools and role; every other thread, the usual ones.
+    const asConductor = conductor?.configureFor(context);
+    if (asConductor) return asConductor;
+    return {
+      tools: ["snooze_thread", "wait_for_ci", "pr_status", ...(agentSettings.nowQueue ? ["set_thread_due"] : [])],
+      skills: [],
+      ...(agentSettings.autoStatus && agentSettings.threadMonitor
+        ? { instructions: handBackInstructions(agentSettings.statusPrompt, agentSettings.nowQueue) }
+        : {}),
+    };
+  });
 
   // --- CLI ------------------------------------------------------------------
 
@@ -1335,8 +1544,9 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     "  bb jb-flow tell <text…> [--thread <id>]              Send a message (default: focused thread)",
     "  bb jb-flow needs-me [--json]                         Threads waiting on you",
     "  bb jb-flow next                                      Open the next thread that needs you",
-    "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]",
+    "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]",
     "  bb jb-flow watches [--json]                          Auto-continues, release waiters, CI watches",
+    "  bb jb-flow conductor [status|start|stop|wake|inbox|briefing|log] [<workspace-id>] [--json]",
     "  bb jb-flow prs [--self|<thread-id>] [--json]         PRs a thread created (all repos, stack order)",
     "  bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]",
     "  bb jb-flow release-wait [--self|<thread-id>]         Wake this thread on the next release",
@@ -1516,7 +1726,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
       { name: "now", summary: "List the Now queue in order, and what's Moving", usage: "bb jb-flow now [--json]" },
-      { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
+      { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]" },
       { name: "prs", summary: "List the PRs a thread created, across repos, in stack order", usage: "bb jb-flow prs [--self|<thread-id>] [--json]" },
       { name: "pr-link", summary: "Link (or --remove) a PR to a thread", usage: "bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]" },
       { name: "watches", summary: "List auto-continues, release waiters and CI watches", usage: "bb jb-flow watches [--json]" },
@@ -1530,6 +1740,11 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         name: "digest",
         summary: "List stale unsectioned threads",
         usage: "bb jb-flow digest [--refresh] [--json]",
+      },
+      {
+        name: "conductor",
+        summary: "Workspace conductors: status, start, stop, wake, inbox, briefing, log",
+        usage: "bb jb-flow conductor [status|start <workspace-id> [--project <id>] [--provider <id>] [--model <id>]|restart <workspace-id>|stop <workspace-id>|wake <workspace-id>|inbox <workspace-id>|briefing <workspace-id>|log <workspace-id>] [--json]",
       },
     ],
     async run(argv, ctx) {
@@ -1603,10 +1818,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             const prFlag = args.indexOf("--pr");
             const forFlag = args.indexOf("--for");
             const repoFlag = args.indexOf("--repo");
+            const afterFlag = args.indexOf("--after-green");
             const positional = args.filter((arg, index) => {
               if (prFlag !== -1 && (index === prFlag || index === prFlag + 1)) return false;
               if (forFlag !== -1 && (index === forFlag || index === forFlag + 1)) return false;
               if (repoFlag !== -1 && (index === repoFlag || index === repoFlag + 1)) return false;
+              if (afterFlag !== -1 && (index === afterFlag || index === afterFlag + 1)) return false;
               return true;
             });
             const threadId = resolveThread(positional[0] ?? "--self");
@@ -1616,6 +1833,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               pr: prFlag === -1 ? undefined : Number(args[prFlag + 1]),
               watchFor,
               repo: repoFlag === -1 ? undefined : args[repoFlag + 1],
+              afterGreen: afterFlag === -1 ? undefined : z.enum(AFTER_GREEN).parse(args[afterFlag + 1]),
             });
             return {
               exitCode: 0,
@@ -1741,6 +1959,65 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             if (!match || threadId === undefined) break;
             await prTracker.link(threadId, { repo: match[1]!, number: Number(match[2]) }, remove);
             return { exitCode: 0, stdout: `${remove ? "Unlinked" : "Linked"} ${match[1]}#${match[2]}.` };
+          }
+          case "conductor": {
+            if (!conductor) throw new Error("The conductor isn't loaded.");
+            const [action = "status", workspaceId] = args;
+            const flag = (name: string) => {
+              const index = args.indexOf(name);
+              return index === -1 ? undefined : args[index + 1];
+            };
+            const out = (value: unknown, text: string) => ({ exitCode: 0, stdout: json ? JSON.stringify(value) : text });
+            if (action === "status") {
+              const all = await conductor.status();
+              return out(
+                all,
+                all.length === 0
+                  ? "No conductors. Turn on Conductor in the settings, then: bb jb-flow conductor start <workspace-id>"
+                  : all
+                      .map((entry) => `${entry.workspaceId}  ${entry.name}  ${entry.active ? "on" : "off"}  thread ${entry.threadId ?? "-"}  inbox ${entry.open} open, ${entry.undelivered} waiting`)
+                      .join("\n"),
+              );
+            }
+            if (!workspaceId) throw new Error(`Use conductor ${action} <workspace-id>; bb jb-flow workspaces lists them.`);
+            switch (action) {
+              case "start": {
+                const result = await conductor.start(workspaceId, { projectId: flag("--project"), providerId: flag("--provider"), model: flag("--model") });
+                return out(result, `Conductor for ${workspaceId}: ${result.threadId}`);
+              }
+              case "restart": {
+                const result = await conductor.restart(workspaceId);
+                return out(result, `Conductor for ${workspaceId}: ${result.threadId}${result.previous ? ` (archived ${result.previous})` : ""}`);
+              }
+              case "stop":
+                return out({ stopped: await conductor.stop(workspaceId) }, `Stopped the conductor for ${workspaceId}; its thread stays.`);
+              case "wake": {
+                const result = await conductor.wake(workspaceId, true);
+                return out({ result }, result);
+              }
+              case "inbox": {
+                const events = conductor.inbox(workspaceId);
+                return out(events, events.length === 0 ? "Inbox empty." : events.map((event) => `#${event.id} [${event.kind}] ${event.threadId} ${event.deliveredAt ? "sent" : "waiting"} · ${event.text}`).join("\n"));
+              }
+              case "briefing": {
+                const briefing = await conductor.briefing(workspaceId);
+                return out(
+                  briefing,
+                  briefing === null
+                    ? "No briefing yet."
+                    : [
+                        `Briefing from ${formatWhen(briefing.at)}:`,
+                        ...briefing.items.map((item, index) => `${index + 1}. [${item.kind}] ${item.threadId} · ${item.summary}${item.recommendation ? ` → ${item.recommendation}` : ""}`),
+                        ...briefing.handled.map((entry) => `✓ ${entry.what}`),
+                      ].join("\n"),
+                );
+              }
+              case "log": {
+                const entries = conductor.log(workspaceId, 50);
+                return out(entries, entries.map((entry) => `${formatWhen(entry.at)}  ${entry.kind.padEnd(13)} ${entry.threadId ?? ""}  ${entry.text}`).join("\n") || "Nothing logged.");
+              }
+            }
+            throw new Error("Use conductor status|start|restart|stop|wake|inbox|briefing|log.");
           }
           case "watches": {
             const result = await watchers.status();

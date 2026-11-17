@@ -35,6 +35,9 @@ import { TriageThreadList } from "./triage-list";
 import { DigestSection } from "./digest";
 import { LaneSettings, MigrationSettings } from "./settings-panels";
 import { EXPAND_PLANS_FLAG, mountPlanExpander } from "./plan-expander";
+import { CONDUCTOR_PANEL, ConductorPage, ConductorSettings } from "./conductor-page";
+import { DoneForYouSection } from "./conductor-brief";
+import { PlanModelPicker } from "./plan-model-picker";
 
 // --- thread header: status strip + Pull requests panel ------------------------------
 
@@ -251,8 +254,16 @@ export default definePluginApp((app) => {
       return useCatchUpBadge(state, useSettings().values?.catchUp === true);
     },
   });
+  app.slots.navPanel({
+    id: CONDUCTOR_PANEL,
+    title: "Conductor",
+    icon: "Workflow",
+    path: CONDUCTOR_PANEL,
+    component: ConductorPage,
+  });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
+  app.slots.experimental_appOverlay({ id: "plan-model-picker", component: PlanModelPicker });
   app.slots.experimental_sidebarNavigation({
     id: "workspaces", title: "JB Flow workspaces", placement: "list",
     description: "Workspace tabs with projects, threads, sections and tools.",
@@ -444,9 +455,20 @@ export default definePluginApp((app) => {
     },
   });
   app.slots.homepageSection({
+    id: "conductor-feed",
+    title: "Done for you",
+    component: DoneForYouSection,
+  });
+  app.slots.homepageSection({
     id: "stale-digest",
     title: "Stale threads",
     component: DigestSection,
+  });
+  app.slots.settingsSection({
+    id: "conductors",
+    title: "Conductors",
+    description: "One permanent conductor per workspace takes its threads' routine news and leaves you one briefing. Needs the Conductor setting.",
+    component: ConductorSettings,
   });
   app.slots.settingsSection({
     id: "lanes",
