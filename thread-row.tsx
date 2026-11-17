@@ -18,6 +18,7 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { ProjectChip } from "./flow-state";
 import { DragContext } from "./drag";
+import { arrowAction } from "./subthreads";
 
 /** "Alex’s Mac Studio" → "Mac Studio". */
 export const machineLabel = (name: string) => name.replace(/^[^’']+[’']s\s+/, "");
@@ -35,6 +36,14 @@ function neighbourRowId(row: HTMLElement): string | null {
   return (rows[index + 1] ?? rows[index - 1])?.dataset.jbFlowRow ?? null;
 }
 
+/** Focuses the nearest row above this one that shows `threadId`: a subthread's parent. */
+function focusRowAbove(row: HTMLElement, threadId: string) {
+  const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-jb-flow-row]"));
+  for (let index = rows.indexOf(row) - 1; index >= 0; index--) {
+    if (rows[index]!.dataset.jbFlowRow === threadId) return rows[index]!.focus();
+  }
+}
+
 /** Focuses a row once the list has re-rendered. */
 function focusRowSoon(threadId: string | null) {
   if (threadId === null) return;
@@ -49,6 +58,8 @@ export type Group = {
   id: string;
   title: string;
   threads: PluginSidebarThread[];
+  /** What the header counts when it isn't the rows, e.g. a filter's matches including subthreads. */
+  count?: number;
   defaultCollapsed?: boolean;
   limit?: number;
   action?: { label: string; run: () => void };
@@ -186,9 +197,11 @@ export function ThreadRow({
     } else if (event.key === "u") {
       event.preventDefault();
       void actions.setRead(thread.id, thread.isUnread);
-    } else if (subthreads && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    } else if ((subthreads || depth > 0) && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
-      if (subthreads.folded === (event.key === "ArrowRight")) subthreads.onToggle();
+      const action = arrowAction(event.key, { subthreads, hasParent: depth > 0 && thread.parentThreadId !== null });
+      if (action === "parent") focusRowAbove(event.currentTarget, thread.parentThreadId!);
+      else if (action !== null) subthreads?.onToggle();
     } else if (event.key === "j" || event.key === "k") {
       event.preventDefault();
       const rows = Array.from(

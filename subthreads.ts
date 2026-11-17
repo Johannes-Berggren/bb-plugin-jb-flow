@@ -27,19 +27,21 @@ export function childrenByParent<T extends Node>(threads: readonly T[]): Map<str
 
 /**
  * The rows under a thread, depth first, each with its depth below it (1 for a
- * child). Nothing under a folded thread shows. A broken parent chain can't loop.
+ * child). Nothing under a folded thread shows, and with `shown` (a filter's
+ * matches, see `withMatches`) nothing outside it. A broken parent chain can't loop.
  */
 export function subthreadRows<T extends Node>(
   threadId: string,
   children: ReadonlyMap<string, readonly T[]>,
   folded: (threadId: string) => boolean,
+  shown?: ReadonlySet<string>,
 ): Array<{ thread: T; depth: number }> {
   const rows: Array<{ thread: T; depth: number }> = [];
   const seen = new Set([threadId]);
   const visit = (id: string, depth: number) => {
     if (folded(id)) return;
     for (const child of children.get(id) ?? []) {
-      if (seen.has(child.id)) continue;
+      if (seen.has(child.id) || (shown && !shown.has(child.id))) continue;
       seen.add(child.id);
       rows.push({ thread: child, depth });
       visit(child.id, depth + 1);
@@ -52,4 +54,66 @@ export function subthreadRows<T extends Node>(
 /** Every thread under this one, at any depth. */
 export function descendants<T extends Node>(threadId: string, children: ReadonlyMap<string, readonly T[]>): T[] {
   return subthreadRows(threadId, children, () => false).map((row) => row.thread);
+}
+
+/** Each top-level row's thread followed by everything under it, keyed by the top-level row's id. */
+export function treesOf<T extends Node>(roots: readonly T[], children: ReadonlyMap<string, readonly T[]>): Map<string, T[]> {
+  return new Map(roots.map((root) => [root.id, [root, ...descendants(root.id, children)]]));
+}
+
+/** The top-level row each thread sits under, by thread id (a top-level row maps to itself). */
+export function rootIds<T extends Node>(trees: ReadonlyMap<string, readonly T[]>): Map<string, string> {
+  const roots = new Map<string, string>();
+  for (const [rootId, members] of trees) for (const member of members) roots.set(member.id, rootId);
+  return roots;
+}
+
+/**
+ * With a filter on, the threads to show: every match, and every thread above a
+ * match so it keeps its place under its parent. A top-level row shows when it's
+ * in here; a subthread row only when it is too.
+ */
+export function withMatches<T extends Node>(trees: ReadonlyMap<string, readonly T[]>, matches: (thread: T) => boolean): Set<string> {
+  const shown = new Set<string>();
+  for (const members of trees.values()) {
+    const byId = new Map(members.map((member) => [member.id, member]));
+    for (const member of members) {
+      if (!matches(member)) continue;
+      // Walk up to the top-level row; stop at one already shown (its parents are too).
+      for (let at: T | undefined = member; at && !shown.has(at.id); at = at.parentThreadId === null ? undefined : byId.get(at.parentThreadId)) {
+        shown.add(at.id);
+      }
+    }
+  }
+  return shown;
+}
+
+/** The fold state for a thread's subthreads, in the list's collapse store. */
+export const foldKey = (threadId: string) => `subthreads:${threadId}`;
+
+/**
+ * The collapse store without fold state for threads that are gone (deleted, or
+ * archived out of the list), or null when nothing needs to go.
+ */
+export function pruneFolds(stored: Readonly<Record<string, boolean>>, exists: (threadId: string) => boolean): Record<string, boolean> | null {
+  const prefix = foldKey("");
+  const gone = Object.keys(stored).filter((key) => key.startsWith(prefix) && !exists(key.slice(prefix.length)));
+  if (gone.length === 0) return null;
+  const next = { ...stored };
+  for (const key of gone) delete next[key];
+  return next;
+}
+
+/**
+ * What ← or → does on a row, as in a tree view: fold or unfold its subthreads,
+ * or, on a subthread with nothing left to fold, move up to its parent.
+ */
+export function arrowAction(
+  key: "ArrowLeft" | "ArrowRight",
+  row: { subthreads: { folded: boolean } | undefined; hasParent: boolean },
+): "fold" | "unfold" | "parent" | null {
+  const open = row.subthreads !== undefined && !row.subthreads.folded;
+  if (key === "ArrowRight") return row.subthreads?.folded ? "unfold" : null;
+  if (open) return "fold";
+  return row.hasParent ? "parent" : null;
 }

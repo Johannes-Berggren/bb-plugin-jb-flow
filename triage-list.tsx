@@ -11,7 +11,7 @@ import type { FlowState } from "./server";
 import { useSidebarThreadActions } from "./thread-actions";
 import { allSettled, threadPrs, useNow } from "./ui-extras";
 import { groupByProject, groupBySection, quietFor, sortRows } from "./sidebar-groups";
-import { childrenByParent, descendants, subthreadRows, topLevel } from "./subthreads";
+import { childrenByParent, descendants, foldKey, pruneFolds, rootIds, subthreadRows, topLevel, treesOf, withMatches } from "./subthreads";
 import { resolveLanes, sectionNames } from "./lanes";
 import { needsMe, replyQueued } from "./needs-me";
 import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
@@ -83,7 +83,15 @@ function useCollapsed(defaults: Record<string, boolean>) {
       localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
       return next;
     });
-  return { isCollapsed, toggle };
+  /** Forgets subthread folds for threads that are gone, so the store doesn't grow with every fold. */
+  const pruneFoldsOf = useCallback((exists: (threadId: string) => boolean) =>
+    setStored((current) => {
+      const next = pruneFolds(current, exists);
+      if (next === null) return current;
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      return next;
+    }), []);
+  return { isCollapsed, toggle, pruneFoldsOf };
 }
 
 function FilterChip({ hint, active, onClick, glyph, tone, label, count }: {
@@ -382,6 +390,10 @@ export function TriageThreadList({
   // Subthreads ride under their parent's row; only the rest are rows of their own.
   const liveRows = useMemo(() => topLevel(liveThreads), [liveThreads]);
   const subthreads = useMemo(() => childrenByParent(sortRows(liveThreads, createdOrder)), [liveThreads, createdOrder]);
+  // Each row with everything under it. Now, the filters and their counts look at
+  // subthreads too, and a match under a row brings the row along.
+  const trees = useMemo(() => treesOf(liveRows, subthreads), [liveRows, subthreads]);
+  const rootOf = useMemo(() => rootIds(trees), [trees]);
   // Waits and "no next step" depend on the clock, so the queue is rebuilt each minute.
   const nowMinute = Math.floor(now / 60_000);
   const lastNowOrder = useRef<readonly string[]>([]);
@@ -389,28 +401,48 @@ export function TriageThreadList({
     if (!nowEnabled) return null;
     // Before state arrives: an empty Now, so the list doesn't show Needs me and then swap it.
     if (!state) return { now: [], moving: [] };
+    // Subthreads are candidates too; each follows its row's pin and snooze. One
+    // that wants you brings its row into Now, and shows under it there.
     const candidates = liveRows
-      .filter((thread) => !thread.isPinned)
-      .map((thread) => sidebarNowThread(thread, state.snoozedSectionId !== null && thread.sectionId === state.snoozedSectionId));
+      .filter((row) => !row.isPinned)
+      .flatMap((row) => {
+        const snoozed = state.snoozedSectionId !== null && row.sectionId === state.snoozedSectionId;
+        return (trees.get(row.id) ?? [row]).map((thread) => sidebarNowThread(thread, snoozed));
+      });
     const result = nowQueue(candidates, state, { now: Date.now(), openThreadId: activeThreadId ?? null, previous: lastNowOrder.current });
     lastNowOrder.current = result.now.map((entry) => entry.thread.id);
     return result;
-  }, [nowEnabled, state, liveRows, activeThreadId, nowMinute]);
+  }, [nowEnabled, state, liveRows, trees, activeThreadId, nowMinute]);
   const nowEntries = useMemo(
     () => new Map<string, NowEntry>([...(queue?.now ?? []), ...(queue?.moving ?? [])].map((entry) => [entry.thread.id, entry])),
     [queue],
   );
+  // The rows Now and Moving hold: each entry's own row, or the row it sits under.
+  const nowRows = useMemo(() => new Set([...nowEntries.keys()].flatMap((id) => rootOf.get(id) ?? [])), [nowEntries, rootOf]);
+  // The first entry, in queue order, that brought each row in: its own or a subthread's.
+  const surfacedBy = useMemo(() => {
+    const first = new Map<string, NowEntry>();
+    for (const entry of [...(queue?.now ?? []), ...(queue?.moving ?? [])]) {
+      const rowId = rootOf.get(entry.thread.id);
+      if (rowId !== undefined && !first.has(rowId)) first.set(rowId, entry);
+    }
+    return first;
+  }, [queue, rootOf]);
 
   // A thread the conductor briefed says what's needed instead of who holds it.
   const briefs = useConductorBriefs();
-  const rowReason = (entry: NowEntry | undefined) => {
+  // `fromSubthread`: the entry is a folded-away subthread's, shown on the row that holds it.
+  const rowReason = (entry: NowEntry | undefined, fromSubthread = false) => {
     const brief = entry ? briefs.get(entry.thread.id) : undefined;
+    const via = fromSubthread ? "\nIn a folded subthread" : "";
     return entry && state
       ? {
           text: brief ? headlineOf(brief.item, 60) : reasonLabel(entry, state, now),
           detail: brief
-            ? `${headlineOf(brief.item, 200)}${brief.item.recommendation ? `\n→ ${brief.item.recommendation}` : ""}\n${reasonLabel(entry, state, now)}`
-            : undefined,
+            ? `${headlineOf(brief.item, 200)}${brief.item.recommendation ? `\n→ ${brief.item.recommendation}` : ""}\n${reasonLabel(entry, state, now)}${via}`
+            : fromSubthread
+              ? `${reasonLabel(entry, state, now)}${via}`
+              : undefined,
           urgent:
             entry.state === "blocked" ||
             (entry.dueAt !== null && entry.dueAt - now <= DUE_NOW_MS) ||
@@ -431,16 +463,22 @@ export function TriageThreadList({
     else void setFocus(threadId, true);
   };
 
-  const { groups, smartCounts, machineCounts } = useMemo(() => {
+  const { groups, smartCounts, machineCounts, shown } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
     const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
-    const matching = liveRows.filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter));
-    const visible = sortRows(matching, createdOrder);
+    const tagged = (thread: PluginSidebarThread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter);
+    const treeOf = (row: PluginSidebarThread) => trees.get(row.id) ?? [row];
+    const rowById = new Map(liveRows.map((row) => [row.id, row]));
+    // A tag filter keeps the rows with a tagged thread at or under them.
+    const tagShown = tagFilter === null ? null : withMatches(trees, tagged);
+    const visible = sortRows(tagShown ? liveRows.filter((row) => tagShown.has(row.id)) : liveRows, createdOrder);
     // No Snoozed section until the first snooze: then nothing is snoozed (a null
     // sectionId is "unsectioned", not "in a missing section").
     const isSnoozed = (thread: PluginSidebarThread) => snoozedSectionId !== null && thread.sectionId === snoozedSectionId;
     const snoozed = visible.filter(isSnoozed);
     const awake = visible.filter((thread) => !isSnoozed(thread));
+    // What the filter chips count: every awake row and its subthreads, each on its own.
+    const counted = awake.flatMap(treeOf).filter(tagged);
 
     const needs = (thread: PluginSidebarThread) => needsMe(thread, state?.awaiting);
     const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";
@@ -453,6 +491,29 @@ export function TriageThreadList({
       quietFor(thread, Date.now()) > STALLED_AFTER_MS;
     const openPrs = (thread: PluginSidebarThread) =>
       threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
+    // Nothing left to do or watch. A thread you just worked in, or are looking at, isn't finished yet.
+    const finished = (thread: PluginSidebarThread) =>
+      thread.id !== activeThreadId &&
+      quietFor(thread, Date.now()) > DONE_AFTER_MS &&
+      !busy(thread) &&
+      !needs(thread) &&
+      state?.watching[thread.id] === undefined &&
+      state?.awaiting[thread.id] === undefined &&
+      state?.readyToGo?.[thread.id] === undefined &&
+      !isStalled(thread) &&
+      threadPrs(state?.threadPrs[thread.id], null).every((pr) => pr.state === "merged" || pr.state === "closed");
+    // Only unfiled rows whose PRs are all merged or closed: anything you put in a
+    // section stays there. Archiving a thread archives its subthreads with it (bb
+    // does), so a row is done only when everything under it is finished too.
+    const doneRows = new Map<string, boolean>();
+    const doneRow = (row: PluginSidebarThread) => {
+      let done = doneRows.get(row.id);
+      if (done === undefined) {
+        done = row.sectionId === null && allSettled(threadPrs(state?.threadPrs[row.id], null)) && treeOf(row).every(finished);
+        doneRows.set(row.id, done);
+      }
+      return done;
+    };
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
       needs,
       stalled: (thread) => isStalled(thread),
@@ -463,41 +524,44 @@ export function TriageThreadList({
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
       readyToMerge: (thread) => !busy(thread) && openPrs(thread).some((pr) => pr.attention === "ready_to_merge"),
       autopilot: (thread) => state?.watching[thread.id] !== undefined,
-      // Only unfiled threads: anything you put in a section stays there. A thread
-      // you just worked in, or are looking at, stays in Active for a while.
-      done: (thread) =>
-        thread.sectionId === null &&
-        thread.id !== activeThreadId &&
-        quietFor(thread, Date.now()) > DONE_AFTER_MS &&
-        !busy(thread) &&
-        !needs(thread) &&
-        state?.watching[thread.id] === undefined &&
-        state?.awaiting[thread.id] === undefined &&
-        state?.readyToGo?.[thread.id] === undefined &&
-        !isStalled(thread) &&
-        allSettled(threadPrs(state?.threadPrs[thread.id], null)),
+      // A subthread goes with its row: it's done when the row is.
+      done: (thread) => {
+        const row = rowById.get(rootOf.get(thread.id) ?? "");
+        return row !== undefined && doneRow(row);
+      },
     };
     const smartCounts = Object.fromEntries(
-      SMART.map((entry) => [entry.id, awake.filter(sets[entry.id]).length]),
+      SMART.map((entry) => [entry.id, counted.filter(sets[entry.id]).length]),
     ) as Record<SmartId, number>;
     const machineCounts = new Map<string, number>();
-    for (const thread of awake) {
+    for (const thread of counted) {
       const host = threadHost(thread, machines);
       if (host) machineCounts.set(host, (machineCounts.get(host) ?? 0) + 1);
     }
+
+    // A filter shows the rows with a match at or under them, and under each row
+    // only the subthreads that match or lead to one. Its groups count the matches.
+    const filterOf = (matches: (thread: PluginSidebarThread) => boolean) => {
+      const match = (thread: PluginSidebarThread) => tagged(thread) && matches(thread);
+      const shown = withMatches(trees, match);
+      return { shown, rows: awake.filter((row) => shown.has(row.id)), count: (rows: readonly PluginSidebarThread[]) => rows.flatMap(treeOf).filter(match).length };
+    };
 
     // One machine's threads, across every section.
     if (smart?.startsWith("machine:")) {
       const hostId = smart.slice("machine:".length);
       const host = machines?.hosts.find((candidate) => candidate.id === hostId);
+      const filter = filterOf((thread) => threadHost(thread, machines) === hostId);
       return {
         smartCounts,
         machineCounts,
+        shown: filter.shown,
         groups: [
           {
             id: smart,
             title: `On ${host ? machineLabel(host.name) : "machine"}`,
-            threads: awake.filter((thread) => threadHost(thread, machines) === hostId),
+            threads: filter.rows,
+            count: filter.count(filter.rows),
             dynamic: { glyph: "terminal", tone: "text-slate-400" },
           },
         ] satisfies Group[],
@@ -508,38 +572,43 @@ export function TriageThreadList({
     // Done stays one flat list, so Archive all has one place to act on.
     if (smart !== null && smart !== "done") {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
-      const { sections: bySection, loose } = groupBySection(awake.filter(sets[smart as SmartId]), sectionKeys, (thread) =>
+      const filter = filterOf(sets[smart as SmartId]);
+      const { sections: bySection, loose } = groupBySection(filter.rows, sectionKeys, (thread) =>
         sectionKey(thread.sectionId),
       );
       const filtered: Group[] = loose.length > 0
-        ? [{ id: `smart:${smart}`, title: entry.label, threads: loose, dynamic: { glyph: entry.glyph, tone: entry.tone } }]
+        ? [{ id: `smart:${smart}`, title: entry.label, threads: loose, count: filter.count(loose), dynamic: { glyph: entry.glyph, tone: entry.tone } }]
         : [];
       for (const { key, threads: matches } of bySection) {
         const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
         const section = lane ? null : otherSections.find((candidate) => candidate.id === key);
+        const count = filter.count(matches);
         // "smart:" ids stay expanded: a filter's matches can't hide in a collapsed section.
         if (lane) {
-          filtered.push({ id: `smart:${smart}:${key}`, title: lane.title, threads: matches, section: { id: lane.sectionId, name: lane.title, isLane: true } });
+          filtered.push({ id: `smart:${smart}:${key}`, title: lane.title, threads: matches, count, section: { id: lane.sectionId, name: lane.title, isLane: true } });
         } else if (section) {
-          filtered.push({ id: `smart:${smart}:${key}`, title: section.name, threads: matches, section: { id: section.id, name: section.name, isLane: false } });
+          filtered.push({ id: `smart:${smart}:${key}`, title: section.name, threads: matches, count, section: { id: section.id, name: section.name, isLane: false } });
         } else {
-          filtered.push({ id: `smart:${smart}:${key}`, title: entry.label, threads: matches, dynamic: { glyph: entry.glyph, tone: entry.tone } });
+          filtered.push({ id: `smart:${smart}:${key}`, title: entry.label, threads: matches, count, dynamic: { glyph: entry.glyph, tone: entry.tone } });
         }
       }
-      return { smartCounts, machineCounts, groups: filtered };
+      return { smartCounts, machineCounts, shown: filter.shown, groups: filtered };
     }
     if (smart !== null) {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
-      const smartId = smart as SmartId;
-      const members = awake.filter(sets[smartId]);
+      const filter = filterOf(sets[smart as SmartId]);
+      // Archiving a row takes its subthreads with it, so only the rows are sent.
+      const members = filter.rows;
       return {
         smartCounts,
         machineCounts,
+        shown: filter.shown,
         groups: [
           {
             id: `smart:${smart}`,
             title: entry.label,
             threads: members,
+            count: filter.count(members),
             dynamic: { glyph: entry.glyph, tone: entry.tone },
             action:
               smart === "done" && members.length > 0
@@ -561,17 +630,29 @@ export function TriageThreadList({
     };
     const waitingLane = lanes.find((lane) => lane.id === "waiting");
     const inActive = (thread: PluginSidebarThread) => thread.sectionId === null && !(waitingLane && waitsOnOthers(thread));
+    // A row and the subthreads under it that show (with a tag filter, only those leading to a tag).
+    const shownTree = (row: PluginSidebarThread) => (tagShown ? treeOf(row).filter((thread) => tagShown.has(thread.id)) : treeOf(row));
+    // A row needs you when it or a subthread under it does.
+    const needing = (row: PluginSidebarThread) => shownTree(row).filter(needs).length;
     // With Now on, its groups claim their rows; with it off, Needs me does.
-    const claimed = (thread: PluginSidebarThread) => (queue ? nowEntries.has(thread.id) : needs(thread));
+    const claimed = (thread: PluginSidebarThread) => (queue ? nowRows.has(thread.id) : needing(thread) > 0);
     const stalled = awake.filter((thread) => !thread.isPinned && !claimed(thread) && isStalled(thread));
     const pinned = awake.filter((thread) => thread.isPinned);
-    const attention = awake.filter((thread) => !thread.isPinned && needs(thread));
-    const rest = awake.filter((thread) => !thread.isPinned && !claimed(thread) && !isStalled(thread) && !sets.done(thread));
+    const attention = awake.filter((thread) => !thread.isPinned && needing(thread) > 0);
+    const rest = awake.filter((thread) => !thread.isPinned && !claimed(thread) && !isStalled(thread) && !doneRow(thread));
 
     const result: Group[] = [];
     if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
     if (queue) {
-      const rows = (entries: readonly NowEntry[]) => entries.flatMap((entry) => visible.find((thread) => thread.id === entry.thread.id) ?? []);
+      // Each entry's row, in queue order: a subthread's entry stands for the row it sits under, once.
+      const placed = new Set<string>();
+      const rows = (entries: readonly NowEntry[]) =>
+        entries.flatMap((entry) => {
+          const row = rowById.get(rootOf.get(entry.thread.id) ?? "");
+          if (!row || placed.has(row.id) || !visible.includes(row)) return [];
+          placed.add(row.id);
+          return [row];
+        });
       result.push({ id: "now", title: "Now", threads: rows(queue.now), limit: NOW_ROWS, dynamic: { glyph: "star", tone: "text-amber-500" } });
       result.push({ id: "moving", title: "Moving", threads: rows(queue.moving), defaultCollapsed: true, dynamic: { glyph: "hourglass", tone: "text-violet-500" } });
     } else {
@@ -579,6 +660,7 @@ export function TriageThreadList({
         id: "needs-me",
         title: "Needs me",
         threads: attention,
+        count: attention.reduce((sum, row) => sum + needing(row), 0),
         dynamic: { glyph: "question", tone: "text-amber-500" },
       });
     }
@@ -643,7 +725,8 @@ export function TriageThreadList({
     }
     const firstUser = result.find((group) => group.section !== undefined);
     if (firstUser) firstUser.firstUserGroup = true;
-    const done = awake.filter((thread) => !thread.isPinned && !claimed(thread) && sets.done(thread));
+    // Archive all sends only the rows: bb archives their subthreads with them.
+    const done = awake.filter((thread) => !thread.isPinned && !claimed(thread) && doneRow(thread));
     result.push({
       id: "done",
       title: "Done",
@@ -655,12 +738,12 @@ export function TriageThreadList({
     result.push({
       id: "snoozed",
       title: "Snoozed",
-      threads: snoozed.filter((thread) => !nowEntries.has(thread.id)).sort((a, b) => (state?.snoozes[a.id]?.until ?? 0) - (state?.snoozes[b.id]?.until ?? 0)),
+      threads: snoozed.filter((thread) => !nowRows.has(thread.id)).sort((a, b) => (state?.snoozes[a.id]?.until ?? 0) - (state?.snoozes[b.id]?.until ?? 0)),
       defaultCollapsed: true,
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
-    return { groups: result, smartCounts, machineCounts };
-  }, [threads, liveRows, queue, nowEntries, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById, workspaceState, allThreads, projects, navigate]);
+    return { groups: result, smartCounts, machineCounts, shown: tagShown };
+  }, [threads, liveRows, trees, rootOf, queue, nowRows, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById, workspaceState, allThreads, projects, navigate]);
 
   const defaults = useMemo(
     () =>
@@ -669,12 +752,19 @@ export function TriageThreadList({
       ),
     [groups],
   );
-  const { isCollapsed, toggle } = useCollapsed(defaults);
+  const { isCollapsed, toggle, pruneFoldsOf } = useCollapsed(defaults);
+  // Folds of threads that are gone (deleted, or archived out of bb's list) are dropped.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const ids = new Set(allThreads.map((thread) => thread.id));
+    pruneFoldsOf((threadId) => ids.has(threadId));
+  }, [status, allThreads, pruneFoldsOf]);
 
   // Subthreads start unfolded, as in bb's own list; folding is remembered per thread.
-  const foldKey = (threadId: string) => `subthreads:${threadId}`;
+  // With a filter on, its matches show whatever is folded, as its sections do.
   const isFolded = (threadId: string) => isCollapsed(foldKey(threadId));
   const subthreadToggle = (thread: PluginSidebarThread) => {
+    if (shown) return undefined;
     const under = descendants(thread.id, subthreads);
     if (under.length === 0) return undefined;
     return {
@@ -689,7 +779,7 @@ export function TriageThreadList({
       onToggle: () => toggle(foldKey(thread.id)),
     };
   };
-  const renderRow = (thread: PluginSidebarThread, group: Group, depth: number) => (
+  const renderRow = (thread: PluginSidebarThread, group: Group, depth: number, borrowed?: NowEntry) => (
     <ThreadRow
       key={thread.id}
       thread={thread}
@@ -720,7 +810,7 @@ export function TriageThreadList({
       onToggleFocus={nowEnabled ? () => toggleFocus(thread.id) : undefined}
       due={nowEnabled ? state?.due[thread.id] : undefined}
       onSetDue={nowEnabled ? () => setDueTarget(thread.id) : undefined}
-      reason={rowReason(group.id === "now" || group.id === "moving" ? nowEntries.get(thread.id) : undefined)}
+      reason={rowReason(group.id === "now" || group.id === "moving" ? (nowEntries.get(thread.id) ?? borrowed) : undefined, borrowed !== undefined && !nowEntries.has(thread.id))}
     />
   );
 
@@ -742,7 +832,7 @@ export function TriageThreadList({
     >
       <div className="jf-triage-heading"><span>Threads</span>
         {smart !== null && <button type="button" onClick={() => setSmart(null)}>Clear filter</button>}
-        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus · d due date" : ""} · e archive · u unread · ←/→ fold subthreads · j/k move`}><Icon name="Info" className="size-3" /></span>
+        <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus · d due date" : ""} · e archive · u unread · ←/→ fold subthreads, ← to the parent · j/k move`}><Icon name="Info" className="size-3" /></span>
       </div>
       <div className="jf-triage-filters">
         {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
@@ -847,7 +937,7 @@ export function TriageThreadList({
             ) : null}
             <GroupHeader
               title={group.title}
-              count={group.threads.length}
+              count={group.count ?? group.threads.length}
               collapsed={collapsed}
               onToggle={() => toggle(group.id)}
               action={group.action}
@@ -863,10 +953,14 @@ export function TriageThreadList({
               </p>
             ) : (
               <>
-                {group.threads.slice(0, limit).flatMap((thread) => [
-                  renderRow(thread, group, 0),
-                  ...subthreadRows(thread.id, subthreads, isFolded).map((row) => renderRow(row.thread, group, row.depth)),
-                ])}
+                {group.threads.slice(0, limit).flatMap((thread) => {
+                  const under = shown ? subthreadRows(thread.id, subthreads, () => false, shown) : subthreadRows(thread.id, subthreads, isFolded);
+                  // A row in Now only for a subthread folded away under it says why itself,
+                  // in the subthread's words (its conductor headline, if it has one).
+                  const via = group.id === "now" || group.id === "moving" ? surfacedBy.get(thread.id) : undefined;
+                  const borrowed = via && !nowEntries.has(thread.id) && !under.some((row) => row.thread.id === via.thread.id) ? via : undefined;
+                  return [renderRow(thread, group, 0, borrowed), ...under.map((row) => renderRow(row.thread, group, row.depth))];
+                })}
                 {group.threads.length > limit ? (
                   <button
                     type="button"

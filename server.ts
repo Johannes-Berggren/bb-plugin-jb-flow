@@ -37,6 +37,7 @@ import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 import { replyQueued } from "./needs-me";
 import { approvePlan, planModels } from "./plan-model";
+import { nextNeedsMe } from "./next-needs-me";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
 const CHANGED = "jb-flow-changed";
@@ -917,16 +918,19 @@ export default async function plugin(bb: BbPluginApi) {
     const failed: string[] = [];
     // A conductor is permanent; archiving one in bulk would only bring it straight back.
     threadIds = threadIds.filter((threadId) => !conductor?.isConductor(threadId));
+    // bb archives a thread's subthreads with it; they leave the digest too.
+    const archived = new Set<string>();
     for (const threadId of threadIds) {
-      try {
-        await bb.sdk.threads.archive({ threadId });
-      } catch {
+      const result = await bb.sdk.threads.archive({ threadId }).catch(() => null);
+      if (result === null) {
         failed.push(threadId);
+        continue;
       }
+      archived.add(threadId);
+      for (const id of result?.archivedThreadIds ?? []) archived.add(id);
     }
     const cached = await bb.storage.kv.get<Digest>("digest");
     if (cached) {
-      const archived = new Set(threadIds.filter((id) => !failed.includes(id)));
       await bb.storage.kv.set("digest", {
         ...cached,
         items: cached.items.filter((item) => !archived.has(item.threadId)),
@@ -1237,16 +1241,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await prTracker.refresh();
       return { ok: true };
     },
-    next_needs_me: async ({ archiveThreadId }) => {
-      // Worked out before archiving: the archived thread's place says where "next" is.
-      const nextId = await nextThread(archiveThreadId ?? focus.focusedThreadId(), archiveThreadId);
-      // Pinned threads are kept on purpose: a shortcut moves on from them but never archives them.
-      const pinned = archiveThreadId !== null && (await bb.sdk.threads.get({ threadId: archiveThreadId }).catch(() => null))?.pinnedAt;
-      if (archiveThreadId !== null && !pinned) await bb.sdk.threads.archive({ threadId: archiveThreadId });
-      if (nextId === null) return { opened: null };
-      await bb.sdk.threads.open({ threadId: nextId, file: null });
-      return { opened: nextId };
-    },
+    next_needs_me: ({ archiveThreadId }) =>
+      nextNeedsMe(archiveThreadId, {
+        nextThread,
+        focusedThreadId: () => focus.focusedThreadId(),
+        getThread: (threadId) => bb.sdk.threads.get({ threadId }),
+        archive: (threadId) => bb.sdk.threads.archive({ threadId }),
+        open: (threadId) => bb.sdk.threads.open({ threadId, file: null }),
+      }),
     plan_models: ({ threadId }) => planModels(bb.sdk, threadId),
     plan_approve: async ({ threadId, model }) => {
       await approvePlan(bb.sdk, { threadId, model });
