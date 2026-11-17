@@ -135,12 +135,22 @@ Never poll GitHub in loops. That means no `gh pr checks --watch`, no `gh run wat
   - the PR merges or closes.
 
   The message only comes once your thread is idle. While you keep working, nothing arrives, so use `pr_status` to check a PR yourself.
+
+  Say what you'll do once checks pass with `after_green` (CLI `--after-green`): `merge` when merging is part of your task, `continue` when more work follows (the next PR in a stack, a deploy step), `nothing` when green needs no action from you.
 - **Releases:** when you're blocked on a release, say so plainly ("waiting for release") and end your turn.
   - In projects with `releaseWatch` configured, the thread is woken with "released: …" once a release PR merges and its workflows pass.
   - To register explicitly: `bb jb-flow release-wait --self`.
 - **Usage limits:** if a session or weekly limit stops you, "continue" is scheduled automatically for just after the reset.
 
 `bb jb-flow watches` lists everything currently being watched.
+
+### When your workspace has a conductor
+
+Some workspaces have a **conductor**: a permanent thread that takes routine PR news for every thread in it.
+- You're still woken for CI failures and review feedback.
+- CI green, merges and releases go to the conductor. Pass `after_green: "continue"` if you need to hear about green yourself.
+- With `after_green: "merge"` the conductor merges for you; you may not hear about that PR again.
+- A message starting `[conductor]` is the conductor relaying an instruction, often the user's own reply. Act on it in your thread as usual; don't message the conductor back.
 
 ## Threads with several PRs (stacked or across repos)
 

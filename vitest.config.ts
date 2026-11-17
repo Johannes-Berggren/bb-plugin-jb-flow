@@ -22,6 +22,10 @@ export default defineConfig({
       "catch-up.ui.test.tsx",
       "now.ui.test.tsx",
       "subthreads.ui.test.tsx",
+      "conductor-page.ui.test.tsx",
+      "server-boot.test.ts",
+      "conductor-brief.ui.test.tsx",
+      "plan-model-picker.ui.test.tsx",
     ],
   },
 });
