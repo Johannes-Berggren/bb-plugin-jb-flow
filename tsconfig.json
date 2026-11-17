@@ -43,6 +43,7 @@
     "stale-digest.ts",
     "wakeups.ts",
     "pr-ci.ts",
+    "now-queue.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",

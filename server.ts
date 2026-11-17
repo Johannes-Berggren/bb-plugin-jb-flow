@@ -1,6 +1,6 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema } from "./workspaces";
-import { createThreadStatus, parseStatusReport } from "./thread-status";
+import { createThreadStatus } from "./thread-status";
 import { countSince } from "./catch-up-model";
 import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
@@ -14,7 +14,6 @@ import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers } from "./leftovers";
-import { nextAfter, nowQueue, reasonLabel, serverNowThread } from "./now-model";
 import { createNowStore } from "./now-store";
 import { createFocus, needsAttention } from "./focus";
 import { createPrTracker } from "./prs";
@@ -24,12 +23,13 @@ import { createMachines } from "./machines";
 import { createRepoCommands, repoCommandSchema } from "./repo-commands";
 import { loadLocalConfig, readLocalConfigFile } from "./local-config";
 import { createChanges } from "./changes";
-import { createThreadLists, type ListedThread } from "./thread-cache";
+import { createThreadLists } from "./thread-cache";
 import { createSnoozes, registerSnoozeTool } from "./snooze";
 import { createStaleDigest } from "./stale-digest";
 import { autoContinueOverridesFor, createWakeups } from "./wakeups";
 import { createPrCi, registerPrTools } from "./pr-ci";
-import { formatDue, formatWhen, parseDue, parseDueLine } from "./when";
+import { createNowQueue, registerDueFromStatus, registerDueTool } from "./now-queue";
+import { formatDue, formatWhen, parseDue } from "./when";
 import { AFTER_GREEN, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
 import { createConductorStore } from "./conductor-store";
@@ -37,9 +37,7 @@ import { migrate } from "./migrations";
 import { quietFor } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers } from "./watchers";
-import { replyQueued } from "./needs-me";
 import { approvePlan, planModels } from "./plan-model";
-import { nextNeedsMe } from "./next-needs-me";
 import { rpcContract, type FlowState } from "./rpc-contract";
 
 export { rpcContract } from "./rpc-contract";
@@ -292,56 +290,9 @@ export default async function plugin(bb: BbPluginApi) {
   const { getSnoozes, findSnoozedSection, snooze, unsnooze, wakeDue } = snoozes;
   const staleDigest = createStaleDigest(bb, { settings, changed, getSnoozes, listAllActiveThreads, conductor: () => conductor });
   const { getKept, buildDigest, readDigest, archive } = staleDigest;
-  // A status report's "**Due:**" line sets the deadline. Leaving it out later keeps the date.
-  bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
-    if (!lastAssistantText || !(await settings.get()).nowQueue) return;
-    const line = parseStatusReport(lastAssistantText, 0)?.due;
-    const parsed = line ? parseDueLine(line) : null;
-    if (parsed) await nowStore.setDue(thread.id, parsed.at, parsed.reason, "agent");
-  });
-
-
-async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
-    const waiting = await awaiting.all();
-    const snoozedSection = await findSnoozedSection();
-    // One list instead of a get per entry; outputs fetched in parallel below.
-    const byId = new Map((await listAllActiveThreads()).map((thread) => [thread.id, thread]));
-    const candidates = Object.entries(waiting).flatMap(([threadId, since]) => {
-      const thread = byId.get(threadId);
-      if (!thread || thread.status !== "idle" || replyQueued(thread) || (snoozedSection !== null && thread.sectionId === snoozedSection)) return [];
-      return [{ thread, since }];
-    });
-    const asks = new Map<string, string>();
-    if (withAsk) {
-      for (let index = 0; index < candidates.length; index += 8) {
-        await Promise.all(
-          candidates.slice(index, index + 8).map(async ({ thread }) => {
-            const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
-            // The ask is at the end of the message: show its last meaningful lines.
-            const ask = (output.output ?? "")
-              .split("\n")
-              .map((line) => line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`>#]+/g, "").trim())
-              .filter((line) => line.length > 0 && !/^\d{1,2}[./]\d{1,2}[./]\d{2,4}|^\d{4}-\d{2}-\d{2}|^stamped/i.test(line))
-              .slice(-3)
-              .join(" ")
-              .slice(0, 240);
-            asks.set(thread.id, ask);
-          }),
-        );
-      }
-    }
-    const items = candidates.map(({ thread, since }) => ({
-      threadId: thread.id,
-      title: thread.title ?? thread.titleFallback ?? "Untitled",
-      projectId: thread.projectId,
-      // Date the ask by the thread's last activity: backfilled entries carry the
-      // classification time, not when the agent actually asked.
-      since: Math.min(since, thread.updatedAt),
-      ask: asks.get(thread.id) ?? "",
-    }));
-    items.sort((a, b) => a.since - b.since);
-    return { items };
-  }
+  registerDueFromStatus(bb, { settings, nowStore });
+  const nowAndNext = createNowQueue(bb, { settings, awaiting, prTracker, nowStore, focus, findSnoozedSection, watchingByThread, listAllActiveThreads });
+  const { currentNow, nextThread, yourMove } = nowAndNext;
 
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
   const leftovers = createLeftovers(bb);
@@ -412,6 +363,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     ...staleDigest.rpc,
     ...wakeups.rpc,
     ...prCi.rpc,
+    ...nowAndNext.rpc,
     workspaces_get: () => workspaces.read(),
     workspace_save: (input) => workspaces.save(input),
     workspace_remove: async ({ id }) => { await workspaces.remove(id); return { ok: true }; },
@@ -427,8 +379,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       changed();
       return { tags: unique };
     },
-    focus_set: async ({ threadId, focused }) => ({ focused: await nowStore.set(threadId, focused) }),
-    due_set: async ({ threadId, at, reason }) => ({ ok: (await nowStore.setDue(threadId, at, reason, "you")).applied }),
     thread_status: ({ threadId, refresh }) => threadStatus.get(threadId, refresh),
     thread_preview: async ({ threadId }) => {
       const [output, outline] = await Promise.all([
@@ -476,14 +426,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await bb.sdk.threads.stop({ threadId });
       return { ok: true };
     },
-    next_needs_me: ({ archiveThreadId }) =>
-      nextNeedsMe(archiveThreadId, {
-        nextThread,
-        focusedThreadId: () => focus.focusedThreadId(),
-        getThread: (threadId) => bb.sdk.threads.get({ threadId }),
-        archive: (threadId) => bb.sdk.threads.archive({ threadId }),
-        open: (threadId) => bb.sdk.threads.open({ threadId, file: null }),
-      }),
     plan_models: ({ threadId }) => planModels(bb.sdk, threadId),
     plan_approve: async ({ threadId, model }) => {
       await approvePlan(bb.sdk, { threadId, model });
@@ -507,7 +449,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
     },
-    your_move: () => yourMove(),
     unreleased: ({ projectId, refresh }) => unreleased(projectId, refresh),
     leftovers_get: ({ refresh }) => leftovers.read(refresh),
     leftovers_clean: () => leftovers.clean(),
@@ -616,37 +557,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   settings.onChange((next) => {
     agentSettings = next;
   });
-  bb.agents.registerTool({
-    name: "set_thread_due",
-    description:
-      "Record a real deadline for the current BB thread, or clear one that no longer applies. The thread then rises in the user's sidebar as the date gets close. A date the user set themselves can't be changed from here.",
-    instructions:
-      "When this work has a real outside deadline (an invoice due date, a contract date, a customer meeting, a date someone else set), call set_thread_due with the date and what falls due. Never invent a date, and don't use it for your own goals or estimates. Call it with when: none once the deadline no longer applies.",
-    parameters: z.object({
-      when: z.string().describe("YYYY-MM-DD (the end of that day) or YYYY-MM-DDTHH:MM, or none to clear"),
-      reason: z.string().max(300).optional().describe("What falls due, in a few words. Required when setting a date."),
-    }),
-    async execute({ when, reason }, ctx) {
-      try {
-        if (when.trim().toLowerCase() === "none") {
-          const { applied } = await nowStore.setDue(ctx.threadId, null, null, "agent");
-          return applied ? "Deadline cleared." : "The user set this deadline, so it wasn't changed. Tell them if it no longer applies.";
-        }
-        if (!reason?.trim()) throw new Error("Say what falls due in reason.");
-        const at = parseDue(when);
-        const { applied, due } = await nowStore.setDue(ctx.threadId, at, reason.trim(), "agent");
-        if (applied) return `Deadline set: ${formatDue(at)} (${formatWhen(at)}).`;
-        return due
-          ? `The user set this deadline to ${formatWhen(due.at)}, so it wasn't changed. Tell them if you think it's wrong.`
-          : "The user already cleared this date, so it wasn't set again. Tell them if you think it does apply.";
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-          isError: true,
-        };
-      }
-    },
-  });
+  registerDueTool(bb, nowStore);
   migrate(bb);
   conductor = await createConductor(bb, {
     store: createConductorStore(() => bb.storage.database()),
@@ -746,46 +657,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   }
 
   /** Everything the deck shows, in one call. */
-  /** The sidebar's Now, across every workspace. Tabs belong to each browser window, not the server. */
-  async function currentNow(threads: readonly ListedThread[]) {
-    const [waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due, snoozedSection] = await Promise.all([
-      awaiting.all(),
-      awaiting.promised(),
-      awaiting.waitingOthers(),
-      awaiting.readyToGo(),
-      watchingByThread(),
-      prTracker.byThread(),
-      nowStore.all(),
-      nowStore.dueAll(),
-      findSnoozedSection(),
-    ]);
-    const flow = { awaiting: waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due };
-    const now = Date.now();
-    const rows = threads
-      .filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && thread.parentThreadId === null && thread.pinnedAt === null)
-      .map((thread) => serverNowThread(thread, snoozedSection !== null && thread.sectionId === snoozedSection));
-    const queue = nowQueue(rows, flow, { now });
-    const titles = new Map(threads.map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""]));
-    const describe = (entry: (typeof queue.now)[number]) => ({
-      id: entry.thread.id,
-      title: titles.get(entry.thread.id) ?? "",
-      state: entry.state,
-      reason: reasonLabel(entry, flow, now),
-      focused: entry.focused,
-      dueAt: entry.dueAt,
-    });
-    return { now: queue.now.map(describe), moving: queue.moving.map(describe) };
-  }
-
-  /** Where "next" goes. With Now off, the first thread that needs you, as before. */
-  async function nextThread(current: string | null, skip: string | null): Promise<string | null> {
-    const needs = await focus.needsMe();
-    if (!(await settings.get()).nowQueue) return needs.find((thread) => thread.id !== skip)?.id ?? null;
-    const { now } = await currentNow(await listLiveThreads(bb));
-    // Pinned threads aren't in Now, but one that's blocked still needs you.
-    return nextAfter([...new Set([...now.map((entry) => entry.id), ...needs.map((thread) => thread.id)])], current);
-  }
-
   async function deckSnapshot() {
     const [threads, waiting, radar, focused, snoozedSection] = await Promise.all([
       listThreadsCached(),
