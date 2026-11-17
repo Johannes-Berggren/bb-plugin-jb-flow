@@ -5,6 +5,7 @@
 - **Decision buttons.** When an agent ends with numbered options, they appear as one-click replies above the composer. Tick several to send them together.
 - **Workspaces.** Workspace tabs across the top group projects, threads, sections and plugin navigation, optionally by project; All and No workspace keep everything reachable. They change what navigation shows, not what plugins can access.
 - **⌘K palette.** One search over threads, messages, PRs, workspaces, projects and actions, scoped to the current workspace. Tab on a thread replies to a decision, snoozes (`tomorrow`, `3d`), moves, tags, watches CI or archives. Turn it off to give the key back to BB.
+- **Ctrl+Tab.** Hold Ctrl and tap Tab to step back through the threads you viewed last; let go to open one. Ctrl+` does the same for workspaces. Desktop app.
 - **Catch up.** Go through unread threads one card at a time (⌥⇧C): what happened since you looked, with the live thread and composer. → marks read, ← keeps it unread; snooze or archive, with undo.
 - **Waiting for others fills itself.** A thread waiting on a person or a reviewer goes there and comes back when its next turn no longer waits on anyone.
 - **Snooze.** A clock button, `bb jb-flow snooze` or the `snooze_thread` agent tool hides a thread until `2h`, `tomorrow`, `mon` or a date, then brings it back unread with an optional wake-up note for the agent.
