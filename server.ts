@@ -37,6 +37,7 @@ import { listLiveThreads } from "./thread-list";
 import { createWatchers, releaseWatchSchema } from "./watchers";
 import { replyQueued } from "./needs-me";
 import { approvePlan, planModels } from "./plan-model";
+import { nextNeedsMe } from "./next-needs-me";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
 const CHANGED = "jb-flow-changed";
@@ -1217,16 +1218,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await prTracker.refresh();
       return { ok: true };
     },
-    next_needs_me: async ({ archiveThreadId }) => {
-      // Worked out before archiving: the archived thread's place says where "next" is.
-      const nextId = await nextThread(archiveThreadId ?? focus.focusedThreadId(), archiveThreadId);
-      // Pinned threads are kept on purpose: a shortcut moves on from them but never archives them.
-      const pinned = archiveThreadId !== null && (await bb.sdk.threads.get({ threadId: archiveThreadId }).catch(() => null))?.pinnedAt;
-      if (archiveThreadId !== null && !pinned) await bb.sdk.threads.archive({ threadId: archiveThreadId });
-      if (nextId === null) return { opened: null };
-      await bb.sdk.threads.open({ threadId: nextId, file: null });
-      return { opened: nextId };
-    },
+    next_needs_me: ({ archiveThreadId }) =>
+      nextNeedsMe(archiveThreadId, {
+        nextThread,
+        focusedThreadId: () => focus.focusedThreadId(),
+        getThread: (threadId) => bb.sdk.threads.get({ threadId }),
+        archive: (threadId) => bb.sdk.threads.archive({ threadId }),
+        open: (threadId) => bb.sdk.threads.open({ threadId, file: null }),
+      }),
     plan_models: ({ threadId }) => planModels(bb.sdk, threadId),
     plan_approve: async ({ threadId, model }) => {
       await approvePlan(bb.sdk, { threadId, model });

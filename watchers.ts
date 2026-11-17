@@ -345,6 +345,7 @@ export function createWatchers(
 
     // 2. Pending releases whose workflow runs completed wake their waiters.
     for (const [key, release] of Object.entries(pending)) {
+      if (lifetime.signal.aborted) return;
       const repo = await releaseRepo(release.projectName);
       if (!repo) continue;
       const runList =
@@ -369,6 +370,7 @@ export function createWatchers(
       const undelivered = deliveredWhen !== undefined && !deliveryReached(live, key.slice(key.lastIndexOf("@") + 1));
       if (undelivered && !stale) continue;
       const failed = runs.filter((run) => run.conclusion && !["success", "skipped", "neutral"].includes(run.conclusion));
+      if (lifetime.signal.aborted) return;
       const allWaiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
       const targets = Object.entries(allWaiters).filter(
         ([, waiter]) => waiter.projectName === release.projectName && waiter.since < release.mergedAt + 60_000,
@@ -405,6 +407,8 @@ export function createWatchers(
       delete pending[key];
       bb.log.info(`release ${key}: notified ${delivery.notified} thread(s)`);
     }
+    // Disposed meanwhile: the next load sees these releases again and picks them up.
+    if (lifetime.signal.aborted) return;
     // Most cycles find nothing new; don't rewrite storage or wake every window for that.
     if (fingerprint() === before) return;
     await kv.set("pendingReleases", pending);
