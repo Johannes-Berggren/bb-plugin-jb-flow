@@ -12,7 +12,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
-import { nextMove, parseDecisionOptions } from "./decisions";
+import { nextMove } from "./decisions";
 import { createLeftovers } from "./leftovers";
 import { createNowStore } from "./now-store";
 import { createFocus, needsAttention } from "./focus";
@@ -29,6 +29,7 @@ import { createStaleDigest } from "./stale-digest";
 import { autoContinueOverridesFor, createWakeups } from "./wakeups";
 import { createPrCi, registerPrTools } from "./pr-ci";
 import { createNowQueue, registerDueFromStatus, registerDueTool } from "./now-queue";
+import { createDeck } from "./deck";
 import { formatDue, formatWhen, parseDue } from "./when";
 import { AFTER_GREEN, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
@@ -634,61 +635,7 @@ export default async function plugin(bb: BbPluginApi) {
     "<when>: 30m, 2h, 3d, 1w, today, tonight, tomorrow, mon…sun, next-week, YYYY-MM-DD, YYYY-MM-DDTHH:MM",
   ].join("\n");
 
-  // --- cheap snapshots for external controllers (Stream Deck) ------------------
-  // The deck polls every few seconds while agents keep bb busy, so these read
-  // cached data: one thread list per 10s, no message bodies except the focused
-  // thread's (re-read only when it changes).
-
-  // Re-parse the focused thread's options only when it changes.
-  let decisionCache: { key: string; options: ReturnType<typeof parseDecisionOptions> } | null = null;
-  async function decisionsFor(threadId: string | null) {
-    const thread = threadId === null ? null : await bb.sdk.threads.get({ threadId }).catch(() => null);
-    // Same rule as the composer buttons: only an idle thread is waiting on an answer.
-    let options: ReturnType<typeof parseDecisionOptions> = [];
-    if (thread !== null && thread.status === "idle") {
-      const cacheKey = `${thread.id}:${thread.updatedAt}`;
-      if (decisionCache?.key !== cacheKey) {
-        const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
-        decisionCache = { key: cacheKey, options: parseDecisionOptions(output.output ?? "") };
-      }
-      options = decisionCache.options;
-    }
-    return { threadId: thread?.id ?? null, title: thread?.title ?? null, status: thread?.status ?? null, options };
-  }
-
-  /** Everything the deck shows, in one call. */
-  async function deckSnapshot() {
-    const [threads, waiting, radar, focused, snoozedSection] = await Promise.all([
-      listThreadsCached(),
-      awaiting.all(),
-      prRadar(),
-      decisionsFor(focus.focusedThreadId()),
-      findSnoozedSection(),
-    ]);
-    // Snoozed threads stay hidden until they wake, as in the sidebar and `needs-me`.
-    const open = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        thread.deletedAt === null &&
-        thread.visibility === "visible" &&
-        thread.parentThreadId === null &&
-        (snoozedSection === null || thread.sectionId !== snoozedSection),
-    );
-    const needs = open.filter((thread) => needsAttention(thread, waiting));
-    const needIds = new Set(needs.map((thread) => thread.id));
-    const moves = open
-      .filter((thread) => thread.status === "idle" && waiting[thread.id] !== undefined && !needIds.has(thread.id))
-      .map((thread) => Math.min(waiting[thread.id]!, thread.updatedAt));
-    const nowEnabled = (await settings.get()).nowQueue;
-    const queue = nowEnabled ? await currentNow(threads) : { now: [] };
-    return {
-      focused,
-      needsMe: { count: needs.length },
-      yourMove: { count: moves.length, oldestSince: moves.length ? Math.min(...moves) : null },
-      prRadar: { broken: radar.broken.length, ready: radar.ready.length },
-      ...(nowEnabled ? { now: { count: queue.now.length, top: queue.now[0] ?? null } } : {}),
-    };
-  }
+  const { decisionsFor, deckSnapshot } = createDeck(bb, { settings, listThreadsCached, awaiting, prRadar, focus, findSnoozedSection, currentNow });
 
   bb.cli.register({
     name: "jb-flow",
