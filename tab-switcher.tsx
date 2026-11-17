@@ -30,7 +30,7 @@ import {
 import { StatusIcon, rowStatus, runInfo, threadPrs, useNow } from "./ui-extras";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
 import { workspaceTabOrder } from "./workspace-swipe";
-import { inWorkspace, workspaceForThread, type WorkspaceState } from "./workspaces";
+import { inWorkspace, workspaceColor, workspaceForThread, type WorkspaceState } from "./workspaces";
 import { cn } from "@/lib/utils";
 
 /** Held this long, the panel appears; a quicker tap just flips. */
@@ -314,6 +314,7 @@ function SwitcherPanel({
           {switcher.workspaces.map((tab, index) => {
             const unread = unreadByTab.get(tab) ?? 0;
             const chosen = switcher.row === "workspaces" && index === switcher.workspaceIndex;
+            const color = workspaceColor(tab, workspaceState.workspaces);
             return (
               <div
                 key={tab ?? "all"}
@@ -321,9 +322,11 @@ function SwitcherPanel({
                 aria-selected={chosen}
                 className="jf-switcher-workspace"
                 data-current={tab === selected || undefined}
+                data-jf-color={color}
                 onMouseEnter={() => onHover("workspaces", index)}
                 onMouseDown={press("workspaces", index)}
               >
+                {color ? <i className="jf-workspace-color-dot" aria-hidden="true" /> : null}
                 <span className="jf-switcher-workspace-name">{workspaceLabel(tab, workspaceState.workspaces)}</span>
                 {unread > 0 ? <span className="jf-switcher-count">{unread}</span> : null}
               </div>

@@ -326,3 +326,53 @@ it("shows no workspace bar and filters nothing while the Workspaces setting is o
   expect(topbar.queryByRole("tab")).toBeNull();
   topbar.lifecycle.unmount();
 });
+
+it("picks a workspace color in settings and shows it on the workspace's tab", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const saved: unknown[] = [];
+  const settings = renderSlot(
+    app.settingsSections.find((section) => section.id === "workspaces")!,
+    {},
+    {
+      settings: { workspaces: true },
+      rpc: {
+        workspaces_get: () => state,
+        workspace_save: (input: unknown) => {
+          saved.push(input);
+          return input;
+        },
+      },
+      sidebarThreads: { status: "ready", projects, threads: [], sections: [] },
+      sdk: { plugins: { list: async () => ({ plugins: [] }) } },
+    },
+  );
+  fireEvent.click(await settings.findByRole("button", { name: "Edit Acme" }));
+  expect(settings.getByRole("radio", { name: "No color" }).getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(settings.getByRole("radio", { name: "Teal" }));
+  expect(settings.getByRole("radio", { name: "Teal" }).getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(settings.getByRole("button", { name: "Save workspace" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toMatchObject({ id: "acme", color: "teal" });
+  settings.lifecycle.unmount();
+
+  const colored = {
+    ...state,
+    workspaces: state.workspaces.map((workspace) => (workspace.id === "acme" ? { ...workspace, color: "teal" as const } : workspace)),
+  };
+  const bar = renderSlot(
+    app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
+    {},
+    {
+      settings: { workspaces: true },
+      rpc: { workspaces_get: () => colored },
+      sidebarThreads: { status: "ready", projects, threads: [hThread], sections: [] },
+    },
+  );
+  const tab = await bar.findByRole("tab", { name: "Acme" });
+  await waitFor(() => expect(tab.getAttribute("data-jf-color")).toBe("teal"));
+  expect(tab.querySelector(".jf-workspace-color-dot")).not.toBeNull();
+  const plain = bar.getByRole("tab", { name: "Globex" });
+  expect(plain.hasAttribute("data-jf-color")).toBe(false);
+  expect(plain.querySelector(".jf-workspace-color-dot")).toBeNull();
+  bar.lifecycle.unmount();
+});

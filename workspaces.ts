@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 const ids = z.array(z.string().min(1).max(160)).max(200);
+/** The colors a workspace can carry. Each has a light and a dark value in workspaces.css. */
+export const WORKSPACE_COLORS = ["red", "orange", "amber", "green", "teal", "blue", "violet", "pink"] as const;
+export type WorkspaceColor = (typeof WORKSPACE_COLORS)[number];
 export const workspaceSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
   name: z.string().trim().min(1).max(60),
@@ -10,6 +13,8 @@ export const workspaceSchema = z.object({
   sectionOrder: ids,
   /** Split the unsectioned Active lane into one group per project. */
   groupByProject: z.boolean().optional(),
+  /** Marks the workspace's tab and its split panes. Absent means no color. */
+  color: z.enum(WORKSPACE_COLORS).optional(),
 });
 export const workspaceStateSchema = z.object({
   workspaces: z.array(workspaceSchema).max(30),
@@ -50,6 +55,14 @@ export function workspaceForThread(
     state.workspaces.find((workspace) => workspace.projectIds.includes(current.projectId))?.id ??
     null
   );
+}
+
+/** The color of the workspace with this id, if it has one. */
+export function workspaceColor(
+  id: string | null,
+  workspaces: readonly Pick<Workspace, "id" | "color">[],
+): WorkspaceColor | undefined {
+  return id === null ? undefined : workspaces.find((workspace) => workspace.id === id)?.color;
 }
 
 export function inWorkspace(

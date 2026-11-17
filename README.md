@@ -40,6 +40,11 @@ lanes remain available with that workspace's threads. Workspace configuration
 and thread assignments sync between clients. The active tab and remembered
 threads belong to this browser session.
 
+A workspace can carry one of eight colors (red, orange, amber, green, teal, blue,
+violet, pink), picked in its settings. The color shows as a dot and the selected
+underline on its tab, in the Ctrl+` switcher, and on that workspace's panes in a
+split (see [Split panes](#split-panes)).
+
 On macOS the tabs sit beside the native window and navigation controls, with
 the thread title and header in a separate row directly below. Browser and mobile
 clients reserve a row above the sidebar and conversation. The bar remains available when the sidebar is closed;
@@ -55,7 +60,7 @@ bb jb-flow workspaces
 bb jb-flow workspaces assign <thread-id> <workspace-id>
 bb jb-flow workspaces assign <thread-id> auto
 bb jb-flow workspaces assign <thread-id> unassigned
-bb jb-flow workspaces save '{"id":null,"name":"Personal","projectIds":[],"sectionIds":[],"pluginIds":[],"sectionOrder":[]}'
+bb jb-flow workspaces save '{"id":null,"name":"Personal","projectIds":[],"sectionIds":[],"pluginIds":[],"sectionOrder":[],"color":"teal"}'
 bb jb-flow workspaces remove <workspace-id>
 ```
 
@@ -188,6 +193,15 @@ Settings → Keyboard), from ⌘K, or from the *Catch up · N unread* line on th
 With the setting off, the command, palette entry, home-page line and badge are gone and
 the page says it's off. bb's own navigation rail still lists the page, because a
 plugin page can't hide itself yet; JB Flow's workspace navigation hides it.
+
+### Split panes
+
+**Frame the active split pane** (Settings → JB Flow, on by default) draws a frame
+around the pane you're working in whenever two or more panes are open, in its
+workspace's color or BB's accent color when it has none. The other panes get a
+thin line in their own workspace's color, so each pane shows where it belongs.
+Nothing is dimmed. With the setting off, or with a single pane, BB's panes look
+as they do without the plugin.
 
 ### App-wide appearance
 
@@ -446,6 +460,7 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 Under **Settings → JB Flow**:
 
 - **Polish the entire BB interface**: restyles bb, shows `> [!TIP]` callouts as callouts and folds finished commands behind *Show trace* (on by default).
+- **Frame the active split pane**: a frame on the active pane in a split, and each pane's workspace color (on by default).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **Swipe between workspaces**: a two-finger sideways swipe on the sidebar moves to the next or previous workspace tab, and the sidebar slides as the workspace changes (off by default).

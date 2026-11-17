@@ -24,7 +24,7 @@ If a feature needs data like this, add a setting or a JSON config key and leave 
 - Anything that restyles bb, replaces a native bb surface (navigation, sidebar, composer, timeline), sends
   messages to threads, or runs on a schedule against external services sits **behind a setting** that turns it
   off. With it off, bb must look and behave exactly as without the plugin.
-- Which of those are on by default is the maintainer's product decision. Today: restyle, thread monitor,
+- Which of those are on by default is the maintainer's product decision. Today: restyle, the active split pane frame, thread monitor,
   workspaces, the ⌘K palette, the Ctrl+Tab switcher, Catch up, Now and Focus, status report at hand-back (changes every thread's
   replies), expanded plan reviews and hiding options the reply buttons repeat are on; auto-continue (spends usage
   quota) and copy buttons on code are off. Don't flip a default
