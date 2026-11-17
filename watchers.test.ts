@@ -9,6 +9,7 @@ import type { CiWatch } from "./ci-watch";
 import { MAX_SEND_FAILURES } from "./ci-watch";
 import { parseLimitHit } from "./limits";
 import type { ReleaseWatchConfig } from "./watchers";
+import type { ConductorInboxEvent, ConductorSink } from "./conductor-routing";
 
 vi.mock("./gh", async (importOriginal) => ({ ...(await importOriginal<typeof import("./gh")>()), gh: vi.fn() }));
 const { gh } = await import("./gh");
@@ -54,9 +55,9 @@ function host(options: { threads?: Record<string, ReturnType<typeof thread>>; se
   return { ...fake, threads };
 }
 
-function load(bb: BbPluginApi, config = releaseConfig, autoContinue = true) {
+function load(bb: BbPluginApi, config = releaseConfig, autoContinue = true, conductor: ConductorSink | null = null) {
   let changes = 0;
-  const watchers = createWatchers(bb, config, async () => autoContinue, () => void changes++);
+  const watchers = createWatchers(bb, config, async () => autoContinue, () => void changes++, undefined, conductor);
   return { watchers, changes: () => changes };
 }
 
@@ -207,6 +208,42 @@ it("a failed workflow run is reported as such, not as released", async () => {
   expect(sent(harness)[0]!.text).toMatch(/^The release merged .* but 1 workflow run\(s\) failed: deploy/);
 });
 
+/** A workspace conductor that records what it's handed. */
+function conductorSink(workspaceFor: ConductorSink["workspaceFor"]) {
+  const delivered: Array<{ threadId: string; workspaceId: string; events: readonly ConductorInboxEvent[] }> = [];
+  const sink: ConductorSink = { workspaceFor, deliver: async (threadId, workspaceId, events) => void delivered.push({ threadId, workspaceId, events }) };
+  return { sink, delivered };
+}
+
+it("a release goes to the thread's conductor when its workspace has one; a failed lookup tells the thread itself", async () => {
+  for (const lookup of ["found", "failed"] as const) {
+    ghMock.mockReset();
+    const { bb, harness } = host();
+    const { sink, delivered } = conductorSink(async () => {
+      if (lookup === "failed") throw new Error("HTTP 503");
+      return "ws1";
+    });
+    const { watchers } = load(bb, releaseConfig, true, sink);
+    await bb.storage.kv.set("releaseWaiters", { [`t1@${PROJECT}`]: waiter("t1") });
+    await bb.storage.kv.set("seenReleases", { [REPO]: 1 });
+    answerGh({
+      "pr list": () => JSON.stringify([mergedPr(11, Date.now() - 60_000)]),
+      "run list": () => JSON.stringify([run("completed", "success")]),
+    });
+    await watchers.checkReleases();
+    if (lookup === "found") {
+      expect(sent(harness)).toEqual([]);
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]).toMatchObject({ threadId: "t1", workspaceId: "ws1", events: [{ kind: "release" }] });
+      expect(delivered[0]!.events[0]!.text).toMatch(/^released: Release v1\.11/);
+    } else {
+      expect(delivered).toEqual([]);
+      expect(sent(harness).map((message) => message.threadId)).toEqual(["t1"]);
+    }
+    expect(await bb.storage.kv.get("releaseWaiters")).toEqual({});
+  }
+});
+
 it("the release schedule doesn't read GitHub when nobody waits or nothing is configured", async () => {
   const { bb, harness } = host();
   load(bb);
@@ -321,6 +358,20 @@ it("checks asked for at once share one run, and the schedule skips while one is 
   await Promise.all([first, second]);
   expect(ghMock.mock.calls.filter(([args]) => args[0] === "pr")).toHaveLength(1);
   expect(sent(harness)).toHaveLength(1);
+});
+
+it("green CI goes to the thread's conductor instead of the worker when its workspace has one", async () => {
+  const { bb, harness } = host();
+  const { sink, delivered } = conductorSink(async () => "ws1");
+  const { watchers } = load(bb, {}, true, sink);
+  await bb.storage.kv.set("ciWatches", { a: ciWatch("t1", 5) });
+  answerGh({ "pr view": () => greenPr, "api user": () => "alex" });
+
+  await watchers.checkCi();
+  expect(sent(harness)).toEqual([]);
+  expect(delivered.map((entry) => entry.workspaceId)).toEqual(["ws1"]);
+  expect(delivered[0]!.events.map((event) => event.text).join("\n")).toContain("CI is green on web-app#5");
+  expect(await bb.storage.kv.get("ciWatches")).toEqual({});
 });
 
 it("the CI schedule doesn't read GitHub when nothing is watched", async () => {
