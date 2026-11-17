@@ -1,5 +1,5 @@
 // One row of the Triage thread list, and the group headers between rows.
-import type { WorkspaceState } from "./workspaces";
+import type { WorkspaceColor, WorkspaceState } from "./workspaces";
 import { useContext } from "react";
 import { toast } from "sonner";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
@@ -94,7 +94,7 @@ export function ThreadRow({
   onRename,
   onNewSection,
   machine,
-  workspaceState, onWorkspace,
+  workspaceState, onWorkspace, workspaceTag,
   focused,
   onToggleFocus,
   reason,
@@ -119,6 +119,8 @@ export function ThreadRow({
   /** Missing when Now and Focus is turned off. */
   onSetDue: (() => void) | undefined;
   workspaceState: WorkspaceState;
+  /** Its workspace's name and color, where rows of several workspaces are listed together (the All tab). */
+  workspaceTag?: { name: string; color: WorkspaceColor } | undefined;
   onWorkspace: (workspaceId: string | null, automatic: boolean) => void;
   project: PluginSidebarProject | undefined;
   /** The machine it runs on; `remote` when it's not the machine BB runs on (tagged on the row). */
@@ -282,6 +284,9 @@ export function ThreadRow({
             </button>
           ) : null}
           <StatusIcon status={status} />
+          {workspaceTag ? (
+            <i role="img" className="jf-workspace-color-dot" data-jf-color={workspaceTag.color} aria-label={`Workspace: ${workspaceTag.name}`} title={workspaceTag.name} />
+          ) : null}
           {focused ? (
             <span role="img" aria-label="In Focus" title="In Focus" className="shrink-0">
               <Glyph name="star" className="size-3 text-amber-500" />

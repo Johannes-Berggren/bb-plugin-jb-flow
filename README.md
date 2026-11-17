@@ -42,8 +42,9 @@ threads belong to this browser session.
 
 A workspace can carry one of eight colors (red, orange, amber, green, teal, blue,
 violet, pink), picked in its settings. The color shows as a dot and the selected
-underline on its tab, in the Ctrl+` switcher, and on that workspace's panes in a
-split (see [Split panes](#split-panes)).
+underline on its tab, in the Ctrl+` switcher, on that workspace's panes in a
+split (see [Split panes](#split-panes)), and as a dot on its threads' rows in the
+**All** tab, where rows of every workspace sit together.
 
 On macOS the tabs sit beside the native window and navigation controls, with
 the thread title and header in a separate row directly below. Browser and mobile
@@ -497,7 +498,7 @@ A conductor is a permanent agent thread that looks after one workspace. Its work
   - `bb jb-flow needs-me` lists threads waiting on you
   - `bb jb-flow next` opens the next waiting thread
   - `bb jb-flow now` lists Now in order, with what's Moving
-- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script. With **Now and Focus** on, it also has `now`: the count and the top thread.
+- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script. With **Now and Focus** on, it also has `now`: the count and the top thread. `focused.workspace` is the focused thread's workspace: its `id`, `name`, `color` name and the same color as `hex`, for a key that should wear it (null outside a workspace; `color` and `hex` are null when the workspace has none).
 
 ## Install
 

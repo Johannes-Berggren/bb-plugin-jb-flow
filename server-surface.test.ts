@@ -468,7 +468,7 @@ describe("server handlers", () => {
     expect(await run("pr-radar", "--json")).toMatchInlineSnapshot(`"0 {"broken":[],"ready":[]}"`);
     expect(await run("conductor")).toMatchInlineSnapshot(`"0 No conductors. Turn on Conductor in the settings, then: bb jb-flow conductor start <workspace-id>"`);
     expect(await run("focused")).toMatchInlineSnapshot(`"1 No focused thread."`);
-    expect(await run("deck")).toMatchInlineSnapshot(`"0 {"version":1,"focused":{"threadId":null,"title":null,"status":null,"options":[]},"needsMe":{"count":1},"yourMove":{"count":0,"oldestSince":null},"prRadar":{"broken":0,"ready":0},"now":{"count":1,"top":{"id":"thr_a","title":"Thread thr_a","state":"blocked","reason":"failed · 30d","focused":false,"dueAt":null}}}"`);
+    expect(await run("deck")).toMatchInlineSnapshot(`"0 {"version":1,"focused":{"threadId":null,"title":null,"status":null,"options":[],"workspace":null},"needsMe":{"count":1},"yourMove":{"count":0,"oldestSince":null},"prRadar":{"broken":0,"ready":0},"now":{"count":1,"top":{"id":"thr_a","title":"Thread thr_a","state":"blocked","reason":"failed · 30d","focused":false,"dueAt":null}}}"`);
     expect(await run("workspaces")).toMatchInlineSnapshot(`"0 {"workspaces":[],"threadWorkspaces":{}}"`);
     expect(await run("nonsense")).toContain("Usage:");
     const classify = JSON.parse((await harness.runCli(["classify"])).stdout) as Array<Record<string, unknown>>;
@@ -486,6 +486,20 @@ describe("server handlers", () => {
         },
       ]
     `);
+  });
+
+  it("the deck snapshot names the focused thread's workspace and its color", async () => {
+    const focusedThread = thread("thr_a");
+    const { bb, harness } = host({ threads: [focusedThread] });
+    await bb.storage.kv.set("workspaces", [
+      { id: "acme", name: "Acme", projectIds: [focusedThread.projectId], sectionIds: [], pluginIds: [], sectionOrder: [], color: "teal" },
+    ]);
+    await plugin(bb);
+    await harness.callRpc("focus_report", { clientId: "c1", threadId: "thr_a", windowFocused: true, interactedAt: Date.now(), origin: "http://localhost", userAgent: "test" });
+    const deck = JSON.parse((await harness.runCli(["deck"])).stdout) as { focused: { threadId: string; workspace: unknown } };
+    expect(deck.focused.threadId).toBe("thr_a");
+    // The color by name for BB's own styles, and as sRGB for a key that can't read them.
+    expect(deck.focused.workspace).toEqual({ id: "acme", name: "Acme", color: "teal", hex: "#47c7c7" });
   });
 
   it("opens the next thread that needs you", async () => {

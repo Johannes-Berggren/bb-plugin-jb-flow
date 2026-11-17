@@ -444,7 +444,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   // --- CLI ------------------------------------------------------------------
 
-  const { decisionsFor, deckSnapshot } = createDeck(bb, { settings, listThreadsCached, awaiting, prRadar, focus, findSnoozedSection, currentNow });
+  const { decisionsFor, deckSnapshot } = createDeck(bb, { settings, listThreadsCached, awaiting, prRadar, focus, findSnoozedSection, currentNow, workspaces });
 
   registerCli(bb, {
     settings,

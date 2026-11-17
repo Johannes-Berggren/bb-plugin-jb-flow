@@ -3,6 +3,7 @@ import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
+import { selectWorkspace, setWorkspacesEnabled } from "./workspace-client";
 
 const NOW = Date.now();
 const HOUR = 3_600_000;
@@ -437,3 +438,48 @@ describe("Now and Focus", () => {
   });
 });
 
+
+describe("Workspace color on rows", () => {
+  afterEach(() => {
+    cleanup();
+    selectWorkspace(null);
+    setWorkspacesEnabled(false);
+    sessionStorage.clear();
+  });
+  const colored = {
+    workspaces: [
+      { id: "acme", name: "Acme", projectIds: ["p1"], sectionIds: [], pluginIds: [], sectionOrder: [], color: "teal" },
+      { id: "globex", name: "Globex", projectIds: ["p2"], sectionIds: [], pluginIds: [], sectionOrder: [] },
+    ],
+    threadWorkspaces: {},
+  };
+  const dot = (container: HTMLElement, id: string) => container.querySelector(`[data-jb-flow-row="${id}"] .jf-workspace-color-dot`);
+  const listed = (container: HTMLElement, id: string) => container.querySelector(`[data-jb-flow-row="${id}"]`) !== null;
+  const threads = () => [thread("in-acme"), thread("in-globex", { projectId: "p2" }), thread("loose", { projectId: "p3" })];
+
+  it("on the All tab, a row shows its workspace's color; inside a workspace it doesn't", async () => {
+    setWorkspacesEnabled(true);
+    const slot = await mount({ threads: threads(), settings: { workspaces: true, nowQueue: false }, rpc: { workspaces_get: () => colored } });
+    await waitFor(() => expect(dot(slot.container, "in-acme")).not.toBeNull());
+    const mark = dot(slot.container, "in-acme")!;
+    expect(mark.getAttribute("data-jf-color")).toBe("teal");
+    expect(mark.getAttribute("aria-label")).toBe("Workspace: Acme");
+    // A workspace without a color, and a thread in no workspace, have no dot.
+    expect(listed(slot.container, "in-globex")).toBe(true);
+    expect(dot(slot.container, "in-globex")).toBeNull();
+    expect(dot(slot.container, "loose")).toBeNull();
+
+    // Every row there is Acme's: the dot would say nothing.
+    selectWorkspace("acme");
+    await waitFor(() => expect(listed(slot.container, "in-globex")).toBe(false));
+    expect(listed(slot.container, "in-acme")).toBe(true);
+    expect(dot(slot.container, "in-acme")).toBeNull();
+  });
+
+  it("with Workspaces off, rows carry no workspace color", async () => {
+    const slot = await mount({ threads: threads(), settings: { workspaces: false, nowQueue: false }, rpc: { workspaces_get: () => colored } });
+    await waitFor(() => expect(listed(slot.container, "in-acme")).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(dot(slot.container, "in-acme")).toBeNull();
+  });
+});

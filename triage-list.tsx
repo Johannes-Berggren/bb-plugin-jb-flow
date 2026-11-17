@@ -2,7 +2,7 @@
 import { toast } from "sonner";
 import { useWorkspaces, useSelectedWorkspace, switchWorkspace } from "./workspace-client";
 import { useWorkspaceSwipe, sidebarBlock, slideIn, tabDirection } from "./workspace-ui";
-import { inWorkspace } from "./workspaces";
+import { inWorkspace, workspaceForThread } from "./workspaces";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { experimental_useSidebarThreads as useSidebarThreads, useBbNavigate, useSdk, useSettings } from "@get-bb/plugin-sdk/app";
@@ -199,7 +199,9 @@ export function TriageThreadList({
   );
   const drag = useThreadDrag(onDrop);
   const navigate = useBbNavigate();
-  const swipeOn = useSettings().values?.workspaceSwipe === true;
+  const listSettings = useSettings().values;
+  const swipeOn = listSettings?.workspaceSwipe === true;
+  const workspacesOn = listSettings?.workspaces === true;
   const onSwipe = useWorkspaceSwipe();
   // Whatever switched the workspace (a swipe or a tab click), slide the new one in.
   const listRef = useRef<HTMLElement>(null);
@@ -779,6 +781,13 @@ export function TriageThreadList({
       onToggle: () => toggle(foldKey(thread.id)),
     };
   };
+  // On the All tab rows of every workspace sit together: a colored one says which it is.
+  const workspaceTagOf = (thread: PluginSidebarThread) => {
+    if (!workspacesOn || selectedWorkspace !== null) return undefined;
+    const id = workspaceForThread(thread, workspaceState, allThreads);
+    const owner = id === null ? undefined : workspaceState.workspaces.find((item) => item.id === id);
+    return owner?.color ? { name: owner.name, color: owner.color } : undefined;
+  };
   const renderRow = (thread: PluginSidebarThread, group: Group, depth: number, borrowed?: NowEntry) => (
     <ThreadRow
       key={thread.id}
@@ -786,6 +795,7 @@ export function TriageThreadList({
       depth={depth}
       subthreads={subthreadToggle(thread)}
       workspaceState={workspaceState}
+      workspaceTag={workspaceTagOf(thread)}
       onWorkspace={(workspaceId, automatic) => void workspaceRpc.call("workspace_assign", { threadId: thread.id, workspaceId, automatic }).then(refreshWorkspaces).catch((cause) => toast.error(errorText(cause)))}
       project={projectById.get(thread.projectId)}
       active={thread.id === activeThreadId}
