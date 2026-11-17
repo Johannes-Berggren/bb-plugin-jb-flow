@@ -531,17 +531,17 @@ export default async function plugin(bb: BbPluginApi) {
         "When Claude Code stops on a session limit, send \"continue\" 90 seconds after the limit resets. Each thread can switch it on or off in the thread monitor.",
       default: false,
     },
+    expandPlans: {
+      type: "boolean",
+      label: "Expand plan reviews",
+      description: "Plans awaiting approval open expanded. Drag the handle under a plan to set its height.",
+      default: true,
+    },
     planModelChoice: {
       type: "boolean",
       label: "Model choice on plan approval",
       description:
         "Adds a model menu next to Approve plan, so a plan can be implemented on another of the thread's models (for example plan on one model, build on another). The last choice is remembered.",
-      default: true,
-    },
-    expandPlans: {
-      type: "boolean",
-      label: "Expand plan reviews",
-      description: "Plans awaiting approval open expanded. Drag the handle under a plan to set its height.",
       default: true,
     },
     hideRepeatedChoices: {
