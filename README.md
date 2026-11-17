@@ -203,6 +203,20 @@ thin line in their own workspace's color, so each pane shows where it belongs.
 Nothing is dimmed. With the setting off, or with a single pane, BB's panes look
 as they do without the plugin.
 
+**Scroll split panes sideways** (on by default) lets a split grow wider than the
+window. BB fits every pane into the window, so with many panes each one gets
+narrow. With this on, no pane gets narrower than **Minimum pane width** (640
+pixels unless you change it): once the panes no longer fit, the split scrolls
+sideways and snaps gently to pane edges. Focusing a pane, with a click or BB's
+pane-focus keys, brings it into view. Your pane proportions and BB's dividers
+keep working, and the side panel stays in place.
+
+- BB opens at most eight panes in a split; this setting doesn't change that.
+- The split fits the window again while a pane is maximized, and returns to
+  the focused pane when you restore it.
+- It relies on BB's own page structure. After a BB update that changes it, the
+  split falls back to fitting the window until the plugin catches up.
+
 ### App-wide appearance
 
 **Polish the entire BB interface** (Settings → JB Flow, on by default) applies
@@ -461,6 +475,8 @@ Under **Settings → JB Flow**:
 
 - **Polish the entire BB interface**: restyles bb, shows `> [!TIP]` callouts as callouts and folds finished commands behind *Show trace* (on by default).
 - **Frame the active split pane**: a frame on the active pane in a split, and each pane's workspace color (on by default).
+- **Scroll split panes sideways**: a split with more panes than fit scrolls sideways instead of squeezing them (on by default).
+- **Minimum pane width**: how narrow a split pane may get before the split scrolls, in pixels (640).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **Swipe between workspaces**: a two-finger sideways swipe on the sidebar moves to the next or previous workspace tab, and the sidebar slides as the workspace changes (off by default).

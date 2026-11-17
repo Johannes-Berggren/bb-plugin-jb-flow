@@ -403,6 +403,19 @@ export default async function plugin(bb: BbPluginApi) {
         "In split view, a frame marks the pane you're working in, and each pane shows its workspace's color (set under Workspaces). Off restores BB's standard panes.",
       default: true,
     },
+    splitScroll: {
+      type: "boolean",
+      label: "Scroll split panes sideways",
+      description:
+        "When the panes in a split would get narrower than the minimum pane width, the split scrolls sideways instead of squeezing them, and the pane you focus is brought into view. Off restores BB's fit-to-window split.",
+      default: true,
+    },
+    splitMinPaneWidth: {
+      type: "number",
+      label: "Minimum pane width",
+      description: "The narrowest a split pane gets, in pixels, before the split starts to scroll sideways (320 to 1600).",
+      default: 640,
+    },
     threadMonitor: {
       type: "boolean",
       label: "Thread monitor",

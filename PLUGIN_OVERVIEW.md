@@ -17,7 +17,7 @@
 
 Each can be switched in the plugin settings:
 
-- On by default: the restyled interface, a frame on the active split pane, the thread monitor, status reports at hand-back, and expanded, resizable plan reviews.
+- On by default: the restyled interface, a frame on the active split pane, split panes that scroll sideways, the thread monitor, status reports at hand-back, and expanded, resizable plan reviews.
 - Off by default: "continue" after a Claude Code usage limit resets, swiping between workspaces, and copy buttons on inline code.
 - Wake threads waiting for a release once it ships (per-project JSON config).
 
