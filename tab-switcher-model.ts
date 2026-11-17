@@ -58,8 +58,11 @@ export function pushRecentWorkspace(recent: readonly WorkspaceTab[], tab: Worksp
   return [tab, ...recent.filter((other) => other !== tab)].slice(0, limit);
 }
 
-/** Where a fresh switcher starts: the one before the current, if there is one. */
-export const startIndex = (length: number) => (length > 1 ? 1 : 0);
+/**
+ * Where a fresh switcher starts. With the current item first, the one before it;
+ * without one (a page that isn't a thread), the most recent, so it isn't skipped.
+ */
+export const startIndex = (length: number, currentFirst = true) => (currentFirst && length > 1 ? 1 : 0);
 
 /** One step forward or back, wrapping at either end. */
 export function step(index: number, delta: number, length: number): number {
