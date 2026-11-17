@@ -160,7 +160,8 @@ export function TabSwitcherHost() {
         if (begin(row, event.shiftKey)) swallow(event);
         return;
       }
-      if (event.key === "Control") return;
+      // A modifier on its own (Shift before ⇧Tab, Ctrl repeating) changes nothing yet.
+      if (event.key === "Control" || event.key === "Shift") return;
       // Ctrl came up without a keyup reaching us (another window had it): go.
       if (!event.ctrlKey && event.key !== "Escape" && event.key !== "Enter") {
         commit();

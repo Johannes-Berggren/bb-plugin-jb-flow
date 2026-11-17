@@ -195,6 +195,19 @@ describe("Ctrl+Tab switcher", () => {
     expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "d" });
   });
 
+  it("pressing Shift while it's open keeps it open, and Ctrl+Shift+Tab steps back", async () => {
+    const slot = await mount();
+    await waitFor(() => expect(ctrl()).toBe(true));
+    ctrl("Tab");
+    // Shift goes down first, on its own: that mustn't close the switcher.
+    expect(ctrl("Shift", { code: "ShiftLeft", shiftKey: true })).toBe(false);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    expect(ctrl("Tab", { shiftKey: true })).toBe(true);
+    release();
+    // Opened on index 1 (c), Tab to 2 (b), ⇧Tab back to 1 (c).
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "c" });
+  });
+
   it("Escape cancels without opening anything", async () => {
     const slot = await mount();
     await waitFor(() => expect(ctrl()).toBe(true));
