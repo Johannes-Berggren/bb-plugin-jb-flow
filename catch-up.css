@@ -280,6 +280,21 @@
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
+/* The title opens the thread; it reads as a heading, not a button. */
+.jf-catchup-title-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.jf-catchup-title-open:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 3px;
+}
 .jf-catchup-notice {
   margin: 6px 0 0;
   padding: 4px 8px;
@@ -542,6 +557,36 @@
   }
   .jf-catchup-summary {
     max-height: 35%;
+  }
+  /* One meta line: the project name gives way first. */
+  .jf-catchup-meta {
+    flex-wrap: nowrap;
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .jf-catchup-project,
+  .jf-catchup-since {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .jf-catchup-project {
+    flex-shrink: 2;
+  }
+  /* Merges still show in the meta line; a lone "+2 closed" is noise here. */
+  .jf-catchup-prs[data-closed-only] {
+    display: none;
+  }
+  /* Footer: ← · Archive · Done. Snooze is a long-press, Open is the title, Reply is the composer. */
+  .jf-catchup-actions .jf-catchup-wide-only {
+    display: none;
+  }
+  .jf-catchup[data-variant="page"] .jf-catchup-bar {
+    padding-bottom: 4px;
+  }
+  .jf-catchup-tools .jf-catchup-tool[aria-label="Mark all read"] {
+    height: 22px;
+    border-color: transparent;
   }
   .jf-catchup-chat {
     min-height: 160px;

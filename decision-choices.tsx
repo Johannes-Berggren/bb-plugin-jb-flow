@@ -27,20 +27,40 @@ const comparable = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/
 
 /** The ordered list in the latest message whose items are these options, if any. */
 export function repeatedList(scope: Element, options: readonly DecisionOption[]): HTMLOListElement | null {
-  const rows = scope.querySelectorAll("[data-timeline-row-id]");
-  const last = rows[rows.length - 1];
-  if (!last || options.length === 0) return null;
-  const lists = Array.from(last.querySelectorAll("ol")).reverse();
-  return (
-    lists.find((list) => {
-      const items = Array.from(list.children).filter((child) => child.tagName === "LI");
-      if (items.length !== options.length) return false;
-      return items.every((item, index) => {
-        const want = comparable(options[index]!.text).slice(0, 32);
-        return want.length > 0 && comparable(item.textContent ?? "").includes(want);
-      });
-    }) ?? null
-  );
+  if (options.length === 0) return null;
+  const matches = (list: Element) => {
+    const items = Array.from(list.children).filter((child) => child.tagName === "LI");
+    if (items.length !== options.length) return false;
+    return items.every((item, index) => {
+      const want = comparable(options[index]!.text).slice(0, 32);
+      return want.length > 0 && comparable(item.textContent ?? "").includes(want);
+    });
+  };
+  // Newest row first. A compact thread can end in rows that hold no message (a
+  // work summary, a turn footer), so look past them instead of only at the last.
+  const rows = Array.from(scope.querySelectorAll("[data-timeline-row-id]")).reverse();
+  for (const row of rows) {
+    const found = Array.from(row.querySelectorAll("ol")).reverse().find(matches);
+    if (found) return found as HTMLOListElement;
+  }
+  return null;
+}
+
+const CALLOUT = "blockquote[data-jf-callout]";
+
+/**
+ * What to hide for a repeated list: the list and its "Reply with…" lines, or the
+ * whole callout ("> [!TIP]") when those are all it holds besides a title line.
+ */
+export function repeatedElements(list: Element): Element[] {
+  const lines = repeatedReplyLines(list);
+  const callout = list.parentElement?.matches(CALLOUT) ? list.parentElement : null;
+  if (callout) {
+    const rest = Array.from(callout.children).filter((child) => child !== list && !lines.includes(child));
+    const titleOnly = rest.every((child) => child.tagName === "P" && (child.textContent?.trim().length ?? 0) <= 200) && rest.length <= 1;
+    if (titleOnly) return [callout];
+  }
+  return [list, ...lines];
 }
 
 /** The nearest ancestor of the buttons that holds the thread's messages. */
@@ -76,7 +96,7 @@ function useHideRepeatedList(section: RefObject<HTMLElement | null>, options: re
     let marked: Element[] = [];
     const apply = () => {
       const list = repeatedList(scope, options);
-      const next = list ? [list, ...repeatedReplyLines(list)] : [];
+      const next = list ? repeatedElements(list) : [];
       if (next.length === marked.length && next.every((element, index) => element === marked[index])) return;
       for (const element of marked) element.removeAttribute(REPEATED_LIST_ATTR);
       for (const element of next) element.setAttribute(REPEATED_LIST_ATTR, "");
@@ -219,7 +239,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
         <Icon name="MessageCircle" className="size-3.5" />
         <span className="jf-choices-title">Your next move</span>
         <span className="jf-choices-hint">
-          {go ? "Pick steps, or Go for all" : multi ? "Pick one or more" : "Choose a reply"}
+          <span className="jf-choices-hint-text">{go ? "Pick steps, or Go for all" : multi ? "Pick one or more" : "Choose a reply"}</span>
           {!go && move.mode !== "multi" ? (
             <button
               type="button"
