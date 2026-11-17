@@ -76,13 +76,20 @@ export function createNowQueue(
     return { now: queue.now.map(describe), moving: queue.moving.map(describe) };
   }
 
-  /** Where "next" goes. With Now off, the first thread that needs you, as before. */
-  async function nextThread(current: string | null, skip: string | null): Promise<string | null> {
+  /** The threads "next" walks through, most urgent first: Now, or Needs me with Now off. */
+  async function queueOrder(): Promise<string[]> {
     const needs = await focus.needsMe();
-    if (!(await settings.get()).nowQueue) return needs.find((thread) => thread.id !== skip)?.id ?? null;
+    if (!(await settings.get()).nowQueue) return needs.map((thread) => thread.id);
     const { now } = await currentNow(await listLiveThreads(bb));
     // Pinned threads aren't in Now, but one that's blocked still needs you.
-    return nextAfter([...new Set([...now.map((entry) => entry.id), ...needs.map((thread) => thread.id)])], current);
+    return [...new Set([...now.map((entry) => entry.id), ...needs.map((thread) => thread.id)])];
+  }
+
+  /** Where "next" goes. With Now off, the first thread that needs you, as before. */
+  async function nextThread(current: string | null, skip: string | null): Promise<string | null> {
+    const order = await queueOrder();
+    if (!(await settings.get()).nowQueue) return order.find((id) => id !== skip) ?? null;
+    return nextAfter(order, current);
   }
 
   async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
@@ -127,7 +134,7 @@ export function createNowQueue(
     return { items };
   }
 
-  const rpc: Pick<PluginRpcHandlers<typeof rpcContract>, "focus_set" | "due_set" | "next_needs_me" | "your_move"> = {
+  const rpc: Pick<PluginRpcHandlers<typeof rpcContract>, "focus_set" | "due_set" | "next_needs_me" | "needs_me_queue" | "your_move"> = {
     focus_set: async ({ threadId, focused }) => ({ focused: await nowStore.set(threadId, focused) }),
     due_set: async ({ threadId, at, reason }) => ({ ok: (await nowStore.setDue(threadId, at, reason, "you")).applied }),
     next_needs_me: ({ archiveThreadId }) =>
@@ -138,6 +145,7 @@ export function createNowQueue(
         archive: (threadId) => bb.sdk.threads.archive({ threadId }),
         open: (threadId) => bb.sdk.threads.open({ threadId, file: null }),
       }),
+    needs_me_queue: async () => ({ threadIds: (await queueOrder()).slice(0, 40) }),
     your_move: () => yourMove(),
   };
 

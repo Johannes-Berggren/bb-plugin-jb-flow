@@ -49,6 +49,7 @@ import {
 } from "./palette-model";
 import { resolveLanes } from "./lanes";
 import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
+import { OPEN_QUEUE_EVENT, STATUS_PANES_EVENT } from "./pane-commands-model";
 import { DUE_PRESETS, formatDue, parseDue, SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { focusLimitOf } from "./now-model";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
@@ -369,6 +370,7 @@ export function Palette({
   const settings = useSettings().values;
   const workspacesOn = settings?.workspaces === true;
   const catchUpOn = settings?.catchUp === true;
+  const monitorOn = settings?.threadMonitor === true;
   const nowOn = settings?.nowQueue === true;
   const focusLimit = focusLimitOf(settings?.focusLimit);
   const { state: workspaceState, refresh: refreshWorkspaces } = useWorkspaces();
@@ -759,7 +761,10 @@ export function Palette({
     }
     entries.push(
       { id: "next-needs-me", title: "Open the next thread that needs me", keywords: "triage inbox", icon: <Glyph name="question" />, run: () => rpc.call("next_needs_me", { archiveThreadId: null }) },
+      { id: "open-queue-panes", title: "Open what needs me side by side", keywords: "triage inbox split panes queue now all", icon: <Glyph name="question" />, run: () => window.dispatchEvent(new CustomEvent(OPEN_QUEUE_EVENT)) },
     );
+    if (monitorOn)
+      entries.push({ id: "status-open-panes", title: "Update status in every open pane…", keywords: "status report refresh split panes all stale", icon: <Icon name="RefreshCw" />, run: () => window.dispatchEvent(new CustomEvent(STATUS_PANES_EVENT)) });
     if (catchUpOn) {
       const unread = buildQueue(threads, flow, (thread) => inWorkspace(thread, selectedWorkspace, workspaceState, threads));
       const need = unread.filter((entry) => needsYou(entry.tier)).length;
@@ -783,7 +788,7 @@ export function Palette({
     );
     return entries;
     // projectName reads projectsById, a dependency here.
-  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, nowOn, focusLimit, threads, selectedWorkspace, workspaceState]);
+  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, monitorOn, nowOn, focusLimit, threads, selectedWorkspace, workspaceState]);
 
   // --- what to list ---
   const levelEntries: readonly Entry[] | null =

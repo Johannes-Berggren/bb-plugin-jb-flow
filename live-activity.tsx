@@ -18,6 +18,7 @@ import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
 import { statusPrompt } from "./status-prompt";
+import { statusAge } from "./status-age";
 import { useConductorThreadIds } from "./conductor-client";
 
 type Sdk = ReturnType<typeof useSdk>;
@@ -483,7 +484,6 @@ function AutoPromptMenu({
 }
 
 /** A status report older than this asks to be refreshed. */
-const STATUS_OUTDATED_MS = 6 * 3_600_000;
 
 export function ActivityCard({
   data,
@@ -568,13 +568,15 @@ export function ActivityCard({
   // A report the agent has replied past, an old one, or none at all: ask for a
   // fresh one prominently instead of presenting stale text as current.
   const reportAge = monitor?.report ? now - monitor.report.capturedAt : null;
-  const outdatedReason = !monitor?.report
-    ? "No status report yet"
-    : monitor.latestAt > monitor.report.capturedAt + 60_000
-      ? "The agent replied after this report"
-      : reportAge !== null && reportAge > STATUS_OUTDATED_MS
-        ? `Last report ${elapsed(reportAge)} ago`
-        : null;
+  const age = statusAge(monitor, now);
+  const outdatedReason =
+    age === "missing"
+      ? "No status report yet"
+      : age === "replied-since"
+        ? "The agent replied after this report"
+        : age === "old" && reportAge !== null
+          ? `Last report ${elapsed(reportAge)} ago`
+          : null;
   const canRequest = !active && !!onRequestStatus;
   const outdated = canRequest && outdatedReason !== null;
   const requestStatus = async () => {
