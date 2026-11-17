@@ -21,8 +21,10 @@ export type AutopilotInput = {
   mergeIntent: boolean;
   /** Its words name more steps after the merge (deploy, rerun, open the next PR): it has to be woken anyway. */
   followUps: boolean;
-  /** Its last status report says nothing is left. */
+  /** Its last status report says nothing is left, and its reply asks the user nothing. */
   nothingLeft: boolean;
+  /** Its latest words wait for a review or approval: that outranks an earlier after_green. */
+  hold?: boolean;
   /** The PR as last read (prs.ts), or null when it isn't tracked. */
   pr: { state: string; attention: string } | null;
   /** Open PRs on the thread besides this one. */
@@ -43,6 +45,8 @@ export function decide(input: AutopilotInput): AutopilotDecision {
     case "green":
     case "no-checks": {
       if (input.afterGreen === "nothing") return { action: "record", reason: "the worker needs nothing on green" };
+      // The plan changed since the watch began ("I'll re-request her review"): the worker decides.
+      if (input.hold) return { action: "forward", reason: "the worker is waiting for a review or approval" };
       if (!wantsMerge) {
         return input.kind === "green"
           ? { action: "record", reason: "green; the worker didn't say it merges" }
@@ -98,6 +102,16 @@ const NOTHING_LEFT = /\b(?:nothing (?:pending|left|else|more|to do)|no (?:next s
 /** Whether a status report's Next says the work is finished. */
 export function nothingLeft(next: string | null | undefined): boolean {
   return !!next && NOTHING_LEFT.test(next);
+}
+
+// "Anna hasn't reviewed it yet", "I'll re-request her review", "waiting on Sam's approval".
+const WAITS_FOR_REVIEW =
+  /\b(?:re-?request(?:ed|ing)?\s+(?:\w+\s+){0,2}review|(?:has|have)n?'?t?\s*(?:not\s+)?(?:yet\s+)?(?:been\s+)?reviewed|not\s+(?:yet\s+)?reviewed|awaiting\s+(?:\w+\s+){0,2}(?:review|approval)|waiting\s+(?:for|on)\s+(?:\w+(?:'s)?\s+){0,2}(?:review|approval)|needs?\s+(?:an?\s+)?(?:review|approval)\s+before|until\s+\w+\s+(?:approves|reviews|signs off))\b/i;
+
+/** Whether the worker's latest words hold the merge for a review or approval. */
+export function waitsForReview(...texts: Array<string | null | undefined>): boolean {
+  const text = texts.filter(Boolean).join("\n");
+  return !!text && (WAITS_FOR_REVIEW.test(text) || HOLD.test(text));
 }
 
 /** Whether the worker's own words say it merges once checks pass, and nothing says to hold. */

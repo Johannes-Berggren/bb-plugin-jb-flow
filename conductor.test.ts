@@ -56,7 +56,7 @@ const workspaceState: WorkspaceState = {
 };
 
 /** A conductor over a fake bb: two worker threads, one per workspace. */
-async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string }; personal?: boolean; flow?: Record<string, Record<string, number>>; status?: Record<string, unknown> } = {}) {
+async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string }; personal?: boolean; flow?: Record<string, Record<string, number>>; status?: Record<string, unknown>; output?: string } = {}) {
   let clock = T0;
   const kv = new Map<string, unknown>();
   const tools = new Map<string, { execute: (params: unknown, ctx: { threadId: string }) => Promise<unknown> }>();
@@ -124,7 +124,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
         },
         markRead: async ({ threadId }: { threadId: string }) => void read.push(threadId),
         markUnread: async () => undefined,
-        output: async () => ({ output: "Done." }),
+        output: async () => ({ output: options.output ?? "Done." }),
         events: { list: async () => [{ data: { tokenUsage: { last: { totalTokens: 1_500_000 } } } }] },
       },
     },
@@ -535,4 +535,23 @@ test("restarting gives a conductor a fresh thread; the old one is archived and s
   const base = { pluginMetadata: {}, origin: { kind: null, pluginId: null } };
   assert.equal(conductor.configureFor({ ...base, thread: { id: first, title: null, parentThreadId: null, sourceThreadId: null } }), null);
   assert.match(conductor.configureFor({ ...base, thread: { id: second, title: null, parentThreadId: null, sourceThreadId: null } })!.instructions, /Never merge on Fridays/);
+});
+
+test("a merged PR whose worker still asks you something isn't archived", async () => {
+  const { conductor, archived } = await setup({ report: { next: "Nothing pending on my side." } });
+  await conductor.start("ws");
+  // The fake thread's last reply ("Done.") asks nothing: archived.
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(archived, ["thr_a"]);
+});
+
+test("...and one that still asks you something stays put", async () => {
+  const { conductor, archived } = await setup({
+    report: { next: "Nothing pending on my side." },
+    output: "Merged.\n\n**Next:** Nothing pending on my side.\n\n### Next steps\n- The deck also renamed three other headings. Say if you want that reverted.",
+  });
+  await conductor.start("ws");
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(archived, []);
+  assert.match(conductor.log("ws")[0]!.text, /merged; left for you to close/);
 });

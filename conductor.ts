@@ -10,7 +10,8 @@
 //   respawned at the next wake-up, with its standing preferences.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { decide, followUpsAfterMerge, mergeIntent, nothingLeft } from "./autopilot.ts";
+import { asksUser } from "./awaiting.ts";
+import { decide, followUpsAfterMerge, mergeIntent, nothingLeft, waitsForReview } from "./autopilot.ts";
 import { nextMove } from "./decisions.ts";
 import { isGoneError } from "./ci-watch.ts";
 import { gh as runGh } from "./gh.ts";
@@ -190,6 +191,13 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   const shortPr = (meta: { repo?: unknown; pr?: unknown }) =>
     typeof meta.repo === "string" && typeof meta.pr === "number" ? `${meta.repo.split("/")[1]}#${meta.pr}` : "the PR";
 
+  /** Whether the thread's last reply still asks the user something; read in full, only for a merge. */
+  async function stillAsks(threadId: string, kind: string): Promise<boolean> {
+    if (kind !== "merged") return false;
+    const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+    return asksUser(output.output ?? "");
+  }
+
   /** One routed event: act on it, or leave it in the inbox for the conductor. */
   async function autopilot(threadId: string, workspaceId: string, event: ConductorInboxEvent, id: number): Promise<void> {
     const meta = (event.meta ?? {}) as { repo?: string; pr?: number; afterGreen?: "merge" | "continue" | "nothing"; headSha?: string };
@@ -206,8 +214,10 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
       afterGreen: meta.afterGreen,
       mergeIntent: mergeIntent(status?.report?.next, status?.report?.doingNow, status?.latest),
       followUps: followUpsAfterMerge(status?.report?.next, status?.report?.doingNow, status?.latest),
-      // A report's Next, or the "Next:" line of a reply that had no full report.
-      nothingLeft: nothingLeft(status?.report?.next ?? /\bNext:\**\s*(.+)/i.exec(status?.latest ?? "")?.[1]),
+      // A report's Next, or the "Next:" line of a reply that had no full report; and nothing
+      // in the whole reply still asks the user ("Say if you want that reverted").
+      nothingLeft: nothingLeft(status?.report?.next ?? /\bNext:\**\s*(.+)/i.exec(status?.latest ?? "")?.[1]) && !(await stillAsks(threadId, event.kind)),
+      hold: waitsForReview(status?.report?.next, status?.report?.blocked, status?.latest),
       pr: pr ? { state: pr.state, attention: pr.attention } : null,
       otherOpenPrs: own.filter((candidate) => candidate !== pr && (candidate.state === "open" || candidate.state === "draft")).length,
     });

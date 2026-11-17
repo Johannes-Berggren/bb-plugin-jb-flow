@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decide, followUpsAfterMerge, mergeIntent, nothingLeft, type AutopilotInput } from "./autopilot.ts";
+import { decide, followUpsAfterMerge, mergeIntent, nothingLeft, waitsForReview, type AutopilotInput } from "./autopilot.ts";
 
 const input = (fields: Partial<AutopilotInput>): AutopilotInput => ({
   kind: "green",
@@ -71,6 +71,17 @@ test("follow-up steps are read from the worker's own words", () => {
   assert.equal(followUpsAfterMerge("#2801 merges itself once CI is green."), false);
   assert.equal(followUpsAfterMerge("Merge once CI is green; nothing pending after that."), false);
   assert.equal(followUpsAfterMerge(null, undefined), false);
+});
+
+test("a worker now waiting for a review gets green back, whatever it said when the watch began", () => {
+  assert.equal(decide(input({ afterGreen: "merge", hold: true })).action, "forward");
+  assert.equal(decide(input({ mergeIntent: true, hold: true })).action, "forward");
+  // Real phrasing that let a merge through before this rule.
+  assert.equal(waitsForReview("Anna has not reviewed them yet. Once CI is complete on each PR I'll re-request her review."), true);
+  assert.equal(waitsForReview("Waiting on Sam's approval."), true);
+  assert.equal(waitsForReview("Don't merge until the design review."), true);
+  assert.equal(waitsForReview("I'll merge once CI is green."), false);
+  assert.equal(waitsForReview("Reviewed and approved by Sam; merging once green."), false);
 });
 
 test("nothing left means the worker said so", () => {
