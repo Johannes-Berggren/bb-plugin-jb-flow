@@ -423,7 +423,8 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 ### Approve a plan with another model
 - On by default (**Model choice on plan approval** in the plugin settings).
 - A menu next to **Approve plan** lists the thread's models, from whichever provider the thread uses. Pick one to approve the plan and have it implemented on that model, e.g. plan on a strong reasoning model and build on a faster one.
-- The approval sets the thread's model, then steers the running turn with it (the switch happens through a short steer message), so the implementation itself runs on the new model and later turns stay on it.
+- The approval sets the thread's model, then sends a short steer message with it just before approving. bb holds the steer while the plan waits and adds it to the running turn as soon as the approval goes through, which switches the live session to the new model. It joins that turn rather than starting a new one, and later turns stay on the new model.
+- bb can't approve and switch models in one step, so the switch lands just after the agent resumes: its first step after approval can still run on the planning model, and the rest of the implementation runs on the new one.
 - The last choice is remembered on this device and shown as a one-click **Approve with …** button. Picking the current model clears it.
 - The menu attaches when one plan card is on screen and the open thread has the plan waiting. It depends on bb's plan-banner markup.
 
