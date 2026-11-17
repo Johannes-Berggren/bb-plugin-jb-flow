@@ -316,7 +316,7 @@ text (turn off with **Hide options the reply buttons repeat**).
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 
 - **Groups**, top to bottom:
-  - **Now** (with **Now and Focus** on, the default; otherwise **Needs me** sits here, without the ranking): one ranked list of what to do next. It holds threads blocked on a prompt, a permission or a failure, unread threads whose last message asks you something, threads you marked as **Focus** that want something from you, and threads with a deadline coming up. Unread status updates stay in their section, in bold.
+  - **Now** (with **Now and Focus** on, the default; otherwise **Needs me** sits here, without the ranking): one ranked list of what to do next. It holds threads blocked on a prompt, a permission or a failure, unread threads whose last message asks you something, threads you marked as **Focus** that want something from you, and threads with a deadline coming up. Unread status updates stay in their section, in bold. A subthread that needs you brings its parent's row here, with the subthread under it saying why (its conductor headline, if it has one). While the subthread is folded away, the parent's row says it instead.
     - **Focus** is a mark on the thread, separate from its section: press `f` on a row, or use the right-click menu. A star shows on the row. Marking more than the **Focus limit** (default 7) asks you to drop one, or keep them all. The first time, threads in your Priority lane start in Focus.
     - **Due dates:** press `d` on a row or use the right-click menu; `bb jb-flow due` does the same. Agents set them too, with the `set_thread_due` tool or a `**Due:** YYYY-MM-DD · what falls due` line in a status report, for real outside deadlines only. A day means the end of that day. A date you set is never changed by an agent, and a date you clear isn't proposed again. The hover preview shows who set it and why.
     - **When a deadline counts:** within 48 hours, a thread that wants something from you joins Now without Focus. Within 24 hours or overdue, it joins even when someone else has the next step, so you can chase them, but not while an agent or a watch is on it. A snoozed thread comes back into Now once its deadline is within 24 hours.
@@ -329,12 +329,12 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. Each is matched to one of your sections by name the first time, then remembered by id, so you can rename a lane's section (right-click → Rename…) and it keeps its number key and behaviour. Active is the unsectioned bucket and can't be renamed.
   - **Waiting for others** fills itself (marked *auto*): unfiled threads whose agent says it's waiting on someone else ("Alex is the only pending reviewer", "once he sends the invoices", "tell me when he replies"), or whose open PRs all wait on a reviewer. Threads you file there yourself go back to Active by themselves when a turn ends without waiting on anyone. Snoozed threads that were waiting on someone ("when it wakes, I'll check for Sam's reply") wake into Waiting for others instead of their old section.
   - Any other sections, collapsed.
-  - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here.
+  - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here. A thread counts only once everything under it is finished too (idle for 2+ hours, nothing running, waiting on you or open), because archiving a thread archives its subthreads with it.
   - Snoozed threads, collapsed.
-- **Filters** above the list (Needs me, Your move, Running and so on) narrow it while keeping your sections, each expanded. Done stays one list, with Archive all.
+- **Filters** above the list (Needs me, Your move, Running and so on) narrow it while keeping your sections, each expanded. Done stays one list, with Archive all. Filters, tags and their counts include subthreads: a matching subthread shows under its parent, which stays for context, and subthreads that don't match (and have no match under them) are left out. A match shows even under a folded parent.
 - **Machines**: once threads run on more than one machine, each machine gets a filter chip with its thread count (e.g. *Mac Studio 48*, *MacBook Air 2*); click one to see that machine's threads across all sections. Rows on a machine other than the one BB runs on carry a short tag (*Air*, *MBP*), and the hover preview always names the machine.
 - **Rows** show a project chip with a stable colour per project, tags, and an age fade for idle threads.
-- **Subthreads** (threads an agent spawned under another, and forks) sit under their parent's row, indented, at any depth. They start unfolded, as in bb's own list. The chevron beside a parent, or `←`/`→` on its row, folds them into a count. The count turns amber when a folded subthread needs you, and blue while one runs. A subthread whose parent is archived gets a row of its own.
+- **Subthreads** (threads an agent spawned under another, and forks) sit under their parent's row, indented, at any depth. They start unfolded, as in bb's own list. The chevron beside a parent, or `←`/`→` on its row, folds them into a count. The count turns amber when a folded subthread needs you, and blue while one runs. `←` on a subthread with nothing to fold moves to its parent. A subthread whose parent is archived gets a row of its own. Folds of threads that are gone are forgotten.
 - **Keyboard**, on a focused row:
   - `1`–`5` move it to a lane
   - `s` snooze
@@ -343,7 +343,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `d` set or clear a due date
   - `e` archive (pinned threads are skipped)
   - `u` toggle unread
-  - `←`/`→` fold or unfold its subthreads
+  - `←`/`→` fold or unfold its subthreads; `←` on a subthread with nothing to fold moves to its parent
   - `j`/`k` move up and down
 - **Right-click menu:**
   - open / open in split view
