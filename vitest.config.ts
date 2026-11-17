@@ -16,6 +16,7 @@ export default defineConfig({
       "thread-status.test.ts",
       "decision-choices.ui.test.tsx",
       "palette.ui.test.tsx",
+      "tab-switcher.ui.test.tsx",
       "catch-up.ui.test.tsx",
       "now.ui.test.tsx",
       "subthreads.ui.test.tsx",

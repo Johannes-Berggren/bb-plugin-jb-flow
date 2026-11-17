@@ -779,3 +779,19 @@ it("starts collapsed inside Catch up and opens there without changing the device
   expect(localStorage.getItem(MONITOR_COLLAPSE_KEY)).toBe("false");
   slot.lifecycle.unmount();
 });
+
+it("marks an idle monitor with nothing to show as quiet, so Catch up can hide it", () => {
+  const empty: ActivityData = { activeBackgroundCommands: [], goal: null, activeWorkflows: [], rows: [], pendingTodos: null } as unknown as ActivityData;
+  const slot = renderSlot(
+    { component: ActivityCard },
+    { data: empty, running: false, startedAt: null, now: 2000, updatedAt: 2000, connected: true },
+  );
+  expect(slot.getByRole("region", { name: "Agent activity" }).hasAttribute("data-quiet")).toBe(true);
+  slot.lifecycle.unmount();
+  const busy = renderSlot(
+    { component: ActivityCard },
+    { data: empty, running: true, startedAt: 1000, now: 2000, updatedAt: 2000, connected: true, phase: "working" },
+  );
+  expect(busy.getByRole("region", { name: "Agent activity" }).hasAttribute("data-quiet")).toBe(false);
+  busy.lifecycle.unmount();
+});
