@@ -4,6 +4,17 @@ const ids = z.array(z.string().min(1).max(160)).max(200);
 /** The colors a workspace can carry. Each has a light and a dark value in workspaces.css. */
 export const WORKSPACE_COLORS = ["red", "orange", "amber", "green", "teal", "blue", "violet", "pink"] as const;
 export type WorkspaceColor = (typeof WORKSPACE_COLORS)[number];
+/** The same colors as sRGB, for things outside BB's page that can't read its CSS, such as a key on a control deck. */
+export const WORKSPACE_COLOR_HEX: Record<WorkspaceColor, string> = {
+  red: "#f66d67",
+  orange: "#f99549",
+  amber: "#eabe4a",
+  green: "#5dc879",
+  teal: "#47c7c7",
+  blue: "#65a7fa",
+  violet: "#ac8ff8",
+  pink: "#f780bc",
+};
 export const workspaceSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
   name: z.string().trim().min(1).max(60),
