@@ -1,34 +1,43 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { minPaneWidth, requiredSplitWidth, revealScrollLeft } from "./split-scroll-model.ts";
+import { minPaneWidth, requiredSplitWidth, revealScrollLeft, splitColumns } from "./split-scroll-model.ts";
 
+const pane = (x: number, width: number, y = 0, height = 1) => ({ rect: { x, y, width, height } });
 const row = (...widths: number[]) => {
   let x = 0;
   return widths.map((width) => {
-    const pane = { rect: { x, width } };
+    const next = pane(x, width);
     x += width;
-    return pane;
+    return next;
   });
 };
 
-test("the strip is as wide as the narrowest pane needs", () => {
+test("each column of the split gets the minimum width", () => {
   assert.equal(requiredSplitWidth(row(0.25, 0.25, 0.25, 0.25), 640), 2560);
-  // Uneven panes keep their proportions: the narrowest one reaches the minimum.
-  assert.equal(requiredSplitWidth(row(0.5, 0.3, 0.2), 600), 3000);
-  // Two panes stacked in one column are both full width.
-  assert.equal(requiredSplitWidth([{ rect: { x: 0, width: 1 } }, { rect: { x: 0, width: 1 } }], 640), 640);
+  assert.equal(requiredSplitWidth(row(...Array.from({ length: 8 }, () => 0.125)), 640), 5120);
 });
 
-test("a single pane, no panes and broken fractions don't scroll", () => {
+test("the width follows the number of columns, not their proportions, so a divider drag never changes it", () => {
+  assert.equal(requiredSplitWidth(row(0.5, 0.3, 0.2), 600), 1800);
+  assert.equal(requiredSplitWidth(row(0.2, 0.2, 0.2, 0.162, 0.238), 640), 3200);
+  assert.equal(requiredSplitWidth(row(0.98, 0.02), 640), 1280);
+});
+
+test("panes stacked in a column count once", () => {
+  // Two panes on top of each other: one column.
+  assert.equal(splitColumns([pane(0, 1, 0, 0.5), pane(0, 1, 0.5, 0.5)]), 1);
+  // A pane, a column of two, a pane: three columns.
+  const nested = [pane(0, 0.3), pane(0.3, 0.4, 0, 0.5), pane(0.3, 0.4, 0.5, 0.5), pane(0.7, 0.3)];
+  assert.equal(splitColumns(nested), 3);
+  assert.equal(requiredSplitWidth(nested, 640), 1920);
+  // Two rows of different lengths: the longer row decides.
+  const rows = [pane(0, 0.5, 0, 0.5), pane(0.5, 0.5, 0, 0.5), pane(0, 1 / 3, 0.5, 0.5), pane(1 / 3, 1 / 3, 0.5, 0.5), pane(2 / 3, 1 / 3, 0.5, 0.5)];
+  assert.equal(splitColumns(rows), 3);
+});
+
+test("a single pane and no panes don't scroll", () => {
   assert.equal(requiredSplitWidth(row(1), 640), null);
   assert.equal(requiredSplitWidth([], 640), null);
-  assert.equal(requiredSplitWidth(row(0.5, 0), 640), null);
-  assert.equal(requiredSplitWidth(row(0.5, Number.NaN), 640), null);
-});
-
-test("a sliver in a nested split can't ask for more than eight panes' worth", () => {
-  assert.equal(requiredSplitWidth(row(0.98, 0.02), 640), 5120);
-  assert.equal(requiredSplitWidth(row(...Array.from({ length: 8 }, () => 0.125)), 640), 5120);
 });
 
 test("the minimum width setting is clamped and falls back to the default", () => {

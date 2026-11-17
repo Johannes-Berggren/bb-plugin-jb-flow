@@ -1,17 +1,20 @@
 import { useEffect } from "react";
 import { useSettings, useSidebarSplitLayout } from "@get-bb/plugin-sdk/app";
-import { minPaneWidth, requiredSplitWidth, revealScrollLeft, type SplitPaneRect } from "./split-scroll-model";
+import { minPaneWidth, requiredSplitWidth, revealScrollLeft } from "./split-scroll-model";
 import "./split-scroll.css";
 
 const SCROLL_CLASS = "jb-flow-split-scroll";
+/** Set only while the strip really is wider than the view. */
+const OVERFLOW_CLASS = "jb-flow-split-overflow";
 const WIDTH_VAR = "--jb-flow-split-min-width";
 const SCROLL_EVENT = "jb-flow-split-scroll";
 /** BB's element around the split panes; the side panel sits outside it and stays put. */
 const SCROLLER = "#split-workspace-main-panel > div";
-/** While a divider is dragged or a pane is maximized, BB owns the geometry. */
-const BUSY = '[data-dragging], [data-split-pane-id][data-maximized="true"]';
+/** BB measures a divider drag once, at pointer-down. */
+const DRAGGING = "#split-workspace-main-panel [data-dragging]";
+const MAXIMIZED = '#split-workspace-main-panel [data-split-pane-id][data-maximized="true"]';
 
-type Focused = SplitPaneRect & { key: string };
+type Focused = { key: string; x: number; width: number };
 type Preference = { width: number | null; focused: Focused | null };
 
 function readPreference(detail: unknown): Preference | null {
@@ -34,16 +37,41 @@ export function mountSplitScroll({ signal }: { signal: AbortSignal }) {
   const root = document.documentElement;
   let focused: Focused | null = null;
   let frame = 0;
-  let observer: MutationObserver | null = null;
+  /** A reveal that is still owed; a later layout event must not drop it. */
+  let owed: "smooth" | "auto" | null = null;
+  let attributes: MutationObserver | null = null;
+  let sizes: ResizeObserver | null = null;
+  let watched: HTMLElement | null = null;
   let wasMaximized = false;
 
-  const reveal = (smooth: boolean) => {
+  const on = () => root.classList.contains(SCROLL_CLASS);
+  const present = (selector: string) => document.querySelector(selector) !== null;
+  const measure = () => {
+    const scroller = on() ? document.querySelector<HTMLElement>(SCROLLER) : null;
+    root.classList.toggle(OVERFLOW_CLASS, scroller !== null && scroller.scrollWidth > scroller.clientWidth + 1);
+    return scroller;
+  };
+  /** BB creates the scrolled element with the split and drops it with the last second pane. */
+  const watchSizes = (scroller: HTMLElement | null) => {
+    if (scroller === watched) return;
+    sizes?.disconnect();
+    sizes = null;
+    watched = scroller;
+    if (!scroller || typeof ResizeObserver === "undefined") return;
+    sizes = new ResizeObserver(measure);
+    sizes.observe(scroller);
+    if (scroller.firstElementChild) sizes.observe(scroller.firstElementChild);
+  };
+  /** After BB has laid the panes out: note whether the strip overflows, and show the focused pane if asked. */
+  const settle = (reveal: "smooth" | "auto" | null) => {
+    owed = reveal ?? owed;
     cancelAnimationFrame(frame);
-    // After BB has laid the panes out for the new layout.
     frame = requestAnimationFrame(() => {
-      const scroller = document.querySelector<HTMLElement>(SCROLLER);
-      if (!scroller || !focused || !root.classList.contains(SCROLL_CLASS)) return;
-      if (scroller.querySelector(BUSY)) return;
+      const scroller = measure();
+      watchSizes(scroller);
+      const behavior = owed;
+      owed = null;
+      if (!scroller || !focused || behavior === null || present(DRAGGING) || present(MAXIMIZED)) return;
       const left = revealScrollLeft({
         x: focused.x,
         width: focused.width,
@@ -51,47 +79,50 @@ export function mountSplitScroll({ signal }: { signal: AbortSignal }) {
         clientWidth: scroller.clientWidth,
         scrollLeft: scroller.scrollLeft,
       });
-      if (left !== Math.round(scroller.scrollLeft)) scroller.scrollTo({ left, behavior: smooth ? "smooth" : "auto" });
+      if (left !== Math.round(scroller.scrollLeft)) scroller.scrollTo({ left, behavior });
     });
   };
-  const maximized = () => document.querySelector('[data-split-pane-id][data-maximized="true"]') !== null;
-  const watchMaximize = (on: boolean) => {
-    if (!on) {
-      observer?.disconnect();
-      observer = null;
+  const watchAttributes = (enabled: boolean) => {
+    if (!enabled) {
+      attributes?.disconnect();
+      attributes = null;
       return;
     }
-    if (observer) return;
-    wasMaximized = maximized();
+    if (attributes) return;
+    wasMaximized = present(MAXIMIZED);
     // Maximizing collapses the strip, so the scroll position is lost. BB's
     // layout doesn't change on maximize; this attribute is the only signal.
-    observer = new MutationObserver(() => {
-      const now = maximized();
-      if (wasMaximized && !now) reveal(false);
+    attributes = new MutationObserver(() => {
+      const now = present(MAXIMIZED);
+      if (wasMaximized && !now) settle("auto");
       wasMaximized = now;
     });
-    observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-maximized"] });
+    attributes.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-maximized"] });
   };
   const apply = (preference: Preference) => {
-    const on = preference.width !== null;
-    root.classList.toggle(SCROLL_CLASS, on);
-    if (on) root.style.setProperty(WIDTH_VAR, `${preference.width}px`);
+    const enabled = preference.width !== null;
+    root.classList.toggle(SCROLL_CLASS, enabled);
+    if (enabled) root.style.setProperty(WIDTH_VAR, `${preference.width}px`);
     else root.style.removeProperty(WIDTH_VAR);
-    watchMaximize(on);
+    watchAttributes(enabled);
     const moved = preference.focused?.key !== focused?.key;
     focused = preference.focused;
-    // Only a change of pane scrolls, so resizing a divider never moves the strip.
-    if (on && moved && focused) reveal(true);
+    if (!enabled) {
+      cancelAnimationFrame(frame);
+      owed = null;
+      watchSizes(null);
+      root.classList.remove(OVERFLOW_CLASS);
+      return;
+    }
+    // Only a change of pane scrolls; resizing a divider leaves the strip where it is.
+    settle(moved && focused ? "smooth" : null);
   };
   const update = (event: Event) => {
     const preference = readPreference((event as CustomEvent<unknown>).detail);
     if (preference) apply(preference);
   };
   window.addEventListener(SCROLL_EVENT, update, { signal });
-  const cleanup = () => {
-    cancelAnimationFrame(frame);
-    apply({ width: null, focused: null });
-  };
+  const cleanup = () => apply({ width: null, focused: null });
   signal.addEventListener("abort", cleanup, { once: true });
   return () => {
     cleanup();

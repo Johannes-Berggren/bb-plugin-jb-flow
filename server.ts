@@ -407,13 +407,13 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Scroll split panes sideways",
       description:
-        "When the panes in a split would get narrower than the minimum pane width, the split scrolls sideways instead of squeezing them, and the pane you focus is brought into view. Off restores BB's fit-to-window split.",
+        "When a split has more panes than fit at the minimum pane width, it scrolls sideways instead of squeezing them, and the pane you focus is brought into view. Off restores BB's fit-to-window split.",
       default: true,
     },
     splitMinPaneWidth: {
       type: "number",
       label: "Minimum pane width",
-      description: "The narrowest a split pane gets, in pixels, before the split starts to scroll sideways (320 to 1600).",
+      description: "The width each pane of a scrolling split gets, in pixels, before the split starts to scroll sideways (320 to 1600). Dragging a divider can still make one pane narrower.",
       default: 640,
     },
     threadMonitor: {

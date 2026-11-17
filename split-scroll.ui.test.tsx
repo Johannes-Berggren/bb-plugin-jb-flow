@@ -4,8 +4,10 @@ import { loadPluginApp, mountPluginContentScripts, renderSlot } from "@get-bb/pl
 import { mountSplitScroll } from "./split-scroll";
 
 const CLASS = "jb-flow-split-scroll";
+const OVERFLOW = "jb-flow-split-overflow";
 const root = document.documentElement;
 const scrolling = () => root.classList.contains(CLASS);
+const overflowing = () => root.classList.contains(OVERFLOW);
 const minWidth = () => root.style.getPropertyValue("--jb-flow-split-min-width");
 const rect = (x: number, width: number) => ({ x, y: 0, width, height: 1 });
 const panes = (focused: number, count = 4) => ({
@@ -41,7 +43,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  root.classList.remove(CLASS);
+  root.classList.remove(CLASS, OVERFLOW);
   root.style.removeProperty("--jb-flow-split-min-width");
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
@@ -103,14 +105,18 @@ it("scrolls the strip to the pane that takes focus, and not when only its size c
   // The last pane is off to the right: 2560 wide strip, 1280 wide view.
   const last = renderSlot(preference, {}, { settings, sidebarSplitLayout: panes(3) });
   expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ left: 1280, behavior: "smooth" });
+  // The strip is wider than the view, which the header spacing keys on.
+  expect(overflowing()).toBe(true);
   last.lifecycle.unmount();
 
-  // The same pane, resized: no scroll.
+  // The same pane, resized: no scroll, and the strip keeps its width.
   scrollTo.mockClear();
   const resized = panes(3);
+  resized.panes[2]!.rect = rect(0.5, 0.3);
   resized.panes[3]!.rect = rect(0.8, 0.2);
   renderSlot(preference, {}, { settings, sidebarSplitLayout: resized }).lifecycle.unmount();
   expect(scrollTo).not.toHaveBeenCalled();
+  expect(minWidth()).toBe("2560px");
   await scripts.lifecycle.dispose();
 });
 
@@ -135,6 +141,37 @@ it("leaves the strip alone while a divider is dragged or a pane is maximized, th
   await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ left: 1280, behavior: "auto" }));
   controller.abort();
   expect(scrolling()).toBe(false);
+  expect(overflowing()).toBe(false);
+});
+
+it("still scrolls to the focused pane when another layout change follows before the next frame", () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => frames.push(run));
+  const controller = new AbortController();
+  mountSplitScroll({ signal: controller.signal });
+  const { scrollTo } = hostSplit();
+  send({ width: 2560, focused: { key: "last", x: 0.75, width: 0.25 } });
+  // A resize of the same pane arrives before BB has painted.
+  send({ width: 2560, focused: { key: "last", x: 0.75, width: 0.25 } });
+  frames.at(-1)!(0);
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ left: 1280, behavior: "smooth" });
+  controller.abort();
+});
+
+it("marks the strip as overflowing only while it is wider than the view", () => {
+  const controller = new AbortController();
+  mountSplitScroll({ signal: controller.signal });
+  hostSplit({ scrollWidth: 1280, clientWidth: 1280 });
+  send({ width: 1280, focused: null });
+  expect(scrolling()).toBe(true);
+  expect(overflowing()).toBe(false);
+  document.body.innerHTML = "";
+  hostSplit({ scrollWidth: 2560, clientWidth: 1280 });
+  send({ width: 2560, focused: null });
+  expect(overflowing()).toBe(true);
+  send({ width: null, focused: null });
+  expect(overflowing()).toBe(false);
+  controller.abort();
 });
 
 it("ignores malformed preferences and stops listening once aborted", () => {

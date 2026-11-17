@@ -28,3 +28,16 @@
   overflow-x: hidden;
   scroll-snap-type: none;
 }
+/* BB pins its side-panel toggle to the split's top right corner, and only the
+   last pane leaves room for it. While the strip is wider than the view any
+   pane of the top row can sit under it, so the others leave room too. */
+.jb-flow-split-overflow [data-testid="split-workspace-panel-toggle"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-row > div:not(:last-child) [data-testid="app-page-header-content-row"],
+.jb-flow-split-overflow [data-testid="split-workspace-panel-toggle"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-col > div:first-child > [data-split-resize-grid-root].flex-row > div:not(:last-child) [data-testid="app-page-header-content-row"] {
+  padding-right: calc(var(--bb-title-bar-control-size, 28px) + 4px);
+}
+/* The same on the left: with the sidebar collapsed, BB's first pane leaves room
+   for what sits over the split's top left corner. The others follow. */
+.jb-flow-split-overflow [data-side="left"][data-collapsible="offcanvas"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-row > div:not(:first-child) [data-testid="app-page-header-content-row"],
+.jb-flow-split-overflow [data-side="left"][data-collapsible="offcanvas"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-col > div:first-child > [data-split-resize-grid-root].flex-row > div:not(:first-child) [data-testid="app-page-header-content-row"] {
+  padding-left: 32px;
+}

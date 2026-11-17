@@ -1,10 +1,8 @@
 // The arithmetic behind the scrolling split, apart from the DOM so it can be tested.
 
 /** A pane's place in the split, as fractions of the split area (BB's own layout). */
-export type SplitPaneRect = { x: number; width: number };
+export type SplitPaneRect = { x: number; y: number; width: number; height: number };
 
-/** BB opens at most this many panes; the strip never needs to be wider than that many minimums. */
-const MAX_PANES = 8;
 export const DEFAULT_MIN_PANE_WIDTH = 640;
 
 /** The setting as a usable width: whole pixels between 320 and 1600. */
@@ -13,17 +11,29 @@ export function minPaneWidth(value: unknown): number {
   return Math.round(Math.min(1600, Math.max(320, value)));
 }
 
+/** How many panes sit side by side: the most that any horizontal line through the split crosses. */
+export function splitColumns(panes: readonly { rect: SplitPaneRect }[]): number {
+  let most = 0;
+  for (const { rect } of panes) {
+    // The busiest line always runs just below some pane's top edge.
+    const line = rect.y + 1e-6;
+    const crossed = panes.filter((pane) => pane.rect.y <= line && line < pane.rect.y + pane.rect.height).length;
+    most = Math.max(most, crossed);
+  }
+  return most;
+}
+
 /**
- * How wide the split must be for its narrowest pane to reach `minPx`, keeping
- * the proportions BB already has. Null when there is no split to scroll. As a
- * min-width it only takes effect when the window is narrower than this.
+ * How wide the split must be to give each column `minPx`. Null when there is
+ * no split to scroll. It depends on the number of columns only, not on their
+ * proportions, so dragging a divider never changes it: the panes you resize
+ * are the only ones that move. As a min-width it only takes effect when the
+ * window is narrower than this.
  */
 export function requiredSplitWidth(panes: readonly { rect: SplitPaneRect }[], minPx: number): number | null {
   if (panes.length < 2) return null;
-  const narrowest = Math.min(...panes.map((pane) => pane.rect.width));
-  if (!(narrowest > 0)) return null;
-  // A sliver in a nested split would otherwise ask for a strip many screens wide.
-  return Math.round(Math.min(minPx / Math.min(1, narrowest), MAX_PANES * minPx));
+  const columns = splitColumns(panes);
+  return columns > 0 ? columns * minPx : null;
 }
 
 /**
@@ -37,7 +47,7 @@ export function revealScrollLeft({
   scrollWidth,
   clientWidth,
   scrollLeft,
-}: SplitPaneRect & { scrollWidth: number; clientWidth: number; scrollLeft: number }): number {
+}: Pick<SplitPaneRect, "x" | "width"> & { scrollWidth: number; clientWidth: number; scrollLeft: number }): number {
   const max = Math.max(0, scrollWidth - clientWidth);
   const left = x * scrollWidth;
   const right = (x + width) * scrollWidth;
