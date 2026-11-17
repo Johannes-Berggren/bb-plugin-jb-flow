@@ -78,6 +78,10 @@
     "conductor-routing.test.ts",
     "conductor-store.ts",
     "conductor-store.test.ts",
-    "ci-watch.test.ts"
+    "ci-watch.test.ts",
+    "conductor-model.ts",
+    "conductor.ts",
+    "conductor-model.test.ts",
+    "conductor.test.ts"
   ]
 }

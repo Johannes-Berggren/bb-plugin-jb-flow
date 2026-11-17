@@ -10,6 +10,9 @@ export const MIGRATIONS = [
   // Conductor inbox (conductor-store.ts): events a workspace's conductor hasn't handled yet.
   "CREATE TABLE conductor_events (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, thread_id TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, meta TEXT NOT NULL DEFAULT '{}', dedupe TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, delivered_at INTEGER, acked_at INTEGER)",
   "CREATE INDEX conductor_events_open ON conductor_events (workspace_id, acked_at, delivered_at)",
+  // Conductor activity log: what each conductor did, for its page.
+  "CREATE TABLE conductor_log (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL, thread_id TEXT, text TEXT NOT NULL)",
+  "CREATE INDEX conductor_log_recent ON conductor_log (workspace_id, id)",
 ];
 
 /** Brings the database up to date. Safe to call more than once: applied statements are skipped. */

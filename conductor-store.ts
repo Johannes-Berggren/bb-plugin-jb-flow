@@ -102,12 +102,30 @@ export function createConductorStore(db: () => Db) {
     return acked;
   }
 
-  /** Forgets events older than `before`, handled or not. Returns how many. */
+  /** Records something a conductor did (or that happened to it), for its activity log. */
+  function log(workspaceId: string, kind: string, threadId: string | null, text: string, at: number): void {
+    db()
+      .prepare("INSERT INTO conductor_log (workspace_id, at, kind, thread_id, text) VALUES (?, ?, ?, ?, ?)")
+      .run(workspaceId, at, kind, threadId, text.slice(0, 1000));
+  }
+
+  /** The newest log entries first. */
+  function recentLog(workspaceId: string, limit = 100): ConductorLogEntry[] {
+    const rows = db()
+      .prepare("SELECT id, at, kind, thread_id, text FROM conductor_log WHERE workspace_id = ? ORDER BY id DESC LIMIT ?")
+      .all(workspaceId, limit) as Array<{ id: number; at: number; kind: string; thread_id: string | null; text: string }>;
+    return rows.map((row) => ({ id: row.id, at: row.at, kind: row.kind, threadId: row.thread_id, text: row.text }));
+  }
+
+  /** Forgets events and log entries older than `before`, handled or not. Returns how many events. */
   function prune(before: number): number {
+    db().prepare("DELETE FROM conductor_log WHERE at < ?").run(before);
     return db().prepare("DELETE FROM conductor_events WHERE created_at < ?").run(before).changes;
   }
 
-  return { add, open, undelivered, markDelivered, ack, prune };
+  return { add, open, undelivered, markDelivered, ack, log, recentLog, prune };
 }
 
 export type ConductorStore = ReturnType<typeof createConductorStore>;
+
+export type ConductorLogEntry = { id: number; at: number; kind: string; threadId: string | null; text: string };

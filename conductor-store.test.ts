@@ -58,3 +58,14 @@ test("pruning forgets old events", () => {
   assert.equal(inbox.prune(50), 1);
   assert.deepEqual(inbox.open("ws").map((event) => event.kind), ["merged"]);
 });
+
+test("the activity log is per workspace, newest first, and pruned with the inbox", () => {
+  const inbox = store();
+  inbox.log("ws", "merge", "thr_a", "Merged acme/web-app#12", 10);
+  inbox.log("ws", "archive", "thr_a", "Archived", 20);
+  inbox.log("other", "merge", null, "Merged elsewhere", 15);
+  assert.deepEqual(inbox.recentLog("ws").map((entry) => entry.kind), ["archive", "merge"]);
+  assert.equal(inbox.recentLog("other")[0]!.threadId, null);
+  inbox.prune(15);
+  assert.deepEqual(inbox.recentLog("ws").map((entry) => entry.kind), ["archive"]);
+});

@@ -144,6 +144,14 @@ Never poll GitHub in loops. That means no `gh pr checks --watch`, no `gh run wat
 
 `bb jb-flow watches` lists everything currently being watched.
 
+### When your workspace has a conductor
+
+Some workspaces have a **conductor**: a permanent thread that takes routine PR news for every thread in it.
+- You're still woken for CI failures and review feedback.
+- CI green, merges and releases go to the conductor. Pass `after_green: "continue"` if you need to hear about green yourself.
+- With `after_green: "merge"` the conductor merges for you; you may not hear about that PR again.
+- A message starting `[conductor]` is the conductor relaying an instruction, often the user's own reply. Act on it in your thread as usual; don't message the conductor back.
+
 ## Threads with several PRs (stacked or across repos)
 
 Every PR a thread opens with `gh pr create` is linked to it automatically, in any repo. Stacks are detected from base and head branches.

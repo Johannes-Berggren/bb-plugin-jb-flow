@@ -1,0 +1,179 @@
+// The conductor's decisions and texts, apart from bb so they can be tested:
+// when to wake it, what the wake-up says, what it's told to do, and the shape
+// of the briefing it leaves for the user. conductor.ts wires it up.
+import { z } from "zod";
+import type { ConductorInboxEvent } from "./conductor-routing.ts";
+import type { StoredConductorEvent } from "./conductor-store.ts";
+
+/** Marks a conductor in its thread's plugin metadata. */
+export const CONDUCTOR_ROLE = "conductor";
+
+/** A workspace's conductor, as stored in kv `conductors`. */
+export const conductorRecordSchema = z.object({
+  enabled: z.boolean(),
+  /** The conductor's thread, once spawned. */
+  threadId: z.string().nullable(),
+  /** Project the thread lives in; the workspace's first project when absent. */
+  projectId: z.string().optional(),
+  providerId: z.string().optional(),
+  model: z.string().optional(),
+  createdAt: z.number().optional(),
+  lastWakeAt: z.number().optional(),
+  /** Day (YYYY-MM-DD) of the last compacting wake-up. */
+  compactedOn: z.string().optional(),
+});
+export type ConductorRecord = z.infer<typeof conductorRecordSchema>;
+
+export const BRIEFING_KINDS = ["decision", "ready", "blocked", "fyi"] as const;
+export const briefingItemSchema = z.object({
+  threadId: z.string().min(1).max(200),
+  kind: z.enum(BRIEFING_KINDS),
+  /** What happened and what's needed, in a sentence or two. */
+  summary: z.string().min(1).max(500),
+  recommendation: z.string().max(300).optional(),
+  /** The exact message to send the worker if the user accepts the recommendation. */
+  reply: z.string().max(2000).optional(),
+});
+export const briefingSchema = z.object({
+  at: z.number(),
+  items: z.array(briefingItemSchema).max(40),
+  handled: z.array(z.object({ threadId: z.string().max(200).nullable(), what: z.string().min(1).max(300) })).max(60),
+  note: z.string().max(1000).optional(),
+});
+export type BriefingItem = z.infer<typeof briefingItemSchema>;
+export type Briefing = z.infer<typeof briefingSchema>;
+
+/** Standing preferences the conductor keeps between sessions. */
+export const MEMORY_MAX = 2000;
+/** What one wake-up message may carry before pointing at conductor_inbox. */
+export const WAKE_MAX_CHARS = 4000;
+const EVENT_MAX_CHARS = 400;
+
+/** A batch is due once its oldest event has waited the batch window. */
+export function wakeDue(oldestCreatedAt: number | null, now: number, batchMs: number): boolean {
+  return oldestCreatedAt !== null && now - oldestCreatedAt >= batchMs;
+}
+
+/** The first wake-up of a day compacts the conversation first, so a permanent thread stays small. */
+export function compactToday(record: Pick<ConductorRecord, "compactedOn" | "lastWakeAt">, now: Date): { compact: boolean; day: string } {
+  const day = localDay(now);
+  return { compact: record.lastWakeAt !== undefined && record.compactedOn !== day, day };
+}
+
+export function localDay(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+const oneLine = (text: string, max: number) => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+
+/** One inbox event as a line: id, kind, thread, PR and intent, then the news. */
+export function eventLine(event: StoredConductorEvent, title: string): string {
+  const meta = event.meta as { repo?: unknown; pr?: unknown; afterGreen?: unknown };
+  const pr = typeof meta.repo === "string" && typeof meta.pr === "number" ? ` · ${meta.repo}#${meta.pr}` : "";
+  const intent = typeof meta.afterGreen === "string" ? ` · after_green: ${meta.afterGreen}` : "";
+  return `#${event.id} [${event.kind}] "${oneLine(title || "Untitled", 80)}" (${event.threadId})${pr}${intent} — ${oneLine(event.text, EVENT_MAX_CHARS)}`;
+}
+
+/** The message that wakes a conductor for a batch of events. */
+export function wakeMessage(
+  events: readonly StoredConductorEvent[],
+  titleOf: (threadId: string) => string,
+  maxChars = WAKE_MAX_CHARS,
+): string {
+  const head = `[conductor inbox] ${events.length} new event${events.length === 1 ? "" : "s"}:`;
+  const tail = "Handle them, acknowledge what you handled with conductor_inbox, and end with post_briefing.";
+  const lines: string[] = [];
+  let used = head.length + tail.length + 4;
+  for (const [index, event] of events.entries()) {
+    const line = eventLine(event, titleOf(event.threadId));
+    if (used + line.length + 1 > maxChars && lines.length > 0) {
+      lines.push(`… and ${events.length - index} more: call conductor_inbox.`);
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return `${head}\n${lines.join("\n")}\n\n${tail}`;
+}
+
+export type HandBackKind = "asks" | "ready" | "waiting" | "none";
+
+/**
+ * A worker's turn ending, as an inbox event. Waiting on someone else gives the
+ * conductor nothing to do, so it isn't one.
+ */
+export function handBackEvent(
+  handBack: HandBackKind,
+  text: string,
+  report: { next: string; blocked: string } | null,
+): ConductorInboxEvent | null {
+  if (handBack === "waiting") return null;
+  const kind = handBack === "asks" ? "needs-you" : handBack === "ready" ? "ready" : "finished";
+  const summary = report
+    ? [report.blocked && `Blocked: ${report.blocked}`, report.next && `Next: ${report.next}`].filter(Boolean).join(" · ")
+    : "";
+  const body = summary || text.replace(/\s+/g, " ").trim().slice(-300);
+  return { kind, text: oneLine(body || "(no reply text)", 300) };
+}
+
+/** What the conductor's first message says. */
+export function bootPrompt(workspaceName: string): string {
+  return `You are now the conductor for the "${oneLine(workspaceName, 60)}" workspace. Call fleet_status to see its threads, then post your first briefing with post_briefing.`;
+}
+
+/** A conductor's message to a worker, so the worker carries on instead of answering back. */
+export function relayText(message: string): string {
+  return `[conductor] ${message.trim()}\n\n(Relayed by this workspace's conductor. Continue in your own thread as usual; don't message the conductor back.)`;
+}
+
+const ROLE = (workspaceName: string) => `## You are the conductor of the "${oneLine(workspaceName, 60)}" workspace
+You run permanently for this bb workspace. Worker threads in it do the work. Routine news about them (CI green, PRs merged or closed, releases, workers finishing a turn) comes to you instead of waking them. Keep the work moving with as few worker wake-ups and user interruptions as possible.
+
+Each time you're woken:
+1. Read the events (conductor_inbox) and look at the threads they concern (fleet_status, thread_brief).
+2. Do routine steps yourself:
+   - CI green and the worker said after_green: merge, or its status report says it merges once green: merge_pr. If merging is blocked (a required review, conflicts), say so in the briefing.
+   - A failure that looks flaky (runner, network, timeout) rather than caused by the change: rerun_failed, once.
+   - A PR merged or closed and its thread has nothing left (no other open PRs, no further steps): thread_action archive.
+3. Forward to a worker only what it must act on, with forward_to_thread: one clear instruction.
+4. Never decide product, scope or outward-facing questions for the user, and never bypass branch protection or required reviews.
+5. Acknowledge what you handled (conductor_inbox with ack), then end every turn with post_briefing: one item per thread that needs the user (summary, your recommendation, the exact reply for the worker) and what you handled.
+
+When the user writes to you:
+- A bare item number or "go" means: send that item's recommended reply to its worker (forward_to_thread with mark_read).
+- "2 go, 4 snooze 3d, 5: <text>": do each, with forward_to_thread or thread_action, then post_briefing again.
+- Keep standing preferences they state with conductor_memory.
+Act on other threads only through these tools, not \`bb thread tell\`. Keep your own replies short; the briefing is what the user reads.`;
+
+/** The conductor's instructions, within bb's 4096-character limit; the user's own text is cut first. */
+export function conductorInstructions(workspaceName: string, prompt: string, memory: string): string {
+  const parts = [ROLE(workspaceName)];
+  if (memory.trim()) parts.push(`## Standing preferences (from conductor_memory)\n\`\`\`\n${memory.trim().slice(0, MEMORY_MAX).replaceAll("```", "'''")}\n\`\`\``);
+  const base = parts.join("\n\n");
+  const extra = prompt.trim();
+  if (!extra) return base;
+  const room = 4096 - base.length - 40;
+  return room > 0 ? `${base}\n\n## The user's instructions\n${extra.slice(0, room)}` : base;
+}
+
+/** gh's flag for the merge method a repo defaults to. */
+export function mergeFlag(viewerDefault: string | null | undefined): "--squash" | "--merge" | "--rebase" {
+  if (viewerDefault === "MERGE") return "--merge";
+  if (viewerDefault === "REBASE") return "--rebase";
+  return "--squash";
+}
+
+/** Run ids of a PR's failed GitHub Actions checks. */
+export function failedRunIds(checks: ReadonlyArray<{ conclusion?: string | null; state?: string; detailsUrl?: string; targetUrl?: string }>): string[] {
+  const ids = new Set<string>();
+  for (const check of checks) {
+    const failed = ["FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"].includes(check.conclusion ?? "") || ["FAILURE", "ERROR"].includes(check.state ?? "");
+    const run = /\/actions\/runs\/(\d+)/.exec(check.detailsUrl ?? check.targetUrl ?? "")?.[1];
+    if (failed && run) ids.add(run);
+  }
+  return [...ids];
+}
