@@ -41,6 +41,7 @@
     "thread-cache.ts",
     "snooze.ts",
     "stale-digest.ts",
+    "wakeups.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",

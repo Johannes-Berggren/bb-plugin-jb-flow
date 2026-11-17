@@ -27,6 +27,7 @@ import { createChanges } from "./changes";
 import { createThreadLists, type ListedThread } from "./thread-cache";
 import { createSnoozes, registerSnoozeTool } from "./snooze";
 import { createStaleDigest } from "./stale-digest";
+import { autoContinueOverridesFor, createWakeups } from "./wakeups";
 import { formatDue, formatWhen, parseDue, parseDueLine } from "./when";
 import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
@@ -250,9 +251,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.active", onThreadState);
   bb.events.on("thread.idle", onThreadState);
 
-  // Each thread's own auto-continue switch (thread monitor); absent = the setting.
-  const autoContinueOverrides = async () =>
-    (await bb.storage.kv.get<Record<string, boolean>>("autoContinueThreads")) ?? {};
+  const autoContinueOverrides = autoContinueOverridesFor(bb);
 
   // Late-bound: the awaiting tracker is created below.
   const focus = createFocus(bb, () => awaiting.all(), () => findSnoozedSection());
@@ -280,6 +279,8 @@ export default async function plugin(bb: BbPluginApi) {
     async (threadId) => ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
     conductorSink,
   );
+  const wakeups = createWakeups(bb, { settings, changed, watchers, autoContinueOverrides });
+  const { watchingByThread } = wakeups;
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
   const awaiting = createAwaiting(bb, changed);
@@ -315,24 +316,6 @@ export default async function plugin(bb: BbPluginApi) {
       }
     }
     return [await watchers.watchCi(threadId, options)];
-  }
-  async function watchingByThread() {
-    const status = await watchers.status();
-    const watching: FlowState["watching"] = {};
-    const releaseProjects = new Map<string, string[]>();
-    for (const waiter of Object.values(status.releaseWaiters)) {
-      releaseProjects.set(waiter.threadId, [...(releaseProjects.get(waiter.threadId) ?? []), waiter.projectName]);
-    }
-    for (const [threadId, names] of releaseProjects) {
-      watching[threadId] = { kind: "release", label: `Waiting for the next ${names.join(" / ")} release` };
-    }
-    for (const [threadId, entry] of Object.entries(status.autoContinue)) {
-      watching[threadId] = { kind: "continue", label: `Limit hit; auto-continues ${formatWhen(entry.resetsAt + 90_000)}` };
-    }
-    for (const watch of Object.values(status.ciWatches)) {
-      watching[watch.threadId] = { kind: "ci", label: `Watching ${watch.repo.split("/")[1]}#${watch.pr} (${watch.watchFor})` };
-    }
-    return watching;
   }
 
 async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
@@ -444,36 +427,13 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.rpc.register(rpcContract, {
     ...snoozes.rpc,
     ...staleDigest.rpc,
+    ...wakeups.rpc,
     workspaces_get: () => workspaces.read(),
     workspace_save: (input) => workspaces.save(input),
     workspace_remove: async ({ id }) => { await workspaces.remove(id); return { ok: true }; },
     workspace_assign: async ({ threadId, workspaceId, automatic }) => { await workspaces.assign(threadId, workspaceId, automatic); return { ok: true }; },
     // Concurrent callers (every open window refetches on the same publish) share one build.
     state_get: () => (stateBuild ??= buildState().finally(() => (stateBuild = null))),
-    auto_continue_get: async ({ threadId }) => ({
-      enabled: (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
-      scheduledAt: await watchers.autoContinueAt(threadId),
-    }),
-    wakeups_get: async ({ threadId }) => ({
-      autoContinue: {
-        enabled: (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
-        scheduledAt: await watchers.autoContinueAt(threadId),
-      },
-      watches: await watchers.wakeupsFor(threadId),
-    }),
-    wakeup_cancel: async ({ threadId, kind, key }) => {
-      await watchers.cancelWakeup(threadId, kind, key);
-      return { ok: true };
-    },
-    auto_continue_set: async ({ threadId, enabled }) => {
-      const overrides = await autoContinueOverrides();
-      overrides[threadId] = enabled;
-      await bb.storage.kv.set("autoContinueThreads", overrides);
-      // Switched off with a "continue" already queued: take it back.
-      if (!enabled) await watchers.cancelAutoContinue(threadId);
-      changed();
-      return { enabled, scheduledAt: enabled ? await watchers.autoContinueAt(threadId) : null };
-    },
     tags_set: async ({ threadId, tags }) => {
       const all = await getTags();
       const unique = [...new Set(tags)];
