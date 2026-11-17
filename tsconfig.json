@@ -91,6 +91,7 @@
     "conductor-page.tsx",
     "conductor-page.ui.test.tsx",
     "server-boot.test.ts",
+    "server-surface.test.ts",
     "conductor-client.ts",
     "conductor-brief.tsx",
     "autopilot.ts",
