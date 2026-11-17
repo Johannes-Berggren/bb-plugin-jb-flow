@@ -26,6 +26,7 @@ export default defineConfig({
       "subthreads.ui.test.tsx",
       "conductor-page.ui.test.tsx",
       "server-boot.test.ts",
+      "server-surface.test.ts",
       "conductor-brief.ui.test.tsx",
       "plan-model-picker.ui.test.tsx",
       "watchers.test.ts",

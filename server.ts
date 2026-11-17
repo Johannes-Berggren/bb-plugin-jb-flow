@@ -1,434 +1,56 @@
-import { createWorkspaceStorage } from "./workspace-storage";
-import { workspaceSchema, workspaceStateSchema } from "./workspaces";
-import { createThreadStatus, parseStatusReport, threadStatusSchema } from "./thread-status";
-import { countSince } from "./catch-up-model";
-import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
 // State lives in bb.storage.kv because thread plugin metadata is not part of
 // thread list rows; the sidebar needs every snooze and tag in one read.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
-import { z } from "zod";
+//
+// This file is the composition root: it declares the settings, creates the
+// stores and passes them to the modules that do the work, then registers the
+// RPC handlers, schedules, agent tools and the CLI.
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
-import { nextMove, parseDecisionOptions } from "./decisions";
-import { createLeftovers, leftoverSchema } from "./leftovers";
-import { nextAfter, nowQueue, reasonLabel, serverNowThread } from "./now-model";
-import { createNowStore } from "./now-store";
-import { createFocus, focusReportSchema, needsAttention } from "./focus";
-import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
-import { createUnreleased, unreleasedSchema } from "./unreleased";
-import { laneSections } from "./lanes";
-import { createMachines, machinesSchema } from "./machines";
-import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
-import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
-import { isGoneError } from "./ci-watch";
-import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
-import { createConductor, type Conductor } from "./conductor";
-import { briefingItemSchema } from "./conductor-model";
+import { createChanges } from "./changes";
+import { registerCli } from "./cli";
+import { createConductor } from "./conductor";
 import { createConductorStore } from "./conductor-store";
+import { createConductorWiring } from "./conductor-wiring";
+import { createDeck } from "./deck";
+import { createFocus } from "./focus";
+import { createLeftovers } from "./leftovers";
+import { loadLocalConfig, readLocalConfigFile } from "./local-config";
+import { createMachines } from "./machines";
 import { migrate } from "./migrations";
-import { wakeDueSnoozes } from "./snooze-wake";
-import { quietFor, staleThreads } from "./sidebar-groups";
-import { listLiveThreads } from "./thread-list";
-import { createWatchers, releaseWatchSchema } from "./watchers";
-import { replyQueued } from "./needs-me";
+import { createNowQueue, registerDueFromStatus, registerDueTool } from "./now-queue";
+import { createNowStore } from "./now-store";
 import { approvePlan, planModels } from "./plan-model";
-import { nextNeedsMe } from "./next-needs-me";
+import { createPrCi, registerPrTools } from "./pr-ci";
+import { createPrTracker } from "./prs";
+import { createRepoCommands } from "./repo-commands";
+import { rpcContract } from "./rpc-contract";
+import { createSnoozes, registerSnoozeTool } from "./snooze";
+import { createStaleDigest } from "./stale-digest";
+import { handBackInstructions } from "./status-prompt";
+import { createThreadLists } from "./thread-cache";
+import { threadPreviewRpc } from "./thread-preview";
+import { createThreadStatus } from "./thread-status";
+import { createTriageState } from "./triage-state";
+import { createUnreleased } from "./unreleased";
+import { autoContinueOverridesFor, createWakeups } from "./wakeups";
+import { createWatchers } from "./watchers";
+import { createWorkspaceStorage } from "./workspace-storage";
 
-const SNOOZED_SECTION_NAME = "😴 Snoozed";
-const CHANGED = "jb-flow-changed";
-const DAY_MS = 86_400_000;
-
-const snoozeSchema = z.object({
-  until: z.number(),
-  note: z.string().nullable(),
-  fromSectionId: z.string().nullable(),
-  snoozedAt: z.number(),
-  /** The wake has begun: the thread may have left Snoozed, and its note may still be unsent. */
-  wakeStarted: z.boolean().optional(),
-  /** Failed attempts to send the note. */
-  noteFailures: z.number().optional(),
-});
-export type Snooze = z.infer<typeof snoozeSchema>;
-
-const digestItemSchema = z.object({
-  threadId: z.string(),
-  projectId: z.string(),
-  title: z.string(),
-  idleDays: z.number(),
-  summary: z.string(),
-});
-export type DigestItem = z.infer<typeof digestItemSchema>;
-type Digest = { generatedAt: number; items: DigestItem[] };
-
-// Machine-local setup: pinned repo commands, how project names are shortened in
-// the sidebar, and release watches. Comes from local.config.json in the plugin
-// folder (see local.config.example.json) and/or the "Advanced config" setting,
-// which wins key by key.
-const localConfigSchema = z.object({
-  repoCommands: z.record(z.string(), z.array(repoCommandSchema)).default({}),
-  projectShortNames: z.record(z.string(), z.string()).default({}),
-  stripProjectPrefixes: z.array(z.string()).default([]),
-  /** Projects (by BB name) whose release-blocked threads are woken on release. */
-  releaseWatch: z.record(z.string(), releaseWatchSchema).default({}),
-});
-type LocalConfig = z.infer<typeof localConfigSchema>;
-
-function loadLocalConfig(bb: BbPluginApi, settingJson: string): LocalConfig {
-  const file = readLocalConfigFile(bb);
-  if (!settingJson.trim()) return file;
-  try {
-    const fromSetting = localConfigSchema.partial().parse(JSON.parse(settingJson));
-    return { ...file, ...Object.fromEntries(Object.entries(fromSetting).filter(([, value]) => value !== undefined)) };
-  } catch (error) {
-    bb.log.warn(`ignoring invalid Advanced config setting: ${String(error)}`);
-    return file;
-  }
-}
-
-function readLocalConfigFile(bb: BbPluginApi): LocalConfig {
-  // The bundle may run from the plugin root or from dist/, so try both.
-  for (const relative of ["./local.config.json", "../local.config.json"]) {
-    const path = fileURLToPath(new URL(relative, import.meta.url));
-    let text: string;
-    try {
-      text = readFileSync(path, "utf8");
-    } catch {
-      continue;
-    }
-    try {
-      return localConfigSchema.parse(JSON.parse(text));
-    } catch (error) {
-      bb.log.warn(`ignoring invalid ${path}: ${String(error)}`);
-    }
-  }
-  return localConfigSchema.parse({});
-}
-
-const stateSchema = z.object({
-  projectShortNames: z.record(z.string(), z.string()),
-  stripProjectPrefixes: z.array(z.string()),
-  /** Idle threads whose last agent message hands the next move to you (thread id → since). */
-  awaiting: z.record(z.string(), z.number()),
-  /** Idle threads whose agent promised to report back by itself (thread id → since). */
-  promised: z.record(z.string(), z.number()),
-  /** Idle threads whose next step is someone else's (thread id → since). */
-  waitingOthers: z.record(z.string(), z.number()),
-  /** Idle threads whose agent offers steps and only needs a go (thread id → since). */
-  readyToGo: z.record(z.string(), z.number()),
-  /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
-  sectionOrder: z.array(z.string()),
-  /** Lane → section id, pinned so renaming a lane's section keeps its role. */
-  /** Which machine each thread runs on, for the sidebar's machine filter. */
-  machines: machinesSchema,
-  laneSections: z.object({ priority: z.string(), waiting: z.string(), later: z.string(), low: z.string() }).partial(),
-  /** Per section (section key → project id): where "New thread here" starts threads. */
-  sectionProjects: z.record(z.string(), z.string()),
-  /** Per thread: every PR it created (any repo), stack-ordered. */
-  threadPrs: z.record(z.string(), z.array(prStatusSchema)),
-  /** Running threads: run start and last event, for elapsed time and stuck detection. */
-  running: z.record(z.string(), z.object({ since: z.number(), lastEventAt: z.number() })),
-  /** Per thread: what the plugin is waiting on for it (CI, release, auto-continue). */
-  watching: z.record(z.string(), z.object({ kind: z.enum(["ci", "release", "continue"]), label: z.string() })),
-  snoozedSectionId: z.string().nullable(),
-  snoozes: z.record(z.string(), snoozeSchema),
-  tags: z.record(z.string(), z.array(z.string())),
-  /** Threads you marked as Focus (thread id → when). They keep their section. */
-  focused: z.record(z.string(), z.number()),
-  /** Deadlines (thread id → date, why, and who set it). */
-  due: z.record(z.string(), z.object({ at: z.number(), reason: z.string().nullable(), source: z.enum(["agent", "you"]), setAt: z.number() })),
-});
-export type FlowState = z.infer<typeof stateSchema>;
-
-const conductorStatusSchema = z.object({
-  workspaceId: z.string(),
-  name: z.string(),
-  enabled: z.boolean(),
-  active: z.boolean(),
-  threadId: z.string().nullable(),
-  open: z.number(),
-  undelivered: z.number(),
-  lastWakeAt: z.number().optional(),
-  projectId: z.string().optional(),
-  providerId: z.string().optional(),
-  model: z.string().optional(),
-});
-export type ConductorStatus = z.infer<typeof conductorStatusSchema>;
-const conductorPageSchema = z.object({
-  workspaceId: z.string(),
-  threadId: z.string().nullable(),
-  threadStatus: z.string().nullable(),
-  active: z.boolean(),
-  log: z.array(z.object({ id: z.number(), at: z.number(), kind: z.string(), threadId: z.string().nullable(), text: z.string() })),
-  open: z.number(),
-  lastWakeAt: z.number().nullable(),
-});
-export type ConductorPage = z.infer<typeof conductorPageSchema>;
-const fleetRowSchema = z.object({
-  threadId: z.string(),
-  title: z.string(),
-  projectId: z.string(),
-  state: z.string(),
-  reason: z.string(),
-  needsYou: z.boolean(),
-  unread: z.boolean(),
-  prs: z.array(z.object({ repo: z.string(), number: z.number(), attention: z.string(), url: z.string() })),
-  next: z.string().nullable(),
-  blocked: z.string().nullable(),
-});
-export type ConductorFleetRow = z.infer<typeof fleetRowSchema>;
-const conductorBriefSchema = z.object({ workspaceId: z.string(), threadId: z.string(), at: z.number(), item: briefingItemSchema });
-export type ConductorBrief = z.infer<typeof conductorBriefSchema>;
-const conductorFeedSchema = z.object({
-  since: z.number(),
-  merged: z.number(),
-  archived: z.number(),
-  forwarded: z.number(),
-  refused: z.number(),
-  wakeupsSpared: z.number(),
-  tokensSpared: z.number(),
-  entries: z.array(
-    z.object({
-      id: z.number(),
-      at: z.number(),
-      kind: z.string(),
-      workspaceId: z.string(),
-      workspace: z.string(),
-      threadId: z.string().nullable(),
-      title: z.string(),
-      text: z.string(),
-      savedTokens: z.number().nullable(),
-    }),
-  ),
-});
-export type ConductorFeed = z.infer<typeof conductorFeedSchema>;
-
-export const rpcContract = defineRpcContract({
-  conductor_list: {
-    input: z.null(),
-    output: z.object({ enabled: z.boolean(), conductors: z.array(conductorStatusSchema) }),
-  },
-  conductor_page: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: conductorPageSchema },
-  conductor_briefs: { input: z.null(), output: z.object({ briefs: z.array(conductorBriefSchema) }) },
-  conductor_feed: { input: z.object({ since: z.number() }), output: conductorFeedSchema },
-  conductor_fleet: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.array(fleetRowSchema) },
-  conductor_start: {
-    input: z.object({
-      workspaceId: z.string().min(1).max(80),
-      projectId: z.string().max(200).optional(),
-      providerId: z.string().max(200).optional(),
-      model: z.string().max(200).optional(),
-    }),
-    output: z.object({ threadId: z.string() }),
-  },
-  conductor_stop: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.object({ ok: z.boolean() }) },
-  conductor_wake: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.object({ result: z.string() }) },
-  workspaces_get: { input: z.null(), output: workspaceStateSchema },
-  workspace_save: { input: workspaceSchema.extend({ id: z.string().nullable() }), output: workspaceSchema },
-  workspace_remove: { input: z.object({ id: z.string() }), output: z.object({ ok: z.boolean() }) },
-  workspace_assign: { input: z.object({ threadId: z.string(), workspaceId: z.string().nullable(), automatic: z.boolean() }), output: z.object({ ok: z.boolean() }) },
-  state_get: { input: z.null(), output: stateSchema },
-  auto_continue_get: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
-  },
-  wakeups_get: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({
-      autoContinue: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
-      watches: z.array(z.object({ kind: z.enum(["ci", "release"]), key: z.string(), label: z.string() })),
-    }),
-  },
-  wakeup_cancel: {
-    input: z.object({ threadId: z.string(), kind: z.enum(["ci", "release"]), key: z.string() }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  auto_continue_set: {
-    input: z.object({ threadId: z.string(), enabled: z.boolean() }),
-    output: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
-  },
-  snooze: {
-    input: z.object({
-      threadId: z.string(),
-      when: z.string().min(1).max(64),
-      note: z.string().max(2000).nullable(),
-      /** `when` resolved in the browser's time zone; the server's may differ (bb Connect). */
-      until: z.number().optional(),
-    }),
-    output: snoozeSchema,
-  },
-  unsnooze: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({ removed: z.boolean() }),
-  },
-  tags_set: {
-    input: z.object({
-      threadId: z.string(),
-      tags: z.array(z.string().trim().min(1).max(40)).max(10),
-    }),
-    output: z.object({ tags: z.array(z.string()) }),
-  },
-  due_set: {
-    /** `at` is resolved in the browser's time zone, as with snooze; null clears the date. */
-    input: z.object({ threadId: z.string().min(1).max(200), at: z.number().nullable(), reason: z.string().max(300).nullable() }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  focus_set: {
-    input: z.object({ threadId: z.string().min(1).max(200), focused: z.boolean() }),
-    output: z.object({ focused: z.boolean() }),
-  },
-  digest_list: {
-    input: z.object({ refresh: z.boolean() }),
-    output: z.object({ generatedAt: z.number(), items: z.array(digestItemSchema) }),
-  },
-  digest_keep: {
-    input: z.object({
-      threadIds: z.array(z.string()).max(500),
-      days: z.number().int().min(1).max(90),
-    }),
-    output: z.object({ kept: z.number() }),
-  },
-  archive: {
-    input: z.object({ threadIds: z.array(z.string()).min(1).max(500) }),
-    output: z.object({ archived: z.number(), failed: z.array(z.string()) }),
-  },
-  thread_status: { input: z.object({ threadId: z.string().min(1).max(200), refresh: z.boolean().default(true) }), output: threadStatusSchema.nullable() },
-  thread_preview: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({
-      goal: z.string(),
-      done: z.string(),
-      next: z.string(),
-      blocked: z.string(),
-      latest: z.string(),
-      prompts: z.number(),
-    }),
-  },
-  catch_up_card: {
-    input: z.object({ threadId: z.string().min(1).max(200), since: z.number().nullable() }),
-    output: z.object({
-      since: z.object({
-        turns: z.number(),
-        yourPrompts: z.number(),
-        otherPrompts: z.number(),
-        more: z.boolean(),
-        firstAt: z.number().nullable(),
-      }),
-    }),
-  },
-  thread_stop: { input: z.object({ threadId: z.string() }), output: z.object({ ok: z.boolean() }) },
-  thread_watch_ci: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({ watching: z.array(z.string()) }),
-  },
-  pr_link: {
-    input: z.object({ threadId: z.string(), url: z.string(), remove: z.boolean() }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  pr_refresh: { input: z.null(), output: z.object({ ok: z.boolean() }) },
-  next_needs_me: {
-    input: z.object({ archiveThreadId: z.string().nullable() }),
-    output: z.object({ opened: z.string().nullable() }),
-  },
-  plan_models: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({
-      pending: z.boolean(),
-      current: z.string().nullable(),
-      models: z.array(z.object({ model: z.string(), name: z.string() })),
-    }),
-  },
-  plan_approve: {
-    input: z.object({ threadId: z.string(), model: z.string().min(1).nullable() }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  decision_options: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({
-      mode: z.enum(["go", "choice", "multi"]),
-      options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
-    }),
-  },
-  thread_reply: {
-    // Room for a long status report prompt; bb takes far longer messages than this.
-    input: z.object({ threadId: z.string(), text: z.string().min(1).max(20_000) }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  your_move: {
-    input: z.null(),
-    output: z.object({
-      items: z.array(
-        z.object({ threadId: z.string(), title: z.string(), projectId: z.string(), since: z.number(), ask: z.string() }),
-      ),
-    }),
-  },
-  unreleased: {
-    input: z.object({ projectId: z.string(), refresh: z.boolean() }),
-    output: unreleasedSchema,
-  },
-  leftovers_get: {
-    input: z.object({ refresh: z.boolean() }),
-    output: z.object({ checkedAt: z.number(), items: z.array(leftoverSchema) }),
-  },
-  leftovers_clean: {
-    input: z.null(),
-    output: z.object({ removed: z.array(z.string()), kept: z.array(z.string()) }),
-  },
-  section_order_set: {
-    input: z.object({ order: z.array(z.string()).max(200) }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  section_project_set: {
-    input: z.object({ section: z.string(), projectId: z.string().nullable() }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  focus_report: {
-    input: focusReportSchema,
-    output: z.object({ ok: z.boolean() }),
-  },
-  repo_status: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({
-      projectName: z.string(),
-      commands: z.array(repoCommandSchema),
-      scripts: z.array(repoScriptSchema),
-      scriptsError: z.string().nullable(),
-      runs: z.array(devRunSchema),
-    }),
-  },
-  repo_run: {
-    input: z.object({ threadId: z.string(), commandId: z.string() }),
-    output: devRunSchema,
-  },
-  repo_stop: {
-    input: z.object({ threadId: z.string(), commandId: z.string() }),
-    output: z.object({ stopped: z.boolean() }),
-  },
-  repo_config_get: {
-    input: z.null(),
-    output: z.object({
-      defaults: z.record(z.string(), z.array(repoCommandSchema)),
-      overrides: z.record(z.string(), z.array(repoCommandSchema)),
-    }),
-  },
-  repo_config_set: {
-    input: z.object({ projectName: z.string(), commands: z.array(repoCommandSchema).nullable() }),
-    output: z.object({ ok: z.boolean() }),
-  },
-  migrate_areas: {
-    input: z.object({
-      sectionIds: z.array(z.string()).max(20),
-      moveToSectionId: z.string().nullable(),
-    }),
-    output: z.object({ tagged: z.number() }),
-  },
-});
-
-type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
+export { rpcContract } from "./rpc-contract";
+export type {
+  ConductorBrief,
+  ConductorFeed,
+  ConductorFleetRow,
+  ConductorPage,
+  ConductorStatus,
+  DigestItem,
+  FlowState,
+  Snooze,
+} from "./rpc-contract";
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
@@ -630,345 +252,28 @@ export default async function plugin(bb: BbPluginApi) {
   }
   const localConfig = loadLocalConfig(bb, advancedConfig);
 
-  // --- storage --------------------------------------------------------------
-
-  async function getSnoozes(): Promise<Record<string, Snooze>> {
-    return (await bb.storage.kv.get<Record<string, Snooze>>("snoozes")) ?? {};
-  }
-  async function getTags(): Promise<Record<string, string[]>> {
-    return (await bb.storage.kv.get<Record<string, string[]>>("tags")) ?? {};
-  }
-  async function getKept(): Promise<Record<string, number>> {
-    return (await bb.storage.kv.get<Record<string, number>>("kept")) ?? {};
-  }
-  // One thread event can change several stores within milliseconds; publish
-  // once after they settle so every window refetches once, not four times.
-  // Async work can finish after a reload disposed this instance; publishing on
-  // the stale handle throws inside a timer, which takes the whole BB server down.
-  let publishTimer: ReturnType<typeof setTimeout> | null = null;
-  let disposed = false;
-  function changed() {
-    if (disposed) return;
-    bumpDeck();
-    if (publishTimer !== null) return;
-    publishTimer = setTimeout(() => {
-      publishTimer = null;
-      if (disposed) return;
-      try {
-        bb.realtime.publish(CHANGED, {});
-      } catch (error) {
-        bb.log.warn(`publish failed: ${String(error)}`);
-      }
-    }, 250);
-  }
-  bb.onDispose(() => {
-    disposed = true;
-    if (publishTimer !== null) clearTimeout(publishTimer);
-  });
-
-  // The Stream Deck long-polls `deck --wait <version>`: the call returns as soon
-  // as something it shows may have changed (focus, a thread starting/stopping,
-  // plugin state), so switching threads updates the keys at once.
-  let deckVersion = 0;
-  const deckWaiters = new Set<() => void>();
-  function bumpDeck() {
-    deckVersion += 1;
-    for (const wake of deckWaiters) wake();
-    deckWaiters.clear();
-  }
-  function waitForDeckChange(version: number, timeoutMs: number): Promise<void> {
-    if (version !== deckVersion) return Promise.resolve();
-    return new Promise((resolve) => {
-      const done = () => {
-        clearTimeout(timer);
-        deckWaiters.delete(done);
-        resolve();
-      };
-      const timer = setTimeout(done, timeoutMs);
-      deckWaiters.add(done);
-    });
-  }
+  const { changed, bumpDeck, waitForDeckChange, deckVersion } = createChanges(bb);
+  const threadLists = createThreadLists(bb);
+  const { listAllActiveThreads, listThreadsCached } = threadLists;
   // A thread starting or stopping changes counts too: drop the cached list.
   const onThreadState = ({ thread }: { thread: { id: string } }) => {
-    threadListCache = null;
+    threadLists.invalidate();
     // Only a thread the cache doesn't know (new, or new environment) can change machines.
     machines.invalidateFor(thread.id);
     bumpDeck();
   };
   bb.events.on("thread.active", onThreadState);
   bb.events.on("thread.idle", onThreadState);
-  bb.onDispose(() => {
-    for (const wake of deckWaiters) wake();
-  });
 
-  // The Snoozed section is created by the first snooze, not on install, so
-  // people who never snooze don't get an empty section. Looked up by name and
-  // cached briefly; the user may delete or recreate it at any time.
-  let snoozedSectionId: string | null = null;
-  let snoozedCheckedAt = 0;
-  async function findSnoozedSection(): Promise<string | null> {
-    if (Date.now() - snoozedCheckedAt < 10_000) return snoozedSectionId;
-    const sections = await bb.sdk.threadSections.list();
-    snoozedSectionId = sections.find((section) => section.name === SNOOZED_SECTION_NAME)?.id ?? null;
-    snoozedCheckedAt = Date.now();
-    return snoozedSectionId;
-  }
-  async function ensureSnoozedSection(): Promise<string> {
-    snoozedCheckedAt = 0;
-    const existing = await findSnoozedSection();
-    if (existing !== null) return existing;
-    snoozedSectionId = (await bb.sdk.threadSections.create({ name: SNOOZED_SECTION_NAME })).id;
-    snoozedCheckedAt = Date.now();
-    return snoozedSectionId;
-  }
-
-  async function listAllActiveThreads(): Promise<Thread[]> {
-    const threads = await listLiveThreads(bb);
-    // Filter as well: archived/hidden rows must never reach the digest.
-    return threads.filter(
-      (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible",
-    );
-  }
-
-  // --- snooze ---------------------------------------------------------------
-
-  // Every snoozes write goes through here: bulk snoozes and the every-minute
-  // wake check run concurrently, and a stale read-then-write loses records.
-  let snoozeLock: Promise<unknown> = Promise.resolve();
-  function updateSnoozes(apply: (snoozes: Record<string, Snooze>) => void): Promise<void> {
-    const run = snoozeLock.then(async () => {
-      const snoozes = await getSnoozes();
-      apply(snoozes);
-      await bb.storage.kv.set("snoozes", snoozes);
-    });
-    snoozeLock = run.catch(() => undefined);
-    return run;
-  }
-
-  async function snooze(threadId: string, when: string, note: string | null, until?: number): Promise<Snooze> {
-    if (until !== undefined && until <= Date.now()) throw new Error(`"${when}" is in the past.`);
-    const record = await snoozeUntil(threadId, until ?? parseWhen(when), note);
-    return record;
-  }
-
-  async function snoozeUntil(
-    threadId: string,
-    until: number,
-    note: string | null,
-  ): Promise<Snooze> {
-    const sectionId = await ensureSnoozedSection();
-    const thread = await bb.sdk.threads.get({ threadId });
-    const snoozes = await getSnoozes();
-    const previous = snoozes[threadId];
-    const record: Snooze = {
-      until,
-      note: note?.trim() || null,
-      // Re-snoozing keeps the section the thread originally came from.
-      fromSectionId:
-        previous?.fromSectionId ?? (thread.sectionId === sectionId ? null : thread.sectionId),
-      snoozedAt: Date.now(),
-    };
-    await bb.sdk.threads.update({ threadId, sectionId });
-    await updateSnoozes((all) => {
-      all[threadId] = record;
-    });
-    changed();
-    return record;
-  }
-
-  /** What a wake needs to know about sections and hand-backs; read once per pass. */
-  type WakeContext = { sectionIds: Set<string>; waitingSectionId: string | null; waitingOthers: Record<string, number> };
-  async function wakeContext(reason: "due" | "manual"): Promise<WakeContext> {
-    const [sections, lanes, waitingOthers] = await Promise.all([
-      bb.sdk.threadSections.list(),
-      reason === "due" ? laneSections(bb) : Promise.resolve({ waiting: undefined }),
-      reason === "due" ? awaiting.waitingOthers() : Promise.resolve({}),
-    ]);
-    return { sectionIds: new Set(sections.map((section) => section.id)), waitingSectionId: lanes.waiting ?? null, waitingOthers };
-  }
-
-  async function wake(threadId: string, record: Snooze, reason: "due" | "manual", context?: WakeContext): Promise<void> {
-    const { sectionIds, waitingSectionId, waitingOthers } = context ?? (await wakeContext(reason));
-    let restoreTo = record.fromSectionId !== null && sectionIds.has(record.fromSectionId) ? record.fromSectionId : null;
-    // Snoozed while waiting on someone ("when it wakes, I'll check for Sam's
-    // reply"): wake into Waiting for others instead of the old section. The
-    // flag is set when the thread went idle, from its last reply.
-    // Only for a snooze that ran out; cancelling one puts the thread back where it was.
-    if (reason === "due" && waitingSectionId !== null && threadId in waitingOthers) restoreTo = waitingSectionId;
-    await bb.sdk.threads.update({ threadId, sectionId: restoreTo });
-    if (reason === "due") await bb.sdk.threads.markUnread({ threadId });
-  }
-
-  async function unsnooze(threadId: string): Promise<boolean> {
-    const snoozes = await getSnoozes();
-    const record = snoozes[threadId];
-    if (record === undefined) return false;
-    await wake(threadId, record, "manual");
-    await updateSnoozes((all) => {
-      delete all[threadId];
-    });
-    changed();
-    return true;
-  }
-
-
-  // Single flight: the check runs every minute, and a slow one (bb busy) must
-  // not overlap the next and send a snooze note twice.
-  let wakeRun: Promise<number> | null = null;
-  const wakeDue = () => (wakeRun ??= wakeDueNow().finally(() => (wakeRun = null)));
-
-  async function wakeDueNow(): Promise<number> {
-    const snoozes = await getSnoozes();
-    if (Object.keys(snoozes).length === 0) return 0;
-    // No section (never created, or deleted): nothing can be in it.
-    const snoozedSectionId = await findSnoozedSection();
-    // One list of what's in Snoozed instead of a lookup per snoozed thread each
-    // minute; only threads that left it are looked up one by one.
-    const inSnoozed = new Map(
-      snoozedSectionId === null
-        ? []
-        : (await listLiveThreads(bb, { sectionId: snoozedSectionId }).catch(() => [])).map((thread) => [thread.id, thread]),
-    );
-    let context: Promise<WakeContext> | null = null;
-    const { done, noteFailures, woken } = await wakeDueSnoozes(snoozes, {
-      now: () => Date.now(),
-      snoozedSectionId,
-      getThread: async (threadId) => inSnoozed.get(threadId) ?? bb.sdk.threads.get({ threadId }),
-      isGoneError,
-      markStarted: (threadId, record) =>
-        updateSnoozes((all) => {
-          if (all[threadId]?.snoozedAt === record.snoozedAt) all[threadId] = { ...all[threadId]!, wakeStarted: true };
-        }),
-      restore: async (threadId, record) => {
-        // A failed read isn't kept: the next thread in this pass tries again.
-        context ??= wakeContext("due").catch((error: unknown) => {
-          context = null;
-          throw error;
-        });
-        await wake(threadId, record, "due", await context);
-      },
-      sendNote: async (threadId, note) => {
-        await bb.sdk.threads.send({
-          threadId,
-          mode: "queue-if-active",
-          input: [{ type: "text", text: `⏰ Snooze reminder: ${note}`, mentions: [] }],
-        });
-      },
-      warn: (message) => bb.log.warn(message),
-    });
-    // Against a fresh read, keyed by the record we saw, so a snooze set meanwhile
-    // (or a re-snooze) survives.
-    if (done.size > 0 || noteFailures.size > 0) {
-      await updateSnoozes((all) => {
-        for (const [threadId, snoozedAt] of done) if (all[threadId]?.snoozedAt === snoozedAt) delete all[threadId];
-        for (const [threadId, { snoozedAt, failures }] of noteFailures) {
-          if (all[threadId]?.snoozedAt === snoozedAt) all[threadId] = { ...all[threadId]!, noteFailures: failures };
-        }
-      });
-      changed();
-    }
-    return woken;
-  }
-
-  // --- digest ---------------------------------------------------------------
-
-  async function summarize(threadId: string): Promise<string> {
-    try {
-      const outline = await bb.sdk.threads.conversationOutline({ threadId });
-      const last =
-        [...outline.items].reverse().find((item) => item.role === "assistant") ??
-        outline.items.at(-1);
-      return (last?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
-    } catch {
-      return "";
-    }
-  }
-
-  async function buildDigest(): Promise<Digest> {
-    const now = Date.now();
-    const kept = await getKept();
-    const snoozes = await getSnoozes();
-    // Read per build so a changed setting applies without a reload.
-    const { staleDays } = await settings.get();
-    const stale = staleThreads(await listAllActiveThreads(), { now, staleMs: staleDays * DAY_MS, keptUntil: kept, snoozed: snoozes });
-
-    const items: DigestItem[] = [];
-    // Small batches keep the outline reads from hammering the server.
-    for (let index = 0; index < stale.length; index += 8) {
-      const batch = stale.slice(index, index + 8);
-      const summaries = await Promise.all(batch.map((thread) => summarize(thread.id)));
-      batch.forEach((thread, offset) => {
-        items.push({
-          threadId: thread.id,
-          projectId: thread.projectId,
-          title: thread.title ?? thread.titleFallback ?? "Untitled",
-          idleDays: Math.floor(quietFor(thread, now) / DAY_MS),
-          summary: summaries[offset] ?? "",
-        });
-      });
-    }
-    const digest = { generatedAt: now, items };
-    await bb.storage.kv.set("digest", digest);
-    changed();
-    return digest;
-  }
-
-  async function readDigest(refresh: boolean): Promise<Digest> {
-    const cached = await bb.storage.kv.get<Digest>("digest");
-    if (refresh || cached === null || cached === undefined) return buildDigest();
-    const kept = await getKept();
-    const now = Date.now();
-    return { ...cached, items: cached.items.filter((item) => (kept[item.threadId] ?? 0) < now) };
-  }
-
-  async function archive(threadIds: string[]) {
-    const failed: string[] = [];
-    // A conductor is permanent; archiving one in bulk would only bring it straight back.
-    threadIds = threadIds.filter((threadId) => !conductor?.isConductor(threadId));
-    // bb archives a thread's subthreads with it; they leave the digest too.
-    const archived = new Set<string>();
-    for (const threadId of threadIds) {
-      const result = await bb.sdk.threads.archive({ threadId }).catch(() => null);
-      if (result === null) {
-        failed.push(threadId);
-        continue;
-      }
-      archived.add(threadId);
-      for (const id of result?.archivedThreadIds ?? []) archived.add(id);
-    }
-    const cached = await bb.storage.kv.get<Digest>("digest");
-    if (cached) {
-      await bb.storage.kv.set("digest", {
-        ...cached,
-        items: cached.items.filter((item) => !archived.has(item.threadId)),
-      });
-    }
-    changed();
-    return { archived: threadIds.length - failed.length, failed };
-  }
-
-  // Each thread's own auto-continue switch (thread monitor); absent = the setting.
-  const autoContinueOverrides = async () =>
-    (await bb.storage.kv.get<Record<string, boolean>>("autoContinueThreads")) ?? {};
+  const autoContinueOverrides = autoContinueOverridesFor(bb);
 
   // Late-bound: the awaiting tracker is created below.
   const focus = createFocus(bb, () => awaiting.all(), () => findSnoozedSection());
   const unreleased = createUnreleased(bb);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed);
-  // Created further down, once the stores it reads exist; until then threads hear their own news.
-  let conductor: Conductor | null = null;
-  const loadedConductor = () => {
-    if (!conductor) throw new Error("The conductor is still loading; try again in a moment.");
-    return conductor;
-  };
-  const conductorSink: ConductorSink = {
-    workspaceFor: async (threadId) => (conductor ? conductor.sink.workspaceFor(threadId) : null),
-    deliver: async (threadId, workspaceId, events) => {
-      if (!conductor) throw new Error("The conductor isn't loaded yet.");
-      await conductor.sink.deliver(threadId, workspaceId, events);
-    },
-  };
+  const conductorWiring = createConductorWiring(settings);
+  const { conductorSink } = conductorWiring;
   const watchers = createWatchers(
     bb,
     localConfig.releaseWatch,
@@ -977,324 +282,75 @@ export default async function plugin(bb: BbPluginApi) {
     async (threadId) => ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
     conductorSink,
   );
+  const wakeups = createWakeups(bb, { settings, changed, watchers, autoContinueOverrides });
+  const { watchingByThread } = wakeups;
+  const prCi = createPrCi({ prTracker, watchers, listThreadsCached });
+  const { watchThreadCi, prRadar } = prCi;
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
   const awaiting = createAwaiting(bb, changed);
   const nowStore = createNowStore(bb, changed);
-  // A status report's "**Due:**" line sets the deadline. Leaving it out later keeps the date.
-  bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
-    if (!lastAssistantText || !(await settings.get()).nowQueue) return;
-    const line = parseStatusReport(lastAssistantText, 0)?.due;
-    const parsed = line ? parseDueLine(line) : null;
-    if (parsed) await nowStore.setDue(thread.id, parsed.at, parsed.reason, "agent");
-  });
-
-  /** Watch every open PR the thread created; fall back to its branch PR. */
-  async function watchThreadCi(
-    threadId: string,
-    options: { pr?: number; repo?: string; watchFor?: "checks" | "reviews" | "both"; afterGreen?: AfterGreen },
-  ) {
-    // A bare PR number: use the repo of this thread's own PR with that number.
-    if (options.pr !== undefined && options.repo === undefined) {
-      const own = ((await prTracker.byThread())[threadId] ?? []).filter((pr) => pr.number === options.pr);
-      const repos = [...new Set(own.map((pr) => pr.repo))];
-      if (repos.length > 1) throw new Error(`#${options.pr} exists in ${repos.join(" and ")}. Pass repo.`);
-      if (repos.length === 1) options = { ...options, repo: repos[0] };
-    }
-    if (options.pr === undefined) {
-      const open = await prTracker.openPrsFor(threadId);
-      if (open.length > 0) {
-        return Promise.all(open.map((ref) => watchers.watchCi(threadId, { ...options, pr: ref.number, repo: ref.repo })));
-      }
-    }
-    return [await watchers.watchCi(threadId, options)];
-  }
-  async function watchingByThread() {
-    const status = await watchers.status();
-    const watching: FlowState["watching"] = {};
-    const releaseProjects = new Map<string, string[]>();
-    for (const waiter of Object.values(status.releaseWaiters)) {
-      releaseProjects.set(waiter.threadId, [...(releaseProjects.get(waiter.threadId) ?? []), waiter.projectName]);
-    }
-    for (const [threadId, names] of releaseProjects) {
-      watching[threadId] = { kind: "release", label: `Waiting for the next ${names.join(" / ")} release` };
-    }
-    for (const [threadId, entry] of Object.entries(status.autoContinue)) {
-      watching[threadId] = { kind: "continue", label: `Limit hit; auto-continues ${formatWhen(entry.resetsAt + 90_000)}` };
-    }
-    for (const watch of Object.values(status.ciWatches)) {
-      watching[watch.threadId] = { kind: "ci", label: `Watching ${watch.repo.split("/")[1]}#${watch.pr} (${watch.watchFor})` };
-    }
-    return watching;
-  }
-
-async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
-    const waiting = await awaiting.all();
-    const snoozedSection = await findSnoozedSection();
-    // One list instead of a get per entry; outputs fetched in parallel below.
-    const byId = new Map((await listAllActiveThreads()).map((thread) => [thread.id, thread]));
-    const candidates = Object.entries(waiting).flatMap(([threadId, since]) => {
-      const thread = byId.get(threadId);
-      if (!thread || thread.status !== "idle" || replyQueued(thread) || (snoozedSection !== null && thread.sectionId === snoozedSection)) return [];
-      return [{ thread, since }];
-    });
-    const asks = new Map<string, string>();
-    if (withAsk) {
-      for (let index = 0; index < candidates.length; index += 8) {
-        await Promise.all(
-          candidates.slice(index, index + 8).map(async ({ thread }) => {
-            const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
-            // The ask is at the end of the message: show its last meaningful lines.
-            const ask = (output.output ?? "")
-              .split("\n")
-              .map((line) => line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`>#]+/g, "").trim())
-              .filter((line) => line.length > 0 && !/^\d{1,2}[./]\d{1,2}[./]\d{2,4}|^\d{4}-\d{2}-\d{2}|^stamped/i.test(line))
-              .slice(-3)
-              .join(" ")
-              .slice(0, 240);
-            asks.set(thread.id, ask);
-          }),
-        );
-      }
-    }
-    const items = candidates.map(({ thread, since }) => ({
-      threadId: thread.id,
-      title: thread.title ?? thread.titleFallback ?? "Untitled",
-      projectId: thread.projectId,
-      // Date the ask by the thread's last activity: backfilled entries carry the
-      // classification time, not when the agent actually asked.
-      since: Math.min(since, thread.updatedAt),
-      ask: asks.get(thread.id) ?? "",
-    }));
-    items.sort((a, b) => a.since - b.since);
-    return { items };
-  }
+  const snoozes = createSnoozes(bb, { changed, awaiting });
+  const { getSnoozes, findSnoozedSection, snooze, unsnooze, wakeDue } = snoozes;
+  const staleDigest = createStaleDigest(bb, { settings, changed, getSnoozes, listAllActiveThreads, conductor: conductorWiring.current });
+  const { getKept, buildDigest, readDigest, archive } = staleDigest;
+  registerDueFromStatus(bb, { settings, nowStore });
+  const nowAndNext = createNowQueue(bb, { settings, awaiting, prTracker, nowStore, focus, findSnoozedSection, watchingByThread, listAllActiveThreads });
+  const { currentNow, nextThread, yourMove } = nowAndNext;
 
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
   const leftovers = createLeftovers(bb);
 
+  const triage = createTriageState(bb, {
+    localConfig,
+    changed,
+    awaiting,
+    machines,
+    prTracker,
+    watchingByThread,
+    findSnoozedSection,
+    getSnoozes,
+    nowStore,
+    activity,
+    getKept,
+    autoContinueOverrides,
+    listAllActiveThreads,
+  });
+  const { forgetThreads, pruneThreadData } = triage;
+  const workspaces = createWorkspaceStorage(bb, changed);
+
   // --- RPC ------------------------------------------------------------------
 
-  let stateBuild: Promise<FlowState> | null = null;
-  async function buildState(): Promise<FlowState> {
-    // Independent reads; one round trip instead of seventeen in a row.
-    const [
-      awaitingAll,
-      promised,
-      waitingOthers,
-      readyToGo,
-      sectionOrder,
-      sectionProjects,
-      lanes,
-      machineMap,
-      threadPrs,
-      watching,
-      snoozedSectionId,
-      snoozes,
-      tags,
-      focused,
-      due,
-    ] = await Promise.all([
-      awaiting.all(),
-      awaiting.promised(),
-      awaiting.waitingOthers(),
-      awaiting.readyToGo(),
-      bb.storage.kv.get<string[]>("sectionOrder"),
-      bb.storage.kv.get<Record<string, string>>("sectionProjects"),
-      laneSections(bb),
-      machines.read(),
-      prTracker.byThread(),
-      watchingByThread(),
-      findSnoozedSection(),
-      getSnoozes(),
-      getTags(),
-      nowStore.all(),
-      nowStore.dueAll(),
-    ]);
-    return {
-      awaiting: awaitingAll,
-      promised,
-      waitingOthers,
-      readyToGo,
-      sectionOrder: sectionOrder ?? [],
-      sectionProjects: sectionProjects ?? {},
-      laneSections: lanes,
-      machines: machineMap,
-      threadPrs,
-      running: activity.snapshot(),
-      watching,
-      projectShortNames: localConfig.projectShortNames,
-      stripProjectPrefixes: localConfig.stripProjectPrefixes,
-      snoozedSectionId,
-      snoozes,
-      tags,
-      focused,
-      due,
-    };
-  }
-
-  const workspaces = createWorkspaceStorage(bb, changed);
   bb.rpc.register(rpcContract, {
+    ...snoozes.rpc,
+    ...staleDigest.rpc,
+    ...wakeups.rpc,
+    ...prCi.rpc,
+    ...nowAndNext.rpc,
+    ...triage.rpc,
+    ...threadPreviewRpc(bb),
+    ...conductorWiring.rpc,
     workspaces_get: () => workspaces.read(),
     workspace_save: (input) => workspaces.save(input),
     workspace_remove: async ({ id }) => { await workspaces.remove(id); return { ok: true }; },
     workspace_assign: async ({ threadId, workspaceId, automatic }) => { await workspaces.assign(threadId, workspaceId, automatic); return { ok: true }; },
-    // Concurrent callers (every open window refetches on the same publish) share one build.
-    state_get: () => (stateBuild ??= buildState().finally(() => (stateBuild = null))),
-    auto_continue_get: async ({ threadId }) => ({
-      enabled: (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
-      scheduledAt: await watchers.autoContinueAt(threadId),
-    }),
-    wakeups_get: async ({ threadId }) => ({
-      autoContinue: {
-        enabled: (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue,
-        scheduledAt: await watchers.autoContinueAt(threadId),
-      },
-      watches: await watchers.wakeupsFor(threadId),
-    }),
-    wakeup_cancel: async ({ threadId, kind, key }) => {
-      await watchers.cancelWakeup(threadId, kind, key);
-      return { ok: true };
-    },
-    auto_continue_set: async ({ threadId, enabled }) => {
-      const overrides = await autoContinueOverrides();
-      overrides[threadId] = enabled;
-      await bb.storage.kv.set("autoContinueThreads", overrides);
-      // Switched off with a "continue" already queued: take it back.
-      if (!enabled) await watchers.cancelAutoContinue(threadId);
-      changed();
-      return { enabled, scheduledAt: enabled ? await watchers.autoContinueAt(threadId) : null };
-    },
-    snooze: ({ threadId, when, note, until }) => snooze(threadId, when, note, until),
-    unsnooze: async ({ threadId }) => ({ removed: await unsnooze(threadId) }),
-    tags_set: async ({ threadId, tags }) => {
-      const all = await getTags();
-      const unique = [...new Set(tags)];
-      if (unique.length === 0) delete all[threadId];
-      else all[threadId] = unique;
-      await bb.storage.kv.set("tags", all);
-      changed();
-      return { tags: unique };
-    },
-    focus_set: async ({ threadId, focused }) => ({ focused: await nowStore.set(threadId, focused) }),
-    due_set: async ({ threadId, at, reason }) => ({ ok: (await nowStore.setDue(threadId, at, reason, "you")).applied }),
-    digest_list: ({ refresh }) => readDigest(refresh),
-    digest_keep: async ({ threadIds, days }) => {
-      const kept = await getKept();
-      const until = Date.now() + days * DAY_MS;
-      for (const threadId of threadIds) kept[threadId] = until;
-      await bb.storage.kv.set("kept", kept);
-      changed();
-      return { kept: threadIds.length };
-    },
-    archive: ({ threadIds }) => archive(threadIds),
     thread_status: ({ threadId, refresh }) => threadStatus.get(threadId, refresh),
-    thread_preview: async ({ threadId }) => {
-      const [output, outline] = await Promise.all([
-        bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),
-        bb.sdk.threads.conversationOutline({ threadId }).catch(() => ({ items: [] as Array<{ role: string; preview: string }> })),
-      ]);
-      const reply = output.output ?? "";
-      // Markdown → plain text for one-line display.
-      const plain = (text: string) =>
-        text
-          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-          .replace(/[*_`>#]+/g, "")
-          .replace(/[\u2580-\u259F\u2500-\u257F]+/g, "")
-          .replace(/\s+/g, " ")
-          .trim();
-      // The user's Status template: "**Goal:** …", "**Next:** …", etc.
-      const field = (name: string) => {
-        const match = new RegExp(`\\*\\*${name}:\\*\\*\\s*(.+)`, "i").exec(reply);
-        return match ? plain(match[1]!).slice(0, 300) : "";
-      };
-      const userItems = outline.items.filter((item) => item.role === "user");
-      const firstLines = reply
-        .split("\n")
-        .map(plain)
-        .filter((line) => line.length > 0 && !/^(goal|done|next|blocked):/i.test(line))
-        .slice(0, 4)
-        .join(" ");
-      return {
-        goal: field("Goal") || plain(userItems[0]?.preview ?? "").slice(0, 300),
-        done: field("Done"),
-        next: field("Next"),
-        blocked: field("Blocked"),
-        latest: firstLines.slice(0, 400),
-        prompts: userItems.length,
-      };
-    },
-    catch_up_card: async ({ threadId, since }) => {
-      // The card embeds the thread itself; this adds what happened since you last read it.
-      const timeline = await bb.sdk.threads
-        .timeline({ threadId, segmentLimit: "8", deferContent: "true", includeNestedRows: "false" })
-        .catch(() => null);
-      return { since: countSince(timeline?.rows ?? [], since, (timeline?.timelinePage.olderCursor ?? null) !== null) };
-    },
     thread_stop: async ({ threadId }) => {
       await bb.sdk.threads.stop({ threadId });
       return { ok: true };
     },
-    thread_watch_ci: async ({ threadId }) => ({
-      watching: (await watchThreadCi(threadId, { watchFor: "both" })).map((watch) => `${watch.repo}#${watch.pr}`),
-    }),
-    pr_link: async ({ threadId, url, remove }) => {
-      const match = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(url);
-      if (!match) throw new Error("Paste a GitHub PR URL, e.g. https://github.com/owner/repo/pull/123");
-      await prTracker.link(threadId, { repo: match[1]!, number: Number(match[2]) }, remove);
-      return { ok: true };
-    },
-    pr_refresh: async () => {
-      await prTracker.refresh();
-      return { ok: true };
-    },
-    next_needs_me: ({ archiveThreadId }) =>
-      nextNeedsMe(archiveThreadId, {
-        nextThread,
-        focusedThreadId: () => focus.focusedThreadId(),
-        getThread: (threadId) => bb.sdk.threads.get({ threadId }),
-        archive: (threadId) => bb.sdk.threads.archive({ threadId }),
-        open: (threadId) => bb.sdk.threads.open({ threadId, file: null }),
-      }),
     plan_models: ({ threadId }) => planModels(bb.sdk, threadId),
     plan_approve: async ({ threadId, model }) => {
       await approvePlan(bb.sdk, { threadId, model });
       return { ok: true };
     },
-    decision_options: async ({ threadId }) => {
-      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      return nextMove(output.output ?? "");
-    },
-    conductor_list: async () => ({ enabled: (await settings.get()).conductor === true, conductors: await loadedConductor().status() }),
-    conductor_page: ({ workspaceId }) => loadedConductor().page(workspaceId),
-    conductor_briefs: async () => ({ briefs: conductor ? await conductor.briefs() : [] }),
-    conductor_feed: ({ since }) => loadedConductor().feed(since),
-    conductor_fleet: ({ workspaceId }) => loadedConductor().fleet(workspaceId),
-    conductor_start: async ({ workspaceId, projectId, providerId, model }) => ({
-      threadId: (await loadedConductor().start(workspaceId, { projectId, providerId, model })).threadId,
-    }),
-    conductor_stop: async ({ workspaceId }) => ({ ok: await loadedConductor().stop(workspaceId) }),
-    conductor_wake: async ({ workspaceId }) => ({ result: await loadedConductor().wake(workspaceId, true) }),
     thread_reply: async ({ threadId, text }) => {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
     },
-    your_move: () => yourMove(),
     unreleased: ({ projectId, refresh }) => unreleased(projectId, refresh),
     leftovers_get: ({ refresh }) => leftovers.read(refresh),
     leftovers_clean: () => leftovers.clean(),
-    section_order_set: async ({ order }) => {
-      await bb.storage.kv.set("sectionOrder", order);
-      changed();
-      return { ok: true };
-    },
-    section_project_set: async ({ section, projectId }) => {
-      const current = (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {};
-      const { [section]: _previous, ...rest } = current;
-      await bb.storage.kv.set("sectionProjects", projectId === null ? rest : { ...rest, [section]: projectId });
-      changed();
-      return { ok: true };
-    },
     focus_report: (input) => {
       const before = focus.focusedThreadId();
       focus.report(input);
@@ -1309,24 +365,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await repo.setCommands(projectName, commands);
       return { ok: true };
     },
-    migrate_areas: async ({ sectionIds, moveToSectionId }) => {
-      const sections = await bb.sdk.threadSections.list();
-      const tags = await getTags();
-      let tagged = 0;
-      for (const sectionId of sectionIds) {
-        const section = sections.find((candidate) => candidate.id === sectionId);
-        if (section === undefined) continue;
-        const tag = section.name.replace(/^[^\p{L}\p{N}]+/u, "").trim();
-        for (const thread of await listLiveThreads(bb, { sectionId })) {
-          tags[thread.id] = [...new Set([...(tags[thread.id] ?? []), tag])];
-          await bb.sdk.threads.update({ threadId: thread.id, sectionId: moveToSectionId });
-          tagged += 1;
-        }
-      }
-      await bb.storage.kv.set("tags", tags);
-      changed();
-      return { tagged };
-    },
   });
 
   // --- schedules ------------------------------------------------------------
@@ -1340,160 +378,26 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     bb.log.info(`digest: ${digest.items.length} stale thread(s)`);
     await pruneThreadData().catch((error) => bb.log.warn(`prune: ${String(error)}`));
     try {
-      conductor?.prune();
+      conductorWiring.current()?.prune();
     } catch (error) {
       bb.log.warn(`conductor prune: ${String(error)}`);
     }
   });
 
-  // Tags, "keep" marks and dev-server runs are per thread; drop them once the
-  // thread is archived or deleted so the stored maps (sent with every state
-  // load) stop growing and the tag filter only offers tags still in use.
-  async function forgetThreads(isGone: (threadId: string) => boolean) {
-    const tags = await getTags();
-    const kept = await getKept();
-    const runs = (await bb.storage.kv.get<Record<string, { threadId: string }>>("devRuns")) ?? {};
-    const continues = await autoContinueOverrides();
-    const goneContinues = Object.keys(continues).filter(isGone);
-    if (goneContinues.length > 0) {
-      for (const threadId of goneContinues) delete continues[threadId];
-      await bb.storage.kv.set("autoContinueThreads", continues);
-    }
-    const goneTags = Object.keys(tags).filter(isGone);
-    const goneKept = Object.entries(kept).filter(([threadId, until]) => isGone(threadId) || until < Date.now());
-    const goneRuns = Object.entries(runs).filter(([, run]) => isGone(run.threadId));
-    if (goneTags.length + goneKept.length + goneRuns.length === 0) return;
-    for (const threadId of goneTags) delete tags[threadId];
-    for (const [threadId] of goneKept) delete kept[threadId];
-    for (const [key] of goneRuns) delete runs[key];
-    await bb.storage.kv.set("tags", tags);
-    await bb.storage.kv.set("kept", kept);
-    await bb.storage.kv.set("devRuns", runs);
-    changed();
-  }
-  async function pruneThreadData() {
-    const live = new Set((await listAllActiveThreads()).map((thread) => thread.id));
-    await forgetThreads((threadId) => !live.has(threadId));
-    await awaiting.prune((threadId) => live.has(threadId));
-    await nowStore.prune((threadId) => live.has(threadId));
-  }
   bb.events.on("thread.archived", ({ thread }) => forgetThreads((threadId) => threadId === thread.id));
 
   // --- agent tool -----------------------------------------------------------
 
-  bb.agents.registerTool({
-    name: "snooze_thread",
-    description:
-      'Snooze the current BB thread until a later time. The thread leaves the user\'s active list and comes back unread when due. If a note is given it is sent to this thread as a prompt at wake time, so write it as an instruction to your future self (e.g. "Check whether Martin replied in #billing and summarize").',
-    instructions:
-      "When work in this thread is blocked on someone else or on a future date, offer to call snooze_thread (when: 2h, 3d, 1w, tomorrow, mon, next-week, or YYYY-MM-DD) with a note describing what to check on wake-up.",
-    parameters: z.object({
-      when: z
-        .string()
-        .describe("When to wake: 2h, 3d, 1w, tomorrow, mon…sun, next-week, or YYYY-MM-DD"),
-      note: z.string().optional().describe("Instruction sent to this thread when it wakes"),
-    }),
-    async execute({ when, note }, ctx) {
-      try {
-        const record = await snooze(ctx.threadId, when, note ?? null);
-        return `Snoozed until ${formatWhen(record.until)}${record.note ? ` with reminder: ${record.note}` : ""}.`;
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-          isError: true,
-        };
-      }
-    },
-  });
-  bb.agents.registerTool({
-    name: "wait_for_ci",
-    description:
-      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
-    instructions:
-      "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\". Say what you'll do once checks pass with after_green: \"merge\" when merging is part of your task, \"continue\" when you have more to do (the next PR in a stack, a deploy step), \"nothing\" when green needs no action from you.",
-    parameters: z.object({
-      pr: z.number().int().positive().optional().describe("PR number; defaults to every open PR this thread created (all repos), else this branch's PR"),
-      repo: z
-        .string()
-        .regex(/^[\w.-]+\/[\w.-]+$/)
-        .optional()
-        .describe("owner/name of the PR's repo. Needed when the PR is not in this thread's project repo and this thread didn't create it"),
-      for: z.enum(["checks", "reviews", "both"]).optional().describe("What to wait for (default both)"),
-      after_green: z
-        .enum(AFTER_GREEN)
-        .optional()
-        .describe("What you'll do once checks pass: merge (merging is part of your task), continue (more work follows), nothing. A workspace conductor, if enabled, handles merge and nothing for you."),
-    }),
-    async execute({ pr, repo, for: watchFor, after_green: afterGreen }, ctx) {
-      try {
-        const watches = await watchThreadCi(ctx.threadId, { pr, repo, watchFor, afterGreen });
-        return `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}. End your turn now; a message will arrive when there's news.`;
-      } catch (error) {
-        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
-      }
-    },
-  });
-  bb.agents.registerTool({
-    name: "pr_status",
-    description:
-      "State of every PR this thread created (any repo, stack order): checks, review decision, conflicts, draft/merged, base/head. Served from the plugin's cache, refreshed every 3 minutes; pass refresh: true for a live read. Use this instead of gh pr view / gh pr checks to check PR state.",
-    instructions:
-      "To check the state of this thread's PRs, call pr_status (one call, all repos) instead of gh pr view / gh pr checks. Use gh only to read full review comments or logs.",
-    parameters: z.object({
-      refresh: z.boolean().optional().describe("Fetch this thread's PRs live first (one batched GitHub query)"),
-    }),
-    async execute({ refresh }, ctx) {
-      if (refresh) {
-        await prTracker.refreshThread(ctx.threadId);
-      }
-      const prs = (await prTracker.byThread())[ctx.threadId] ?? [];
-      if (prs.length === 0) return "No PRs linked to this thread. PRs opened with gh pr create are linked automatically; others via `bb jb-flow pr-link <url> --self`.";
-      return prs
-        .map(
-          (pr) =>
-            `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number} [${pr.attention}] ${pr.title} (${pr.head} → ${pr.base}) ${pr.url}`,
-        )
-        .join("\n");
-    },
-  });
+  registerSnoozeTool(bb, snooze);
+  registerPrTools(bb, { prTracker, watchThreadCi });
   // configure() must answer synchronously, so keep the settings it reads at hand.
   let agentSettings = await settings.get();
   settings.onChange((next) => {
     agentSettings = next;
   });
-  bb.agents.registerTool({
-    name: "set_thread_due",
-    description:
-      "Record a real deadline for the current BB thread, or clear one that no longer applies. The thread then rises in the user's sidebar as the date gets close. A date the user set themselves can't be changed from here.",
-    instructions:
-      "When this work has a real outside deadline (an invoice due date, a contract date, a customer meeting, a date someone else set), call set_thread_due with the date and what falls due. Never invent a date, and don't use it for your own goals or estimates. Call it with when: none once the deadline no longer applies.",
-    parameters: z.object({
-      when: z.string().describe("YYYY-MM-DD (the end of that day) or YYYY-MM-DDTHH:MM, or none to clear"),
-      reason: z.string().max(300).optional().describe("What falls due, in a few words. Required when setting a date."),
-    }),
-    async execute({ when, reason }, ctx) {
-      try {
-        if (when.trim().toLowerCase() === "none") {
-          const { applied } = await nowStore.setDue(ctx.threadId, null, null, "agent");
-          return applied ? "Deadline cleared." : "The user set this deadline, so it wasn't changed. Tell them if it no longer applies.";
-        }
-        if (!reason?.trim()) throw new Error("Say what falls due in reason.");
-        const at = parseDue(when);
-        const { applied, due } = await nowStore.setDue(ctx.threadId, at, reason.trim(), "agent");
-        if (applied) return `Deadline set: ${formatDue(at)} (${formatWhen(at)}).`;
-        return due
-          ? `The user set this deadline to ${formatWhen(due.at)}, so it wasn't changed. Tell them if you think it's wrong.`
-          : "The user already cleared this date, so it wasn't set again. Tell them if you think it does apply.";
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-          isError: true,
-        };
-      }
-    },
-  });
+  registerDueTool(bb, nowStore);
   migrate(bb);
-  conductor = await createConductor(bb, {
+  await conductorWiring.load(createConductor(bb, {
     store: createConductorStore(() => bb.storage.database()),
     options: () => ({
       enabled: agentSettings.conductor === true,
@@ -1524,10 +428,10 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     archive: (threadIds) => archive(threadIds),
     focus: (threadId, focused) => nowStore.set(threadId, focused),
     changed,
-  });
+  }));
   bb.agents.configure((context) => {
     // A conductor gets its own tools and role; every other thread, the usual ones.
-    const asConductor = conductor?.configureFor(context);
+    const asConductor = conductorWiring.current()?.configureFor(context);
     if (asConductor) return asConductor;
     return {
       tools: ["snooze_thread", "wait_for_ci", "pr_status", ...(agentSettings.nowQueue ? ["set_thread_due"] : [])],
@@ -1540,681 +444,35 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
 
   // --- CLI ------------------------------------------------------------------
 
-  const usage = [
-    "Usage:",
-    "  bb jb-flow snooze <thread-id|--self> <when> [--note <text>]",
-    "  bb jb-flow unsnooze <thread-id|--self>",
-    "  bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]",
-    "  bb jb-flow snoozed [--json]",
-    "  bb jb-flow wake-now",
-    "  bb jb-flow digest [--refresh] [--json]",
-    "  bb jb-flow focused [--json]                          The thread focused in BB",
-    "  bb jb-flow stop [<thread-id>|--focused]",
-    "  bb jb-flow tell <text…> [--thread <id>]              Send a message (default: focused thread)",
-    "  bb jb-flow needs-me [--json]                         Threads waiting on you",
-    "  bb jb-flow next                                      Open the next thread that needs you",
-    "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]",
-    "  bb jb-flow watches [--json]                          Auto-continues, release waiters, CI watches",
-    "  bb jb-flow conductor [status|start|stop|wake|inbox|briefing|log] [<workspace-id>] [--json]",
-    "  bb jb-flow prs [--self|<thread-id>] [--json]         PRs a thread created (all repos, stack order)",
-    "  bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]",
-    "  bb jb-flow release-wait [--self|<thread-id>]         Wake this thread on the next release",
-    "  bb jb-flow check-now                                 Run the release and CI checks immediately",
-    "  bb jb-flow repo [--self|<thread-id>]                 List repo commands and runs",
-    "  bb jb-flow repo-run <command-id> [--self|<thread-id>]",
-    "  bb jb-flow repo-stop <command-id> [--self|<thread-id>]",
-    "  bb jb-flow repo-config <project-name> <json|reset>",
-    "",
-    "<when>: 30m, 2h, 3d, 1w, today, tonight, tomorrow, mon…sun, next-week, YYYY-MM-DD, YYYY-MM-DDTHH:MM",
-  ].join("\n");
+  const { decisionsFor, deckSnapshot } = createDeck(bb, { settings, listThreadsCached, awaiting, prRadar, focus, findSnoozedSection, currentNow });
 
-  // --- cheap snapshots for external controllers (Stream Deck) ------------------
-  // The deck polls every few seconds while agents keep bb busy, so these read
-  // cached data: one thread list per 10s, no message bodies except the focused
-  // thread's (re-read only when it changes).
-
-  type ListedThread = Awaited<ReturnType<typeof bb.sdk.threads.list>>[number];
-  let threadListCache: { at: number; threads: Promise<ListedThread[]> } | null = null;
-  function listThreadsCached(): Promise<ListedThread[]> {
-    if (threadListCache === null || Date.now() - threadListCache.at > 10_000) {
-      const threads = listLiveThreads(bb);
-      threadListCache = { at: Date.now(), threads };
-      threads.catch(() => {
-        threadListCache = null;
-      });
-    }
-    return threadListCache.threads;
-  }
-
-  async function prRadar() {
-    // Threads with an open PR that needs fixing or is ready to merge,
-    // skipping threads whose agent is already working on it.
-    const byThread = await prTracker.byThread();
-    const live = new Map(
-      (await listThreadsCached())
-        .filter((thread) => thread.archivedAt === null && thread.status !== "active" && thread.status !== "starting")
-        .map((thread) => [thread.id, thread]),
-    );
-    const broken: Array<{ threadId: string; title: string; pr: string }> = [];
-    const ready: Array<{ threadId: string; title: string; pr: string }> = [];
-    for (const [threadId, prs] of Object.entries(byThread)) {
-      const thread = live.get(threadId);
-      if (!thread) continue;
-      const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
-      const bad = open.find((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention));
-      const good = open.find((pr) => pr.attention === "ready_to_merge");
-      const entry = (pr: PrStatus) => ({ threadId, title: thread.title ?? "", pr: `${pr.repo.split("/")[1]}#${pr.number}` });
-      if (bad) broken.push(entry(bad));
-      else if (good) ready.push(entry(good));
-    }
-    return { broken, ready };
-  }
-
-  // Re-parse the focused thread's options only when it changes.
-  let decisionCache: { key: string; options: ReturnType<typeof parseDecisionOptions> } | null = null;
-  async function decisionsFor(threadId: string | null) {
-    const thread = threadId === null ? null : await bb.sdk.threads.get({ threadId }).catch(() => null);
-    // Same rule as the composer buttons: only an idle thread is waiting on an answer.
-    let options: ReturnType<typeof parseDecisionOptions> = [];
-    if (thread !== null && thread.status === "idle") {
-      const cacheKey = `${thread.id}:${thread.updatedAt}`;
-      if (decisionCache?.key !== cacheKey) {
-        const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
-        decisionCache = { key: cacheKey, options: parseDecisionOptions(output.output ?? "") };
-      }
-      options = decisionCache.options;
-    }
-    return { threadId: thread?.id ?? null, title: thread?.title ?? null, status: thread?.status ?? null, options };
-  }
-
-  /** Everything the deck shows, in one call. */
-  /** The sidebar's Now, across every workspace. Tabs belong to each browser window, not the server. */
-  async function currentNow(threads: readonly ListedThread[]) {
-    const [waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due, snoozedSection] = await Promise.all([
-      awaiting.all(),
-      awaiting.promised(),
-      awaiting.waitingOthers(),
-      awaiting.readyToGo(),
-      watchingByThread(),
-      prTracker.byThread(),
-      nowStore.all(),
-      nowStore.dueAll(),
-      findSnoozedSection(),
-    ]);
-    const flow = { awaiting: waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due };
-    const now = Date.now();
-    const rows = threads
-      .filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && thread.parentThreadId === null && thread.pinnedAt === null)
-      .map((thread) => serverNowThread(thread, snoozedSection !== null && thread.sectionId === snoozedSection));
-    const queue = nowQueue(rows, flow, { now });
-    const titles = new Map(threads.map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""]));
-    const describe = (entry: (typeof queue.now)[number]) => ({
-      id: entry.thread.id,
-      title: titles.get(entry.thread.id) ?? "",
-      state: entry.state,
-      reason: reasonLabel(entry, flow, now),
-      focused: entry.focused,
-      dueAt: entry.dueAt,
-    });
-    return { now: queue.now.map(describe), moving: queue.moving.map(describe) };
-  }
-
-  /** Where "next" goes. With Now off, the first thread that needs you, as before. */
-  async function nextThread(current: string | null, skip: string | null): Promise<string | null> {
-    const needs = await focus.needsMe();
-    if (!(await settings.get()).nowQueue) return needs.find((thread) => thread.id !== skip)?.id ?? null;
-    const { now } = await currentNow(await listLiveThreads(bb));
-    // Pinned threads aren't in Now, but one that's blocked still needs you.
-    return nextAfter([...new Set([...now.map((entry) => entry.id), ...needs.map((thread) => thread.id)])], current);
-  }
-
-  async function deckSnapshot() {
-    const [threads, waiting, radar, focused, snoozedSection] = await Promise.all([
-      listThreadsCached(),
-      awaiting.all(),
-      prRadar(),
-      decisionsFor(focus.focusedThreadId()),
-      findSnoozedSection(),
-    ]);
-    // Snoozed threads stay hidden until they wake, as in the sidebar and `needs-me`.
-    const open = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        thread.deletedAt === null &&
-        thread.visibility === "visible" &&
-        thread.parentThreadId === null &&
-        (snoozedSection === null || thread.sectionId !== snoozedSection),
-    );
-    const needs = open.filter((thread) => needsAttention(thread, waiting));
-    const needIds = new Set(needs.map((thread) => thread.id));
-    const moves = open
-      .filter((thread) => thread.status === "idle" && waiting[thread.id] !== undefined && !needIds.has(thread.id))
-      .map((thread) => Math.min(waiting[thread.id]!, thread.updatedAt));
-    const nowEnabled = (await settings.get()).nowQueue;
-    const queue = nowEnabled ? await currentNow(threads) : { now: [] };
-    return {
-      focused,
-      needsMe: { count: needs.length },
-      yourMove: { count: moves.length, oldestSince: moves.length ? Math.min(...moves) : null },
-      prRadar: { broken: radar.broken.length, ready: radar.ready.length },
-      ...(nowEnabled ? { now: { count: queue.now.length, top: queue.now[0] ?? null } } : {}),
-    };
-  }
-
-  bb.cli.register({
-    name: "jb-flow",
-    summary: "Snooze threads and review the stale-thread digest",
-    commands: [
-      { name: "workspaces", summary: "List workspaces or save/remove/assign using JSON", usage: 'bb jb-flow workspaces [save <json>|remove <id>|assign <thread-id> <workspace-id|unassigned|auto>]' },
-      {
-        name: "snooze",
-        summary: "Snooze a thread until a time",
-        usage: "bb jb-flow snooze <thread-id|--self> <when> [--note <text>]",
-      },
-      {
-        name: "due",
-        summary: "Set or clear a thread's deadline",
-        usage: "bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]",
-      },
-      {
-        name: "unsnooze",
-        summary: "Wake a snoozed thread now",
-        usage: "bb jb-flow unsnooze <thread-id|--self>",
-      },
-      { name: "snoozed", summary: "List snoozed threads", usage: "bb jb-flow snoozed [--json]" },
-      { name: "wake-now", summary: "Run the due-snooze check immediately", usage: "bb jb-flow wake-now" },
-      { name: "leftovers", summary: "Worktree checkouts bb no longer tracks (--clean removes the merged ones)", usage: "bb jb-flow leftovers [--refresh] [--json] [--clean]" },
-      { name: "deck", summary: "One JSON snapshot for the Stream Deck: focused thread, Needs me, Your move, PRs", usage: "bb jb-flow deck [--wait <version>]" },
-      { name: "pr-radar", summary: "Threads with a PR to fix or merge (--open: jump to the next one)", usage: "bb jb-flow pr-radar [--json] [--open]" },
-      { name: "your-move", summary: "Threads waiting on a decision from you, oldest first", usage: "bb jb-flow your-move [--json] [--open]" },
-      { name: "focus-clients", summary: "Debug: the BB windows reporting focus, most recently used first", usage: "bb jb-flow focus-clients" },
-      { name: "focused", summary: "Print the thread focused in BB", usage: "bb jb-flow focused [--json]" },
-      { name: "decisions", summary: "Numbered options the focused thread is waiting on", usage: "bb jb-flow decisions [<thread-id>] [--json]" },
-      { name: "stop", summary: "Stop a thread's run (default: focused)", usage: "bb jb-flow stop [<thread-id>|--focused]" },
-      { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
-      { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
-      { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
-      { name: "now", summary: "List the Now queue in order, and what's Moving", usage: "bb jb-flow now [--json]" },
-      { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--after-green merge|continue|nothing] [--self|<thread-id>]" },
-      { name: "prs", summary: "List the PRs a thread created, across repos, in stack order", usage: "bb jb-flow prs [--self|<thread-id>] [--json]" },
-      { name: "pr-link", summary: "Link (or --remove) a PR to a thread", usage: "bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]" },
-      { name: "watches", summary: "List auto-continues, release waiters and CI watches", usage: "bb jb-flow watches [--json]" },
-      { name: "release-wait", summary: "Wake a thread on the next release", usage: "bb jb-flow release-wait [--self|<thread-id>]" },
-      { name: "check-now", summary: "Run the release and CI checks immediately", usage: "bb jb-flow check-now" },
-      { name: "repo", summary: "List repo commands and runs for a thread", usage: "bb jb-flow repo [--self|<thread-id>]" },
-      { name: "repo-run", summary: "Run a repo command in the thread's terminal", usage: "bb jb-flow repo-run <command-id> [--self|<thread-id>]" },
-      { name: "repo-stop", summary: "Stop a running repo command", usage: "bb jb-flow repo-stop <command-id> [--self|<thread-id>]" },
-      { name: "repo-config", summary: "Set or reset a project's repo commands", usage: "bb jb-flow repo-config <project-name> <json|reset>" },
-      {
-        name: "digest",
-        summary: "List stale unsectioned threads",
-        usage: "bb jb-flow digest [--refresh] [--json]",
-      },
-      {
-        name: "conductor",
-        summary: "Workspace conductors: status, start, stop, wake, inbox, briefing, log",
-        usage: "bb jb-flow conductor [status|start <workspace-id> [--project <id>] [--provider <id>] [--model <id>]|restart <workspace-id>|stop <workspace-id>|wake <workspace-id>|inbox <workspace-id>|briefing <workspace-id>|log <workspace-id>] [--json]",
-      },
-    ],
-    async run(argv, ctx) {
-      const json = argv.includes("--json");
-      const refresh = argv.includes("--refresh");
-      const noteIndex = argv.indexOf("--note");
-      const note = noteIndex === -1 ? null : argv.slice(noteIndex + 1).join(" ");
-      const reasonIndex = argv.indexOf("--reason");
-      const reason = reasonIndex === -1 ? null : argv.slice(reasonIndex + 1).join(" ").trim() || null;
-      const beforeText = Math.min(...[noteIndex, reasonIndex].map((index) => (index === -1 ? argv.length : index)));
-      const positional = argv.slice(0, beforeText).filter(
-        (arg) => arg !== "--json" && arg !== "--refresh",
-      );
-      const [command, ...args] = positional;
-      const resolveThread = (value: string | undefined) =>
-        value === "--self" ? ctx.threadId : value === "--focused" ? focus.focusedThreadId() ?? undefined : value;
-      try {
-        switch (command) {
-          case "workspaces": {
-            if (args[0] === "save") {
-              const input = workspaceSchema.extend({ id: z.string().nullable() }).parse(JSON.parse(args.slice(1).join(" ")));
-              return { exitCode: 0, stdout: JSON.stringify(await workspaces.save(input)) };
-            }
-            if (args[0] === "remove" && args[1]) await workspaces.remove(args[1]);
-            else if (args[0] === "assign" && args[1] && args[2]) await workspaces.assign(args[1], ["auto", "unassigned"].includes(args[2]) ? null : args[2], args[2] === "auto");
-            else if (args.length > 0) throw new Error("Use workspaces [save <json>|remove <id>|assign <thread-id> <workspace-id|unassigned|auto>]");
-            return { exitCode: 0, stdout: JSON.stringify(await workspaces.read()) };
-          }
-          case "snooze": {
-            const threadId = resolveThread(args[0]);
-            const when = args.slice(1).join(" ");
-            if (threadId === undefined || when === "") break;
-            const record = await snooze(threadId, when, note);
-            return {
-              exitCode: 0,
-              stdout: json
-                ? JSON.stringify(record)
-                : `Snoozed ${threadId} until ${formatWhen(record.until)}.`,
-            };
-          }
-          case "due": {
-            const threadId = resolveThread(args[0]);
-            const when = args.slice(1).join(" ");
-            if (threadId === undefined || when === "") break;
-            const at = when.toLowerCase() === "none" ? null : parseDue(when);
-            const { due } = await nowStore.setDue(threadId, at, at === null ? null : reason, "you");
-            if (json) return { exitCode: 0, stdout: JSON.stringify(due) };
-            return { exitCode: 0, stdout: at === null ? `Cleared the deadline on ${threadId}.` : `${threadId}: ${formatDue(at)} (${formatWhen(at)}).` };
-          }
-          case "unsnooze": {
-            const threadId = resolveThread(args[0]);
-            if (threadId === undefined) break;
-            return (await unsnooze(threadId))
-              ? { exitCode: 0, stdout: `Woke ${threadId}.` }
-              : { exitCode: 1, stderr: `${threadId} is not snoozed.` };
-          }
-          case "snoozed": {
-            const snoozes = Object.entries(await getSnoozes()).sort(
-              (a, b) => a[1].until - b[1].until,
-            );
-            if (json) return { exitCode: 0, stdout: JSON.stringify(Object.fromEntries(snoozes)) };
-            const lines = await Promise.all(
-              snoozes.map(async ([threadId, record]) => {
-                const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
-                return `${formatWhen(record.until).padEnd(16)} ${threadId}  ${thread?.title ?? ""}${record.note ? `  — ${record.note}` : ""}`;
-              }),
-            );
-            return { exitCode: 0, stdout: lines.length === 0 ? "Nothing snoozed." : lines.join("\n") };
-          }
-          case "wait-ci": {
-            const prFlag = args.indexOf("--pr");
-            const forFlag = args.indexOf("--for");
-            const repoFlag = args.indexOf("--repo");
-            const afterFlag = args.indexOf("--after-green");
-            const positional = args.filter((arg, index) => {
-              if (prFlag !== -1 && (index === prFlag || index === prFlag + 1)) return false;
-              if (forFlag !== -1 && (index === forFlag || index === forFlag + 1)) return false;
-              if (repoFlag !== -1 && (index === repoFlag || index === repoFlag + 1)) return false;
-              if (afterFlag !== -1 && (index === afterFlag || index === afterFlag + 1)) return false;
-              return true;
-            });
-            const threadId = resolveThread(positional[0] ?? "--self");
-            if (threadId === undefined) break;
-            const watchFor = forFlag === -1 ? undefined : z.enum(["checks", "reviews", "both"]).parse(args[forFlag + 1]);
-            const watches = await watchThreadCi(threadId, {
-              pr: prFlag === -1 ? undefined : Number(args[prFlag + 1]),
-              watchFor,
-              repo: repoFlag === -1 ? undefined : args[repoFlag + 1],
-              afterGreen: afterFlag === -1 ? undefined : z.enum(AFTER_GREEN).parse(args[afterFlag + 1]),
-            });
-            return {
-              exitCode: 0,
-              stdout: `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}; ${threadId} will be messaged.`,
-            };
-          }
-          case "prs": {
-            const threadId = resolveThread(args[0] ?? "--self");
-            if (threadId === undefined) break;
-            await prTracker.refreshThread(threadId);
-            const prs = (await prTracker.byThread())[threadId] ?? [];
-            if (json) return { exitCode: 0, stdout: JSON.stringify(prs) };
-            const lines = prs.map(
-              (pr) => `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number}  ${pr.attention.padEnd(17)} ${pr.title}`,
-            );
-            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PRs linked." };
-          }
-          case "classify": {
-            const snoozedSection = await findSnoozedSection();
-            // Debug view: where each open thread lands in the triage sidebar, with
-            // the tail of its last agent message to check the call against.
-            const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers, readyToGo] = await Promise.all([
-              listLiveThreads(bb),
-              awaiting.all(),
-              prTracker.byThread(),
-              watchingByThread(),
-              bb.sdk.threadSections.list(),
-              awaiting.promised(),
-              awaiting.waitingOthers(),
-              awaiting.readyToGo(),
-            ]);
-            const sectionName = new Map(sections.map((section) => [section.id, section.name]));
-            const rows = [];
-            for (const thread of threads) {
-              if (thread.archivedAt !== null || thread.visibility !== "visible" || thread.parentThreadId !== null) continue;
-              const snoozed = snoozedSection !== null && thread.sectionId === snoozedSection;
-              const busy = thread.status === "active" || thread.status === "starting";
-              const prs = (byThread[thread.id] ?? []).map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`);
-              const open = (byThread[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft");
-              const settled = (byThread[thread.id] ?? []).every((pr) => pr.state === "merged" || pr.state === "closed");
-              const needs = !snoozed && needsAttention(thread, awaitingAll);
-              const group = snoozed
-                ? "snoozed"
-                : needs
-                ? "needs-me"
-                : thread.pinnedAt
-                  ? "pinned"
-                  : busy
-                    ? "running"
-                    : promised[thread.id] !== undefined && !watching[thread.id] && quietFor(thread, Date.now()) > 3_600_000
-                      ? "stalled"
-                      : awaitingAll[thread.id] !== undefined
-                      ? "your-move"
-                      : readyToGo[thread.id] !== undefined
-                      ? "ready"
-                      : thread.sectionId === null &&
-                          (waitingOthers[thread.id] !== undefined ||
-                            (open.length > 0 && open.every((pr) => pr.attention === "review_requested")))
-                        ? "waiting"
-                      : thread.sectionId === null && !watching[thread.id] && settled && quietFor(thread, Date.now()) > 2 * 3_600_000
-                        ? "done"
-                        : "lane";
-              const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
-              rows.push({
-                id: thread.id,
-                title: thread.title,
-                status: thread.status,
-                section: thread.sectionId === null ? "Active" : sectionName.get(thread.sectionId) ?? thread.sectionId,
-                group,
-                awaiting: awaitingAll[thread.id] !== undefined,
-                watching: watching[thread.id] ?? null,
-                openPrs: open.map((pr) => `${pr.repo.split("/")[1]}#${pr.number}:${pr.attention}`),
-                prs: prs.length,
-                idleHours: Math.round(quietFor(thread, Date.now()) / 3_600_000),
-                tail: (output.output ?? "").trim().slice(-1500),
-              });
-            }
-            return { exitCode: 0, stdout: JSON.stringify(rows) };
-          }
-          case "leftovers": {
-            if (argv.includes("--clean")) {
-              const { removed, kept } = await leftovers.clean();
-              return { exitCode: 0, stdout: `Removed ${removed.length}, kept ${kept.length}.\n${kept.map((path) => `  kept ${path}`).join("\n")}` };
-            }
-            const report = await leftovers.read(refresh);
-            if (json) return { exitCode: 0, stdout: JSON.stringify(report) };
-            const lines = report.items.map(
-              (item) =>
-                `${item.safe ? "safe" : "KEEP"}  ${item.repo.padEnd(28)} ${item.branch.padEnd(40)} ${item.pr ? `${item.pr} ${item.prState}` : "no PR"}${item.dirty ? ` · ${item.dirty} uncommitted` : ""}${item.nodeModules ? " · node_modules" : ""}`,
-            );
-            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No leftover worktrees." };
-          }
-          case "deck": {
-            // --wait <version>: block (max 25s) until something changes, then answer.
-            const waitIndex = argv.indexOf("--wait");
-            if (waitIndex !== -1) await waitForDeckChange(Number(argv[waitIndex + 1]), 25_000);
-            const version = deckVersion;
-            return { exitCode: 0, stdout: JSON.stringify({ version, ...(await deckSnapshot()) }) };
-          }
-          case "pr-radar": {
-            const { broken, ready } = await prRadar();
-            if (argv.includes("--open")) {
-              const focused = focus.focusedThreadId();
-              const queue = [...broken, ...ready];
-              const next = queue.find((item) => item.threadId !== focused) ?? queue[0];
-              if (next === undefined) return { exitCode: 0, stdout: "No PR needs you." };
-              await bb.sdk.threads.open({ threadId: next.threadId, file: null });
-              return { exitCode: 0, stdout: `Opened ${next.threadId}  ${next.title} (${next.pr})` };
-            }
-            if (json) return { exitCode: 0, stdout: JSON.stringify({ broken, ready }) };
-            const lines = [
-              ...broken.map((item) => `fix    ${item.pr.padEnd(22)} ${item.title}`),
-              ...ready.map((item) => `merge  ${item.pr.padEnd(22)} ${item.title}`),
-            ];
-            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PR needs you." };
-          }
-          case "pr-link": {
-            const remove = args.includes("--remove");
-            const rest = args.filter((arg) => arg !== "--remove");
-            const url = rest[0];
-            const threadId = resolveThread(rest[1] ?? "--self");
-            const match = url ? /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(url) : null;
-            if (!match || threadId === undefined) break;
-            await prTracker.link(threadId, { repo: match[1]!, number: Number(match[2]) }, remove);
-            return { exitCode: 0, stdout: `${remove ? "Unlinked" : "Linked"} ${match[1]}#${match[2]}.` };
-          }
-          case "conductor": {
-            if (!conductor) throw new Error("The conductor isn't loaded.");
-            const [action = "status", workspaceId] = args;
-            const flag = (name: string) => {
-              const index = args.indexOf(name);
-              return index === -1 ? undefined : args[index + 1];
-            };
-            const out = (value: unknown, text: string) => ({ exitCode: 0, stdout: json ? JSON.stringify(value) : text });
-            if (action === "status") {
-              const all = await conductor.status();
-              return out(
-                all,
-                all.length === 0
-                  ? "No conductors. Turn on Conductor in the settings, then: bb jb-flow conductor start <workspace-id>"
-                  : all
-                      .map((entry) => `${entry.workspaceId}  ${entry.name}  ${entry.active ? "on" : "off"}  thread ${entry.threadId ?? "-"}  inbox ${entry.open} open, ${entry.undelivered} waiting`)
-                      .join("\n"),
-              );
-            }
-            if (!workspaceId) throw new Error(`Use conductor ${action} <workspace-id>; bb jb-flow workspaces lists them.`);
-            switch (action) {
-              case "start": {
-                const result = await conductor.start(workspaceId, { projectId: flag("--project"), providerId: flag("--provider"), model: flag("--model") });
-                return out(result, `Conductor for ${workspaceId}: ${result.threadId}`);
-              }
-              case "restart": {
-                const result = await conductor.restart(workspaceId);
-                return out(result, `Conductor for ${workspaceId}: ${result.threadId}${result.previous ? ` (archived ${result.previous})` : ""}`);
-              }
-              case "stop":
-                return out({ stopped: await conductor.stop(workspaceId) }, `Stopped the conductor for ${workspaceId}; its thread stays.`);
-              case "wake": {
-                const result = await conductor.wake(workspaceId, true);
-                return out({ result }, result);
-              }
-              case "inbox": {
-                const events = conductor.inbox(workspaceId);
-                return out(events, events.length === 0 ? "Inbox empty." : events.map((event) => `#${event.id} [${event.kind}] ${event.threadId} ${event.deliveredAt ? "sent" : "waiting"} · ${event.text}`).join("\n"));
-              }
-              case "briefing": {
-                const briefing = await conductor.briefing(workspaceId);
-                return out(
-                  briefing,
-                  briefing === null
-                    ? "No briefing yet."
-                    : [
-                        `Briefing from ${formatWhen(briefing.at)}:`,
-                        ...briefing.items.map((item, index) => `${index + 1}. [${item.kind}] ${item.threadId} · ${item.summary}${item.recommendation ? ` → ${item.recommendation}` : ""}`),
-                        ...briefing.handled.map((entry) => `✓ ${entry.what}`),
-                      ].join("\n"),
-                );
-              }
-              case "log": {
-                const entries = conductor.log(workspaceId, 50);
-                return out(entries, entries.map((entry) => `${formatWhen(entry.at)}  ${entry.kind.padEnd(13)} ${entry.threadId ?? ""}  ${entry.text}`).join("\n") || "Nothing logged.");
-              }
-            }
-            throw new Error("Use conductor status|start|restart|stop|wake|inbox|briefing|log.");
-          }
-          case "watches": {
-            const result = await watchers.status();
-            if (json) return { exitCode: 0, stdout: JSON.stringify(result) };
-            const lines = [
-              ...Object.entries(result.autoContinue).map(([id, entry]) => `continue    ${id}  at ${formatWhen(entry.resetsAt + 90_000)}`),
-              ...Object.values(result.releaseWaiters).map((waiter) => `release     ${waiter.threadId}  (${waiter.projectName})`),
-              ...Object.entries(result.pendingReleases).map(([key, release]) => `deploying   ${key}  ${release.title}`),
-              ...Object.values(result.ciWatches).map((watch) => `ci          ${watch.threadId}  ${watch.repo}#${watch.pr} (${watch.watchFor})`),
-            ];
-            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "Nothing watched." };
-          }
-          case "release-wait": {
-            const threadId = resolveThread(args[0] ?? "--self");
-            if (threadId === undefined) break;
-            await watchers.registerReleaseWaiter(await bb.sdk.threads.get({ threadId }));
-            return { exitCode: 0, stdout: `${threadId} will be woken on the next release (if its project has releaseWatch configured).` };
-          }
-          case "check-now":
-            await watchers.checkReleases();
-            await watchers.checkCi(true);
-            return { exitCode: 0, stdout: "Checked releases and CI watches." };
-          case "your-move": {
-            const { items } = await yourMove({ withAsk: !argv.includes("--open") });
-            if (argv.includes("--open")) {
-              // Oldest first; skip the one you're already looking at.
-              const focused = focus.focusedThreadId();
-              const next = items.find((item) => item.threadId !== focused) ?? items[0];
-              if (next === undefined) return { exitCode: 0, stdout: "Nothing is waiting on you." };
-              await bb.sdk.threads.open({ threadId: next.threadId, file: null });
-              return { exitCode: 0, stdout: `Opened ${next.threadId}  ${next.title}` };
-            }
-            if (json) return { exitCode: 0, stdout: JSON.stringify({ count: items.length, items }) };
-            const lines = items.map((item) => `${formatWhen(item.since).padEnd(16)} ${item.threadId}  ${item.title}`);
-            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "Nothing is waiting on you." };
-          }
-          case "focus-clients": {
-            const rows = focus.clients().map((entry) => ({
-              clientId: entry.clientId,
-              threadId: entry.threadId,
-              windowFocused: entry.windowFocused,
-              interacted: entry.interactedAt ? formatWhen(entry.interactedAt) : "never",
-              reported: formatWhen(entry.at),
-              origin: entry.origin ?? "?",
-              userAgent: entry.userAgent ?? "?",
-            }));
-            return { exitCode: 0, stdout: JSON.stringify(rows, null, 2) };
-          }
-          case "focused": {
-            const threadId = focus.focusedThreadId();
-            if (threadId === null) return { exitCode: 1, stderr: "No focused thread." };
-            const thread = await bb.sdk.threads.get({ threadId });
-            return {
-              exitCode: 0,
-              stdout: json
-                ? JSON.stringify({ threadId, projectId: thread.projectId, title: thread.title, status: thread.status })
-                : `${threadId}  ${thread.title ?? ""}`,
-            };
-          }
-          case "decisions": {
-            const result = await decisionsFor(resolveThread(args[0] ?? "--focused") ?? null);
-            const options = result.options;
-            return {
-              exitCode: 0,
-              stdout: json
-                ? JSON.stringify(result)
-                : options.map((option) => `${option.n}. ${option.text}${option.recommended ? " (recommended)" : ""}`).join("\n") ||
-                  "No open decision.",
-            };
-          }
-          case "stop": {
-            const threadId = resolveThread(args[0] ?? "--focused");
-            if (threadId === undefined) return { exitCode: 1, stderr: "No focused thread." };
-            await bb.sdk.threads.stop({ threadId });
-            return { exitCode: 0, stdout: `Stopped ${threadId}.` };
-          }
-          case "tell": {
-            const flag = args.indexOf("--thread");
-            const target = flag === -1 ? await focus.requireFocused() : args[flag + 1];
-            const text = (flag === -1 ? args : args.slice(0, flag)).join(" ").trim();
-            if (target === undefined || text === "") break;
-            await bb.sdk.threads.send({
-              threadId: target,
-              mode: "queue-if-active",
-              input: [{ type: "text", text, mentions: [] }],
-            });
-            return { exitCode: 0, stdout: `Sent to ${target}.` };
-          }
-          case "needs-me": {
-            const threads = await focus.needsMe();
-            if (json) {
-              return {
-                exitCode: 0,
-                stdout: JSON.stringify({
-                  count: threads.length,
-                  threads: threads.map((thread) => ({ id: thread.id, title: thread.title, status: thread.status })),
-                }),
-              };
-            }
-            return {
-              exitCode: 0,
-              stdout: threads.length === 0 ? "Nothing needs you." : threads.map((thread) => `${thread.id}  ${thread.title ?? ""}`).join("\n"),
-            };
-          }
-          case "next": {
-            const focused = focus.focusedThreadId();
-            const nextId = await nextThread(focused, focused);
-            if (nextId === null) return { exitCode: 0, stdout: "Nothing needs you." };
-            await bb.sdk.threads.open({ threadId: nextId, file: null });
-            const next = await bb.sdk.threads.get({ threadId: nextId }).catch(() => null);
-            return { exitCode: 0, stdout: `Opened ${nextId}  ${next?.title ?? ""}` };
-          }
-          case "now": {
-            if (!(await settings.get()).nowQueue) return { exitCode: 1, stderr: "Now and Focus is turned off in the plugin settings." };
-            const queue = await currentNow(await listLiveThreads(bb));
-            if (json) return { exitCode: 0, stdout: JSON.stringify({ count: queue.now.length, threads: queue.now, moving: queue.moving }) };
-            const line = (entry: (typeof queue.now)[number]) => `${entry.focused ? "*" : " "} ${entry.id}  ${entry.title}  [${entry.reason}]`;
-            return {
-              exitCode: 0,
-              stdout: [...(queue.now.length ? queue.now.map(line) : ["Nothing in Now."]), ...(queue.moving.length ? ["", "Moving:", ...queue.moving.map(line)] : [])].join("\n"),
-            };
-          }
-          case "repo": {
-            const threadId = resolveThread(args[0] ?? "--self");
-            if (threadId === undefined) break;
-            const result = await repo.status(threadId);
-            if (json) return { exitCode: 0, stdout: JSON.stringify(result) };
-            const runLabel = (id: string) => {
-              const run = result.runs.find((candidate) => candidate.commandId === id);
-              return run ? `  [${run.status}${run.url ? ` ${run.url}` : ""}]` : "";
-            };
-            const pinned = result.commands.map((command) => `${command.id.padEnd(16)} ${command.label}${runLabel(command.id)}`);
-            const scripts = result.scripts.map((script) => `${script.id.padEnd(16)} ${script.command}${runLabel(script.id)}`);
-            const out = [result.projectName];
-            if (pinned.length) out.push("", "Pinned:", ...pinned);
-            if (scripts.length) out.push("", "Scripts:", ...scripts);
-            else if (result.scriptsError) out.push("", `Scripts: ${result.scriptsError}`);
-            if (!pinned.length && !scripts.length && !result.scriptsError) out.push("No commands or scripts.");
-            return { exitCode: 0, stdout: out.join("\n") };
-          }
-          case "repo-run":
-          case "repo-stop": {
-            const threadId = resolveThread(args[1] ?? "--self");
-            if (args[0] === undefined || threadId === undefined) break;
-            if (command === "repo-stop") {
-              return (await repo.stop(threadId, args[0]))
-                ? { exitCode: 0, stdout: `Stopped ${args[0]}.` }
-                : { exitCode: 1, stderr: `${args[0]} is not running in ${threadId}.` };
-            }
-            const run = await repo.run(threadId, args[0]);
-            return {
-              exitCode: 0,
-              stdout: json ? JSON.stringify(run) : `Started ${run.label} (terminal ${run.terminalId})${run.url ? `; browser opens at ${run.url} once the port is up` : ""}.`,
-            };
-          }
-          case "repo-config": {
-            const [projectNameArg, ...rest] = args;
-            const value = rest.join(" ");
-            if (projectNameArg === undefined || value === "") break;
-            const commands = value === "reset" ? null : z.array(repoCommandSchema).parse(JSON.parse(value));
-            await repo.setCommands(projectNameArg, commands);
-            return { exitCode: 0, stdout: commands === null ? "Reset." : `Saved ${commands.length} command(s).` };
-          }
-          case "wake-now":
-            return { exitCode: 0, stdout: `Woke ${await wakeDue()} thread(s).` };
-          case "digest": {
-            const digest = await readDigest(refresh);
-            if (json) return { exitCode: 0, stdout: JSON.stringify(digest) };
-            const lines = digest.items
-              .slice(0, 100)
-              .map((item) => `${String(item.idleDays).padStart(3)}d  ${item.threadId}  ${item.title}`);
-            const more =
-              digest.items.length > 100 ? `\n… and ${digest.items.length - 100} more` : "";
-            return {
-              exitCode: 0,
-              stdout: `${digest.items.length} stale thread(s), generated ${new Date(digest.generatedAt).toLocaleString()}\n${lines.join("\n")}${more}`,
-            };
-          }
-          case undefined:
-          case "help":
-          case "--help":
-            return { exitCode: 0, stdout: usage };
-        }
-      } catch (error) {
-        return { exitCode: 1, stderr: error instanceof Error ? error.message : String(error) };
-      }
-      return { exitCode: 1, stderr: usage };
-    },
+  registerCli(bb, {
+    settings,
+    workspaces,
+    snooze,
+    unsnooze,
+    getSnoozes,
+    wakeDue,
+    nowStore,
+    watchThreadCi,
+    prTracker,
+    prRadar,
+    findSnoozedSection,
+    awaiting,
+    watchingByThread,
+    watchers,
+    leftovers,
+    repo,
+    focus,
+    waitForDeckChange,
+    deckVersion,
+    deckSnapshot,
+    decisionsFor,
+    currentConductor: conductorWiring.current,
+    yourMove,
+    nextThread,
+    currentNow,
+    readDigest,
   });
 
   bb.log.info("loaded");
