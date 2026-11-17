@@ -1,0 +1,32 @@
+/* Split panes: a frame on the active one and each pane's workspace color.
+   Every rule sits under the content-script class, which is only set while a
+   split is open. Host data attributes are version-sensitive; when they don't
+   match, nothing here applies. The frames are pseudo-elements, so BB's own
+   layout, sizes and scrolling are untouched. */
+.jb-flow-active-pane #split-workspace-main-panel [data-split-pane-id]::after {
+  content: "";
+  position: absolute;
+  z-index: 22;
+  pointer-events: none;
+}
+/* Other panes: a thin line in their workspace's color, none without one. */
+.jb-flow-active-pane #split-workspace-main-panel [data-split-pane-id][data-focused="false"]::after {
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--jf-pane-color, transparent);
+  opacity: 0.75;
+}
+/* The active pane: a full frame, in BB's accent when its workspace has no color. */
+.jb-flow-active-pane #split-workspace-main-panel [data-split-pane-id][data-focused="true"]::after {
+  inset: 0;
+  border: 2px solid var(--jf-pane-color, var(--primary));
+  border-radius: 3px;
+}
+/* A maximized pane fills the split area, so a frame says nothing. */
+.jb-flow-active-pane #split-workspace-main-panel [data-split-pane-id][data-maximized="true"]::after {
+  content: none;
+}
+.jb-flow-active-pane #split-workspace-main-panel [data-split-pane-id][data-focused="true"] [data-pane-header-focus-tab] {
+  background: color-mix(in oklch, var(--jf-pane-color, var(--primary)) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--jf-pane-color, var(--primary)) 34%, transparent);
+}

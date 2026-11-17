@@ -6,7 +6,9 @@ import { exampleWorkspaces } from "./workspaces.fixtures";
 import {
   inWorkspace,
   pluginInWorkspace,
+  workspaceColor,
   workspaceForThread,
+  workspaceSchema,
   type WorkspaceState,
 } from "./workspaces";
 
@@ -117,4 +119,30 @@ it("persists defaults and overrides through reload, serializes concurrent edits,
   expect(reloaded.harness.inspection.sdk.callsTo("threads.update")).toHaveLength(0);
   expect(reloaded.harness.inspection.sdk.callsTo("threads.delete")).toHaveLength(0);
   await reloaded.harness.lifecycle.dispose();
+});
+
+describe("workspace colors", () => {
+  const [acme] = initial.workspaces;
+  it("accepts a preset color, rejects anything else, and still reads workspaces saved without one", () => {
+    expect(workspaceSchema.parse({ ...acme!, color: "teal" }).color).toBe("teal");
+    expect(workspaceSchema.safeParse({ ...acme!, color: "#ff0000" }).success).toBe(false);
+    expect(workspaceSchema.parse(acme!)).not.toHaveProperty("color");
+  });
+  it("looks up a workspace's color and has none for All, No workspace and uncolored workspaces", () => {
+    const workspaces = [{ ...acme!, color: "blue" as const }, initial.workspaces[1]!];
+    expect(workspaceColor("acme", workspaces)).toBe("blue");
+    expect(workspaceColor("globex", workspaces)).toBeUndefined();
+    expect(workspaceColor(null, workspaces)).toBeUndefined();
+    expect(workspaceColor("unassigned", workspaces)).toBeUndefined();
+  });
+  it("saves a color and clears it again", async () => {
+    const { bb, harness } = createFakePluginHost({ sdk: { projects: { list: async () => projects } } });
+    const store = createWorkspaceStorage(bb, () => {});
+    await bb.storage.kv.set("workspaces", initial.workspaces);
+    await store.save({ ...acme!, color: "violet" });
+    expect((await store.read()).workspaces[0]).toMatchObject({ id: "acme", color: "violet" });
+    await store.save({ ...acme! });
+    expect((await store.read()).workspaces[0]).not.toHaveProperty("color");
+    await harness.lifecycle.dispose();
+  });
 });

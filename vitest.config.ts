@@ -10,6 +10,7 @@ export default defineConfig({
       "workspaces.test.ts",
       "workspaces.ui.test.tsx",
       "shell-appearance.ui.test.tsx",
+      "pane-appearance.ui.test.tsx",
       "live-activity.ui.test.tsx",
       "timeline-activity.ui.test.tsx",
       "inline-code-copy.ui.test.tsx",

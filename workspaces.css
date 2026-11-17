@@ -108,7 +108,7 @@
   inset-inline: 14px;
   height: 2px;
   border-radius: 2px 2px 0 0;
-  background: var(--brand, var(--foreground));
+  background: var(--jf-ws-color, var(--brand, var(--foreground)));
 }
 .jf-workspace-tabs .jf-workspace-tab-count {
   padding: 1px 5px;
@@ -514,4 +514,87 @@
 }
 .jf-workspace-first:hover {
   background: color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+/* Workspace colors. One hue per name, tuned for each mode; an element carrying
+   data-jf-color reads its color from --jf-ws-color. */
+:root {
+  --jf-ws-red: oklch(0.58 0.19 25);
+  --jf-ws-orange: oklch(0.65 0.17 52);
+  --jf-ws-amber: oklch(0.72 0.15 85);
+  --jf-ws-green: oklch(0.6 0.15 150);
+  --jf-ws-teal: oklch(0.6 0.11 195);
+  --jf-ws-blue: oklch(0.58 0.17 255);
+  --jf-ws-violet: oklch(0.56 0.19 295);
+  --jf-ws-pink: oklch(0.62 0.2 350);
+}
+.dark {
+  --jf-ws-red: oklch(0.7 0.17 25);
+  --jf-ws-orange: oklch(0.76 0.15 55);
+  --jf-ws-amber: oklch(0.82 0.14 88);
+  --jf-ws-green: oklch(0.75 0.15 150);
+  --jf-ws-teal: oklch(0.76 0.11 195);
+  --jf-ws-blue: oklch(0.72 0.14 255);
+  --jf-ws-violet: oklch(0.72 0.15 295);
+  --jf-ws-pink: oklch(0.75 0.16 350);
+}
+[data-jf-color="red"] { --jf-ws-color: var(--jf-ws-red); }
+[data-jf-color="orange"] { --jf-ws-color: var(--jf-ws-orange); }
+[data-jf-color="amber"] { --jf-ws-color: var(--jf-ws-amber); }
+[data-jf-color="green"] { --jf-ws-color: var(--jf-ws-green); }
+[data-jf-color="teal"] { --jf-ws-color: var(--jf-ws-teal); }
+[data-jf-color="blue"] { --jf-ws-color: var(--jf-ws-blue); }
+[data-jf-color="violet"] { --jf-ws-color: var(--jf-ws-violet); }
+[data-jf-color="pink"] { --jf-ws-color: var(--jf-ws-pink); }
+.jf-workspace-color-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--jf-ws-color);
+}
+.jf-workspace-monogram[data-jf-color] {
+  border-color: color-mix(in oklch, var(--jf-ws-color) 50%, var(--border));
+  background: color-mix(in oklch, var(--jf-ws-color) 16%, var(--background));
+}
+.jf-workspace-colors {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+.jf-workspace-colors-label {
+  margin-right: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.jf-workspace-swatch {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklch, var(--foreground) 14%, transparent);
+  background: var(--jf-ws-color, transparent);
+  cursor: pointer;
+}
+/* No color: an empty ring with a stroke through it. */
+.jf-workspace-swatch:not([data-jf-color])::before {
+  content: "";
+  position: absolute;
+  inset: 8px -1px;
+  border-radius: 1px;
+  background: var(--muted-foreground);
+  transform: rotate(-45deg);
+}
+.jf-workspace-swatch[aria-checked="true"] {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+.jf-workspace-swatch:focus-visible {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+}
+.jf-workspace-swatch:disabled {
+  cursor: default;
+  opacity: 0.6;
 }

@@ -15,6 +15,7 @@ import {
   inWorkspace,
   pluginInWorkspace,
   workspaceForThread,
+  WORKSPACE_COLORS,
   type Workspace,
 } from "./workspaces";
 import {
@@ -186,9 +187,10 @@ function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInf
           ...state.workspaces.map((workspace) => ({
             id: workspace.id as string | null,
             name: workspace.name,
+            color: workspace.color,
           })),
-          { id: null, name: "All" },
-          { id: "unassigned", name: NO_WORKSPACE },
+          { id: null, name: "All", color: undefined },
+          { id: "unassigned", name: NO_WORKSPACE, color: undefined },
         ];
   return (
     <header
@@ -242,8 +244,10 @@ function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInf
               className={
                 tab.id === null ? "jf-workspace-global-tab" : undefined
               }
+              data-jf-color={tab.color}
               onClick={() => choose(tab.id)}
             >
+              {tab.color ? <i className="jf-workspace-color-dot" aria-hidden="true" /> : null}
               {tab.name}
               <span className="jf-workspace-tab-count" aria-hidden="true">
                 {ready ? counts.total : "—"}
@@ -634,7 +638,7 @@ export function WorkspaceSettings({ startNew = false }: { startNew?: boolean } =
             aria-current={active?.id === workspace.id ? "true" : undefined}
             onClick={() => edit(workspace)}
           >
-            <span className="jf-workspace-monogram">
+            <span className="jf-workspace-monogram" data-jf-color={workspace.color}>
               {workspace.name.slice(0, 1).toUpperCase()}
             </span>
             <span>{workspace.name}</span>
@@ -686,6 +690,23 @@ export function WorkspaceSettings({ startNew = false }: { startNew?: boolean } =
               />
               <span>Group threads by project</span>
             </label>
+            <div className="jf-workspace-colors" role="radiogroup" aria-label="Workspace color">
+              <span className="jf-workspace-colors-label">Color</span>
+              {([undefined, ...WORKSPACE_COLORS] as const).map((color) => (
+                <button
+                  type="button"
+                  role="radio"
+                  key={color ?? "none"}
+                  className="jf-workspace-swatch"
+                  data-jf-color={color}
+                  aria-checked={active.color === color}
+                  aria-label={color ? color[0]!.toUpperCase() + color.slice(1) : "No color"}
+                  title={color ? color[0]!.toUpperCase() + color.slice(1) : "No color"}
+                  disabled={busy}
+                  onClick={() => setEditing({ ...active, color })}
+                />
+              ))}
+            </div>
           </div>
           <div
             className="jf-membership-tabs"

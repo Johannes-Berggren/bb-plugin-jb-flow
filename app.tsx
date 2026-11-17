@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Glyph } from "@/components/ui/glyph";
 import { cn } from "@/lib/utils";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
+import { mountPaneAppearance, PaneAppearancePreference } from "./pane-appearance";
 import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 import { TabSwitcherHost } from "./tab-switcher";
@@ -234,6 +235,8 @@ export default definePluginApp((app) => {
   app.contentScripts.register({ id: "inline-code-copy", mount: mountInlineCodeCopy });
   app.contentScripts.register({ id: "callouts", mount: mountCallouts });
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
+  app.contentScripts.register({ id: "pane-appearance", mount: mountPaneAppearance });
+  app.slots.experimental_appOverlay({ id: "pane-appearance-preference", component: PaneAppearancePreference });
   app.slots.navPanel({
     id: "catch-up",
     title: "Catch up",

@@ -497,6 +497,13 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Refine the sidebar, composer, conversation, panel tabs and menus across BB. Off restores BB's standard styling.",
       default: true,
     },
+    highlightActivePane: {
+      type: "boolean",
+      label: "Frame the active split pane",
+      description:
+        "In split view, a frame marks the pane you're working in, and each pane shows its workspace's color (set under Workspaces). Off restores BB's standard panes.",
+      default: true,
+    },
     threadMonitor: {
       type: "boolean",
       label: "Thread monitor",
