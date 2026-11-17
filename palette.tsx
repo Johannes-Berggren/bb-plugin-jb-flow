@@ -30,7 +30,6 @@ import {
   home,
   matchesShortcut,
   parseQuery,
-  pushRecent,
   recordUse,
   search,
   searchShortcuts,
@@ -53,6 +52,7 @@ import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
 import { DUE_PRESETS, formatDue, parseDue, SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { focusLimitOf } from "./now-model";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
+import { readRecentThreads, useRecentThreadsTracker } from "./recents";
 import { inWorkspace, workspaceForThread } from "./workspaces";
 import { PR_TONE, StatusIcon, ThreadPreviewCard, attentionLabel, prGlyph, rowStatus, runInfo, threadPrs, useNow, useThreadPreview } from "./ui-extras";
 import type { RowStatus } from "./ui-extras";
@@ -65,9 +65,8 @@ import { cn } from "@/lib/utils";
 /** Opens the palette; the command and anything else in this window dispatch it. */
 export const PALETTE_EVENT = "jb-flow:palette";
 const FRECENCY_KEY = "jb-flow.palette.frecency";
-const RECENT_KEY = "jb-flow.palette.recent";
 // bb's own "a modal is open" test: its shortcuts stand down while one is.
-const MODAL_OPEN = '[aria-modal="true"]:not([inert]):not([inert] *):not([data-state="closed"])';
+export const MODAL_OPEN = '[aria-modal="true"]:not([inert]):not([inert] *):not([data-state="closed"])';
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -104,7 +103,6 @@ const errorText = (cause: unknown) => (cause instanceof Error ? cause.message : 
  */
 export function usePaletteTrigger(enabled: boolean) {
   const sdk = useSdk();
-  const context = useBbContext();
   const [open, setOpen] = useState(false);
   const [shortcuts, setShortcuts] = useState<Shortcut[]>([DEFAULT_SEARCH_SHORTCUT]);
   const live = useRef({ open, shortcuts, enabled });
@@ -163,9 +161,7 @@ export function usePaletteTrigger(enabled: boolean) {
     };
   }, []);
 
-  useEffect(() => {
-    if (context.threadId) writeJson(RECENT_KEY, pushRecent(readJson<string[]>(RECENT_KEY, []), context.threadId));
-  }, [context.threadId]);
+  useRecentThreadsTracker();
 
   const close = useCallback(() => setOpen(false), []);
   return { open, close, shortcut: shortcuts[0] ?? null };
@@ -393,7 +389,7 @@ export function Palette({
   const [levels, setLevels] = useState<Level[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [frecency, setFrecency] = useState<Frecency>(() => readJson<Frecency>(FRECENCY_KEY, {}));
-  const recent = useMemo(() => readJson<string[]>(RECENT_KEY, []), []);
+  const recent = useMemo(() => readRecentThreads(), []);
   const inputRef = useRef<HTMLInputElement>(null);
   // The search field has focus when the palette opens. The dialog's own focus
   // handling runs after this component's effects (the compact drawer focuses

@@ -357,6 +357,13 @@ export default async function plugin(bb: BbPluginApi) {
         "BB's Search threads key (⌘K unless you changed it) opens a palette that also finds messages, PRs, workspaces and projects, shows what needs you, and acts on any thread with Tab. BB's own search stays under Open quick palette → Search threads. Off gives the key back to BB.",
       default: true,
     },
+    tabSwitcher: {
+      type: "boolean",
+      label: "Ctrl+Tab switches threads and workspaces",
+      description:
+        "Hold Ctrl and tap Tab to step back through the threads you viewed last; let go to open one. A quick Ctrl+Tab flips to the previous thread. Ctrl+` does the same for workspace tabs. Desktop app only: in a web browser, Ctrl+Tab belongs to the browser. Off leaves the keys alone.",
+      default: true,
+    },
     catchUp: {
       type: "boolean",
       label: "Catch up",
