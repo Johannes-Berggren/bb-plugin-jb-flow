@@ -9,6 +9,16 @@ let snapshot: Snapshot = { state: EMPTY_WORKSPACES, ready: false, error: null };
 const listeners = new Set<() => void>();
 let inflight: Promise<void> | null = null;
 let again = false;
+// Bumped by forgetWorkspaces, so a fetch in flight before it is dropped.
+let generation = 0;
+
+/** Forget the loaded workspaces and drop a fetch in flight (tests, so one case doesn't see the last one's). */
+export function forgetWorkspaces() {
+  generation += 1;
+  snapshot = { state: EMPTY_WORKSPACES, ready: false, error: null };
+  inflight = null;
+  again = false;
+}
 function publish(next: Snapshot) {
   snapshot = next;
   for (const listener of listeners) listener();
@@ -29,14 +39,20 @@ export function useWorkspaces() {
       again = true;
       return inflight;
     }
+    const started = generation;
     inflight = rpc
       .call("workspaces_get", null)
       .then(
-        (state) => publish({ state, ready: true, error: null }),
-        (cause: unknown) =>
-          publish({ ...snapshot, error: cause instanceof Error ? cause.message : String(cause) }),
+        (state) => {
+          if (started === generation) publish({ state, ready: true, error: null });
+        },
+        (cause: unknown) => {
+          if (started === generation)
+            publish({ ...snapshot, error: cause instanceof Error ? cause.message : String(cause) });
+        },
       )
       .finally(() => {
+        if (started !== generation) return;
         inflight = null;
         if (again) {
           again = false;

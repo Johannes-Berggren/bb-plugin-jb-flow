@@ -174,6 +174,8 @@ describe("Catch up", () => {
     expect(title()).toBe("Fix billing export");
     expect(deck().textContent).toContain("1 of 3");
     expect(deck().textContent).toContain("Needs your input");
+    // The card's meta line loads after the card: wait for it.
+    await waitFor(() => expect(deck().textContent).toContain("2 new turns"));
     // One time on the meta line, not "1h ago … since 1h ago".
     expect(deck().textContent).not.toContain("since ");
   });
@@ -208,7 +210,7 @@ describe("Catch up", () => {
     expect(chat().getAttribute("data-thread-id")).toBe("a");
     expect(chat().getAttribute("data-variant")).toBe("compact");
     expect(chat().getAttribute("data-focus-request")).toBe("0");
-    expect(deck().textContent).toContain("2 new turns · 1 prompt from you · ");
+    await waitFor(() => expect(deck().textContent).toContain("2 new turns · 1 prompt from you · "));
     press("r");
     await waitFor(() => expect(chat().getAttribute("data-focus-request")).toBe("1"));
     press("u");

@@ -83,6 +83,7 @@
     "pane-commands.ui.test.tsx",
     "needs-me.test.ts",
     "vitest.config.ts",
+    "vitest.setup.ts",
     "thread-status.test.ts",
     "timeline-activity.ui.test.tsx",
     "decision-choices.ui.test.tsx",
