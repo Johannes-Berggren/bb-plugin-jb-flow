@@ -623,6 +623,8 @@ export function ActivityCard({
       data-expanded={expanded}
       data-connected={connected}
       data-active={phase === "working" && active}
+      // Nothing to say but "idle": Catch up hides it, since its card already shows the state.
+      data-quiet={!active && connected && !goal && !idleLabel && count === 0 && todos.length === 0 && watches.length === 0 ? "" : undefined}
     >
       <div className="jf-live-heading">
         <span className="jf-live-orbit" aria-hidden="true">

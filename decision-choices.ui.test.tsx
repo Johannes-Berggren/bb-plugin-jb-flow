@@ -366,3 +366,28 @@ it("hides the list's reply line with it, and keeps other paragraphs", async () =
   expect(reply!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
   row.remove();
 });
+
+it("hides a whole callout that only repeats the options, even with rows after its message", async () => {
+  const row = document.createElement("div");
+  row.dataset.timelineRowId = "r1";
+  row.innerHTML = `<p>Done.</p><blockquote data-jf-callout="tip"><p><strong>Path forward:</strong> two snoozes</p><ol>${options
+    .map((option) => `<li>${option.text}</li>`)
+    .join("")}</ol><p>Reply <strong>go</strong> for all, or <strong>go 1</strong>.</p></blockquote>`;
+  const footer = document.createElement("div");
+  footer.dataset.timelineRowId = "r1:work-summary:1";
+  footer.textContent = "Worked for 2m";
+  document.body.append(row, footer);
+  const callout = row.querySelector("blockquote")!;
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ mode: "go", options }) } },
+  );
+  await slot.findByRole("region", { name: "Reply choices" });
+  await waitFor(() => expect(callout.hasAttribute(REPEATED_LIST_ATTR)).toBe(true));
+  expect(row.querySelector("p")!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  slot.lifecycle.unmount();
+  expect(callout.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  row.remove();
+  footer.remove();
+});
