@@ -1,7 +1,6 @@
 import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema } from "./workspaces";
 import { createThreadStatus } from "./thread-status";
-import { countSince } from "./catch-up-model";
 import { handBackInstructions } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
@@ -12,7 +11,6 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
 import { createAwaiting } from "./awaiting";
-import { nextMove } from "./decisions";
 import { createLeftovers } from "./leftovers";
 import { createNowStore } from "./now-store";
 import { createFocus, needsAttention } from "./focus";
@@ -30,6 +28,7 @@ import { createPrCi, registerPrTools } from "./pr-ci";
 import { createNowQueue, registerDueFromStatus, registerDueTool } from "./now-queue";
 import { createDeck } from "./deck";
 import { createTriageState } from "./triage-state";
+import { threadPreviewRpc } from "./thread-preview";
 import { formatDue, formatWhen, parseDue } from "./when";
 import { AFTER_GREEN, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
@@ -320,53 +319,12 @@ export default async function plugin(bb: BbPluginApi) {
     ...prCi.rpc,
     ...nowAndNext.rpc,
     ...triage.rpc,
+    ...threadPreviewRpc(bb),
     workspaces_get: () => workspaces.read(),
     workspace_save: (input) => workspaces.save(input),
     workspace_remove: async ({ id }) => { await workspaces.remove(id); return { ok: true }; },
     workspace_assign: async ({ threadId, workspaceId, automatic }) => { await workspaces.assign(threadId, workspaceId, automatic); return { ok: true }; },
     thread_status: ({ threadId, refresh }) => threadStatus.get(threadId, refresh),
-    thread_preview: async ({ threadId }) => {
-      const [output, outline] = await Promise.all([
-        bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),
-        bb.sdk.threads.conversationOutline({ threadId }).catch(() => ({ items: [] as Array<{ role: string; preview: string }> })),
-      ]);
-      const reply = output.output ?? "";
-      // Markdown → plain text for one-line display.
-      const plain = (text: string) =>
-        text
-          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-          .replace(/[*_`>#]+/g, "")
-          .replace(/[\u2580-\u259F\u2500-\u257F]+/g, "")
-          .replace(/\s+/g, " ")
-          .trim();
-      // The user's Status template: "**Goal:** …", "**Next:** …", etc.
-      const field = (name: string) => {
-        const match = new RegExp(`\\*\\*${name}:\\*\\*\\s*(.+)`, "i").exec(reply);
-        return match ? plain(match[1]!).slice(0, 300) : "";
-      };
-      const userItems = outline.items.filter((item) => item.role === "user");
-      const firstLines = reply
-        .split("\n")
-        .map(plain)
-        .filter((line) => line.length > 0 && !/^(goal|done|next|blocked):/i.test(line))
-        .slice(0, 4)
-        .join(" ");
-      return {
-        goal: field("Goal") || plain(userItems[0]?.preview ?? "").slice(0, 300),
-        done: field("Done"),
-        next: field("Next"),
-        blocked: field("Blocked"),
-        latest: firstLines.slice(0, 400),
-        prompts: userItems.length,
-      };
-    },
-    catch_up_card: async ({ threadId, since }) => {
-      // The card embeds the thread itself; this adds what happened since you last read it.
-      const timeline = await bb.sdk.threads
-        .timeline({ threadId, segmentLimit: "8", deferContent: "true", includeNestedRows: "false" })
-        .catch(() => null);
-      return { since: countSince(timeline?.rows ?? [], since, (timeline?.timelinePage.olderCursor ?? null) !== null) };
-    },
     thread_stop: async ({ threadId }) => {
       await bb.sdk.threads.stop({ threadId });
       return { ok: true };
@@ -375,10 +333,6 @@ export default async function plugin(bb: BbPluginApi) {
     plan_approve: async ({ threadId, model }) => {
       await approvePlan(bb.sdk, { threadId, model });
       return { ok: true };
-    },
-    decision_options: async ({ threadId }) => {
-      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      return nextMove(output.output ?? "");
     },
     conductor_list: async () => ({ enabled: (await settings.get()).conductor === true, conductors: await loadedConductor().status() }),
     conductor_page: ({ workspaceId }) => loadedConductor().page(workspaceId),

@@ -46,6 +46,7 @@
     "now-queue.ts",
     "deck.ts",
     "triage-state.ts",
+    "thread-preview.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",
