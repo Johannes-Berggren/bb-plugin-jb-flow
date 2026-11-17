@@ -243,3 +243,33 @@
 [data-jf-choices-repeated] {
   display: none !important;
 }
+
+/* Phones: the buttons say it all. Drop the hint text, tighten the rows and put
+   Go (or Send) on the heading line instead of a row of its own. */
+@media (max-width: 640px) {
+  .jf-choices {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    padding: 2px 0 4px;
+  }
+  .jf-choices > * {
+    grid-column: 1 / -1;
+  }
+  .jf-choices > .jf-choices-heading {
+    grid-column: 1;
+    grid-row: 1;
+    padding-bottom: 4px;
+  }
+  .jf-choices > .jf-choices-actions {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0 0 4px;
+  }
+  .jf-choices-hint-text {
+    display: none;
+  }
+  .jf-choice {
+    padding: 4px 8px;
+  }
+}

@@ -125,6 +125,17 @@ threads…*. A message match opens its thread, but it can't scroll to the messag
 because the plugin SDK has no way to do that. Recent picks and visits are stored in
 this browser only.
 
+### Ctrl+Tab switcher
+
+On by default (turn off under Settings → JB Flow → **Ctrl+Tab switches threads and
+workspaces**). Hold Ctrl and tap Tab: a card lists the threads you viewed most recently,
+the one you're in first. Each Tab steps further back, Shift+Tab steps forward, and letting
+go of Ctrl opens the selected thread. A quick Ctrl+Tab flips straight to the previous
+thread without showing the card. With workspaces on, Ctrl+` (or ↑ from the top thread)
+moves to a row of workspace tabs, most recently used first; letting go switches workspace.
+Escape cancels, and clicking a row opens it. BB's desktop app only: in a web browser,
+Ctrl+Tab switches browser tabs. Visit history is stored in this browser only.
+
 ### Catch up
 
 On by default (turn off under Settings → JB Flow → **Catch up**). Goes through your

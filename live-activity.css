@@ -1133,3 +1133,8 @@
 .jf-live-card .jf-autoprompt > span {
   opacity: 0.75;
 }
+
+/* Inside Catch up, an idle monitor with nothing to show only takes room from the thread. */
+.jf-catchup-chat .jf-live-card[data-quiet] {
+  display: none;
+}

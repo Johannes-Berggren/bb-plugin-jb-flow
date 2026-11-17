@@ -725,6 +725,7 @@ function CatchUpDeck({
             sentHere={sentHere}
             focusComposer={focusComposer}
             swipe={swipe}
+            onOpen={() => open(false)}
           />
         )}
       </div>
@@ -760,10 +761,10 @@ function CatchUpDeck({
         <footer className="jf-catchup-actions">
           <ActionButton label="Keep unread" keyHint="←" icon="ArrowLeft" fallback="RotateCcw" onClick={keep} title="Keep unread and go on (← or U)" />
           <span className="jf-catchup-actions-middle">
-            <ActionButton label="Snooze" keyHint="S" icon="Clock" fallback="Square" onClick={() => setMode(mode === "snooze" ? "card" : "snooze")} title="Snooze (S, or long-press)" />
+            <ActionButton wideOnly label="Snooze" keyHint="S" icon="Clock" fallback="Square" onClick={() => setMode(mode === "snooze" ? "card" : "snooze")} title="Snooze (S, or long-press)" />
             <ActionButton label="Archive" keyHint="E" icon="Archive" onClick={archive} title="Archive (E)" />
-            <ActionButton label="Reply" keyHint="R" icon="CornerDownLeft" onClick={() => setFocusComposer((count) => count + 1)} title="Write in the thread (R)" />
-            <ActionButton label="Open" keyHint="O" icon="ExternalLink" fallback="PanelRight" onClick={() => open(false)} title="Open the thread (O; ⇧O in a split)" />
+            <ActionButton wideOnly label="Reply" keyHint="R" icon="CornerDownLeft" onClick={() => setFocusComposer((count) => count + 1)} title="Write in the thread (R)" />
+            <ActionButton wideOnly label="Open" keyHint="O" icon="ExternalLink" fallback="PanelRight" onClick={() => open(false)} title="Open the thread (O; ⇧O in a split)" />
           </span>
           <button type="button" className="jf-catchup-action jf-catchup-done" onClick={done} title="Mark read and go on (→ or D)">
             Done <kbd>→</kbd>
@@ -785,8 +786,13 @@ function CatchUpDeck({
   );
 }
 
-/** Text and key hint on wide screens, an icon on phones; the label stays the accessible name. */
+/**
+ * Text and key hint on wide screens, an icon on phones; the label stays the accessible name.
+ * wideOnly buttons leave phones, which have long-press for Snooze, the title for Open and
+ * the composer for Reply.
+ */
 function ActionButton({
+  wideOnly,
   label,
   keyHint,
   icon,
@@ -794,6 +800,7 @@ function ActionButton({
   title,
   onClick,
 }: {
+  wideOnly?: boolean;
   label: string;
   keyHint: string;
   icon: string;
@@ -802,7 +809,7 @@ function ActionButton({
   onClick: () => void;
 }) {
   return (
-    <button type="button" className="jf-catchup-action" aria-label={label} title={title} onClick={onClick}>
+    <button type="button" className={cn("jf-catchup-action", wideOnly && "jf-catchup-wide-only")} aria-label={label} title={title} onClick={onClick}>
       <kbd>{keyHint}</kbd>
       <Icon name={icon} fallback={fallback} className="jf-catchup-narrow size-4" aria-hidden />
       <span className="jf-catchup-wide">{label}</span>
@@ -820,16 +827,17 @@ async function inChunks(ids: readonly string[], run: (id: string) => Promise<unk
 
 // --- one card ------------------------------------------------------------------------
 
-function sinceLine(item: CatchUpItem, since: Since | undefined, now: number): string {
-  if (item.since === null) return "New to you";
-  const head = `since ${ago(item.since, now)}`;
-  if (since === undefined) return `Updated ${head}`;
+/** What changed since you last read it, and when it last moved: "2 new turns · 1 prompt from you · 5m ago". One time, not two. */
+export function sinceLine(item: CatchUpItem, since: Since | undefined, latestAt: number, now: number): string {
+  const when = ago(latestAt, now);
+  if (item.since === null) return `New to you · ${when}`;
+  if (since === undefined) return when;
   const parts: string[] = [];
   const more = since.more ? "+" : "";
-  if (since.turns > 0) parts.push(`${since.turns}${more} turn${since.turns === 1 && !more ? "" : "s"}`);
+  if (since.turns > 0) parts.push(`${since.turns}${more} new turn${since.turns === 1 && !more ? "" : "s"}`);
   if (since.yourPrompts > 0) parts.push(`${plural(since.yourPrompts, "prompt")} from you`);
   if (since.otherPrompts > 0) parts.push(`${since.otherPrompts} automated`);
-  return parts.length > 0 ? `${parts.join(" · ")} ${head}` : `Updated ${head}`;
+  return [...parts, when].join(" · ");
 }
 
 function CardView({
@@ -842,6 +850,7 @@ function CardView({
   sentHere,
   focusComposer,
   swipe,
+  onOpen,
 }: {
   thread: PluginSidebarThread;
   item: CatchUpItem;
@@ -852,6 +861,7 @@ function CardView({
   sentHere: boolean;
   focusComposer: number;
   swipe: Swipe;
+  onOpen: () => void;
 }) {
   const { pullRequest } = useSidebarThreadPullRequest(thread.id);
   const prs = threadPrs(flow?.threadPrs[thread.id], pullRequest);
@@ -876,14 +886,17 @@ function CardView({
           <div className="jf-catchup-meta">
             <StatusIcon status={status} />
             <span className={cn("jf-catchup-tier", needsYou(item.tier) && "jf-catchup-tier-needs")}>{TIER_LABEL[item.tier]}</span>
-            {project ? <span>{project}</span> : null}
-            <span>{ago(thread.latestAttentionAt, now)}</span>
-            <span className="jf-catchup-since">
-              {sinceLine(item, since, now)}
+            {project ? <span className="jf-catchup-project">{project}</span> : null}
+            <span className="jf-catchup-since" title={item.since === null ? undefined : `Last read ${ago(item.since, now)}`}>
+              {sinceLine(item, since, thread.latestAttentionAt, now)}
               {merged.length > 0 ? ` · ${merged.map((pr) => `#${pr.number} merged`).join(" · ")}` : ""}
             </span>
           </div>
-          <h2 className="jf-catchup-title">{thread.displayTitle}</h2>
+          <h2 className="jf-catchup-title">
+            <button type="button" className="jf-catchup-title-open" title="Open the thread (O)" onClick={onOpen}>
+              {thread.displayTitle}
+            </button>
+          </h2>
         </header>
         {sentHere ? (
           <p className="jf-catchup-notice" role="status">
@@ -895,7 +908,7 @@ function CardView({
           <p className="jf-catchup-callout jf-catchup-callout-error">{thread.indicatorLabel ?? "The last turn failed"}. Retry from the thread below.</p>
         ) : null}
         {prs.length > 0 ? (
-          <div className="jf-catchup-prs">
+          <div className="jf-catchup-prs" data-closed-only={open.length === 0 || undefined}>
             {shownPrs.length > 0 ? <PrList prs={shownPrs} compact /> : null}
             {prs.length > open.length ? (
               <button
@@ -996,7 +1009,7 @@ function KeyHelp() {
           </div>
         ))}
       </dl>
-      <p className="jf-catchup-muted">On touch screens, swipe right for Done and left to keep unread.</p>
+      <p className="jf-catchup-muted">On touch screens, swipe right for Done and left to keep unread, long-press to snooze, and tap the title to open.</p>
     </div>
   );
 }

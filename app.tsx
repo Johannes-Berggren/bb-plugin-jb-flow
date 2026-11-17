@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
+import { TabSwitcherHost } from "./tab-switcher";
 import { CatchUpHomeEntry, CatchUpOverlay, CatchUpPage, useCatchUpBadge, useCatchUpTrigger } from "./catch-up";
 import { CATCH_UP_EVENT } from "./catch-up-model";
 import { flowState, useFlowState } from "./flow-state";
@@ -294,6 +295,7 @@ export default definePluginApp((app) => {
   app.slots.experimental_appOverlay({ id: "command-host", component: CommandHost });
   app.slots.experimental_appOverlay({ id: "palette", component: PaletteHost });
   app.slots.experimental_appOverlay({ id: "catch-up", component: CatchUpHost });
+  app.slots.experimental_appOverlay({ id: "tab-switcher", component: TabSwitcherHost });
   const inThread = ({ threadId }: { threadId: string | null }) => threadId !== null;
   app.commands.register({
     id: "palette",

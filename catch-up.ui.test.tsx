@@ -174,7 +174,15 @@ describe("Catch up", () => {
     expect(title()).toBe("Fix billing export");
     expect(deck().textContent).toContain("1 of 3");
     expect(deck().textContent).toContain("Needs your input");
-    expect(deck().textContent).toContain("since ");
+    // One time on the meta line, not "1h ago … since 1h ago".
+    expect(deck().textContent).not.toContain("since ");
+  });
+
+  it("opens the thread from its title", async () => {
+    const slot = await mount();
+    await openDeck();
+    fireEvent.click(within(deck()).getByRole("button", { name: "Fix billing export" }));
+    await waitFor(() => expect(slot.navigateCalls).toContainEqual({ method: "toThread", threadId: "a", options: undefined }));
   });
 
   it("→ marks read and moves on; ← keeps it unread; z undoes", async () => {
@@ -200,7 +208,7 @@ describe("Catch up", () => {
     expect(chat().getAttribute("data-thread-id")).toBe("a");
     expect(chat().getAttribute("data-variant")).toBe("compact");
     expect(chat().getAttribute("data-focus-request")).toBe("0");
-    expect(deck().textContent).toContain("2 turns · 1 prompt from you since 2h ago");
+    expect(deck().textContent).toContain("2 new turns · 1 prompt from you · ");
     press("r");
     await waitFor(() => expect(chat().getAttribute("data-focus-request")).toBe("1"));
     press("u");
@@ -219,8 +227,20 @@ describe("Catch up", () => {
     await waitFor(() => expect(deck().textContent).toContain("#3"));
     expect(deck().textContent).not.toContain("Change 1");
     expect(deck().textContent).toContain("#1 merged · #2 merged");
+    expect(deck().querySelector(".jf-catchup-prs")!.hasAttribute("data-closed-only")).toBe(false);
     fireEvent.click(within(deck()).getByRole("button", { name: "2 merged or closed PRs" }));
     await waitFor(() => expect(deck().textContent).toContain("Change 1"));
+  });
+
+  it("marks a PR list with nothing open so phones can fold it away", async () => {
+    const merged = {
+      repo: "acme/web-app", number: 7, title: "Change 7", url: "https://github.com/acme/web-app/pull/7",
+      state: "merged", attention: "merged", base: "main", head: "b7", stackedOn: null, checkedAt: NOW, mergedAt: NOW - 1000,
+    };
+    await mount({ state: { threadPrs: { a: [merged] } as never } });
+    await openDeck();
+    await waitFor(() => expect(deck().querySelector(".jf-catchup-prs")).not.toBeNull());
+    expect(deck().querySelector(".jf-catchup-prs")!.hasAttribute("data-closed-only")).toBe(true);
   });
 
   it("holds an archive for undo and commits it on close", async () => {
