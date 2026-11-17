@@ -26,18 +26,19 @@ import { loadLocalConfig, readLocalConfigFile } from "./local-config";
 import { createChanges } from "./changes";
 import { createThreadLists, type ListedThread } from "./thread-cache";
 import { createSnoozes, registerSnoozeTool } from "./snooze";
+import { createStaleDigest } from "./stale-digest";
 import { formatDue, formatWhen, parseDue, parseDueLine } from "./when";
 import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
 import { createConductorStore } from "./conductor-store";
 import { migrate } from "./migrations";
-import { quietFor, staleThreads } from "./sidebar-groups";
+import { quietFor } from "./sidebar-groups";
 import { listLiveThreads } from "./thread-list";
 import { createWatchers } from "./watchers";
 import { replyQueued } from "./needs-me";
 import { approvePlan, planModels } from "./plan-model";
 import { nextNeedsMe } from "./next-needs-me";
-import { rpcContract, type Digest, type DigestItem, type FlowState, type Snooze } from "./rpc-contract";
+import { rpcContract, type FlowState } from "./rpc-contract";
 
 export { rpcContract } from "./rpc-contract";
 export type {
@@ -50,8 +51,6 @@ export type {
   FlowState,
   Snooze,
 } from "./rpc-contract";
-
-const DAY_MS = 86_400_000;
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
@@ -238,9 +237,6 @@ export default async function plugin(bb: BbPluginApi) {
   async function getTags(): Promise<Record<string, string[]>> {
     return (await bb.storage.kv.get<Record<string, string[]>>("tags")) ?? {};
   }
-  async function getKept(): Promise<Record<string, number>> {
-    return (await bb.storage.kv.get<Record<string, number>>("kept")) ?? {};
-  }
   const { changed, bumpDeck, waitForDeckChange, deckVersion } = createChanges(bb);
   const threadLists = createThreadLists(bb);
   const { listAllActiveThreads, listThreadsCached } = threadLists;
@@ -253,83 +249,6 @@ export default async function plugin(bb: BbPluginApi) {
   };
   bb.events.on("thread.active", onThreadState);
   bb.events.on("thread.idle", onThreadState);
-
-  // --- digest ---------------------------------------------------------------
-
-  async function summarize(threadId: string): Promise<string> {
-    try {
-      const outline = await bb.sdk.threads.conversationOutline({ threadId });
-      const last =
-        [...outline.items].reverse().find((item) => item.role === "assistant") ??
-        outline.items.at(-1);
-      return (last?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
-    } catch {
-      return "";
-    }
-  }
-
-  async function buildDigest(): Promise<Digest> {
-    const now = Date.now();
-    const kept = await getKept();
-    const snoozes = await getSnoozes();
-    // Read per build so a changed setting applies without a reload.
-    const { staleDays } = await settings.get();
-    const stale = staleThreads(await listAllActiveThreads(), { now, staleMs: staleDays * DAY_MS, keptUntil: kept, snoozed: snoozes });
-
-    const items: DigestItem[] = [];
-    // Small batches keep the outline reads from hammering the server.
-    for (let index = 0; index < stale.length; index += 8) {
-      const batch = stale.slice(index, index + 8);
-      const summaries = await Promise.all(batch.map((thread) => summarize(thread.id)));
-      batch.forEach((thread, offset) => {
-        items.push({
-          threadId: thread.id,
-          projectId: thread.projectId,
-          title: thread.title ?? thread.titleFallback ?? "Untitled",
-          idleDays: Math.floor(quietFor(thread, now) / DAY_MS),
-          summary: summaries[offset] ?? "",
-        });
-      });
-    }
-    const digest = { generatedAt: now, items };
-    await bb.storage.kv.set("digest", digest);
-    changed();
-    return digest;
-  }
-
-  async function readDigest(refresh: boolean): Promise<Digest> {
-    const cached = await bb.storage.kv.get<Digest>("digest");
-    if (refresh || cached === null || cached === undefined) return buildDigest();
-    const kept = await getKept();
-    const now = Date.now();
-    return { ...cached, items: cached.items.filter((item) => (kept[item.threadId] ?? 0) < now) };
-  }
-
-  async function archive(threadIds: string[]) {
-    const failed: string[] = [];
-    // A conductor is permanent; archiving one in bulk would only bring it straight back.
-    threadIds = threadIds.filter((threadId) => !conductor?.isConductor(threadId));
-    // bb archives a thread's subthreads with it; they leave the digest too.
-    const archived = new Set<string>();
-    for (const threadId of threadIds) {
-      const result = await bb.sdk.threads.archive({ threadId }).catch(() => null);
-      if (result === null) {
-        failed.push(threadId);
-        continue;
-      }
-      archived.add(threadId);
-      for (const id of result?.archivedThreadIds ?? []) archived.add(id);
-    }
-    const cached = await bb.storage.kv.get<Digest>("digest");
-    if (cached) {
-      await bb.storage.kv.set("digest", {
-        ...cached,
-        items: cached.items.filter((item) => !archived.has(item.threadId)),
-      });
-    }
-    changed();
-    return { archived: threadIds.length - failed.length, failed };
-  }
 
   // Each thread's own auto-continue switch (thread monitor); absent = the setting.
   const autoContinueOverrides = async () =>
@@ -367,6 +286,8 @@ export default async function plugin(bb: BbPluginApi) {
   const nowStore = createNowStore(bb, changed);
   const snoozes = createSnoozes(bb, { changed, awaiting });
   const { getSnoozes, findSnoozedSection, snooze, unsnooze, wakeDue } = snoozes;
+  const staleDigest = createStaleDigest(bb, { settings, changed, getSnoozes, listAllActiveThreads, conductor: () => conductor });
+  const { getKept, buildDigest, readDigest, archive } = staleDigest;
   // A status report's "**Due:**" line sets the deadline. Leaving it out later keeps the date.
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     if (!lastAssistantText || !(await settings.get()).nowQueue) return;
@@ -522,6 +443,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   const workspaces = createWorkspaceStorage(bb, changed);
   bb.rpc.register(rpcContract, {
     ...snoozes.rpc,
+    ...staleDigest.rpc,
     workspaces_get: () => workspaces.read(),
     workspace_save: (input) => workspaces.save(input),
     workspace_remove: async ({ id }) => { await workspaces.remove(id); return { ok: true }; },
@@ -563,16 +485,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     },
     focus_set: async ({ threadId, focused }) => ({ focused: await nowStore.set(threadId, focused) }),
     due_set: async ({ threadId, at, reason }) => ({ ok: (await nowStore.setDue(threadId, at, reason, "you")).applied }),
-    digest_list: ({ refresh }) => readDigest(refresh),
-    digest_keep: async ({ threadIds, days }) => {
-      const kept = await getKept();
-      const until = Date.now() + days * DAY_MS;
-      for (const threadId of threadIds) kept[threadId] = until;
-      await bb.storage.kv.set("kept", kept);
-      changed();
-      return { kept: threadIds.length };
-    },
-    archive: ({ threadIds }) => archive(threadIds),
     thread_status: ({ threadId, refresh }) => threadStatus.get(threadId, refresh),
     thread_preview: async ({ threadId }) => {
       const [output, outline] = await Promise.all([

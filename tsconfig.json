@@ -40,6 +40,7 @@
     "changes.ts",
     "thread-cache.ts",
     "snooze.ts",
+    "stale-digest.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",
