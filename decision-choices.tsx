@@ -46,23 +46,6 @@ export function repeatedList(scope: Element, options: readonly DecisionOption[])
   return null;
 }
 
-const CALLOUT = "blockquote[data-jf-callout]";
-
-/**
- * What to hide for a repeated list: the list and its "Reply with…" lines, or the
- * whole callout ("> [!TIP]") when those are all it holds besides a title line.
- */
-export function repeatedElements(list: Element): Element[] {
-  const lines = repeatedReplyLines(list);
-  const callout = list.parentElement?.matches(CALLOUT) ? list.parentElement : null;
-  if (callout) {
-    const rest = Array.from(callout.children).filter((child) => child !== list && !lines.includes(child));
-    const titleOnly = rest.every((child) => child.tagName === "P" && (child.textContent?.trim().length ?? 0) <= 200) && rest.length <= 1;
-    if (titleOnly) return [callout];
-  }
-  return [list, ...lines];
-}
-
 /** The nearest ancestor of the buttons that holds the thread's messages. */
 function messageScope(from: Element | null): Element | null {
   for (let node = from?.parentElement ?? null; node; node = node.parentElement) {
@@ -96,7 +79,8 @@ function useHideRepeatedList(section: RefObject<HTMLElement | null>, options: re
     let marked: Element[] = [];
     const apply = () => {
       const list = repeatedList(scope, options);
-      const next = list ? repeatedElements(list) : [];
+      // Only the list and its "Reply with…" lines: the question or path above them stays.
+      const next = list ? [list, ...repeatedReplyLines(list)] : [];
       if (next.length === marked.length && next.every((element, index) => element === marked[index])) return;
       for (const element of marked) element.removeAttribute(REPEATED_LIST_ATTR);
       for (const element of next) element.setAttribute(REPEATED_LIST_ATTR, "");
