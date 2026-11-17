@@ -82,6 +82,14 @@
     "conductor-model.ts",
     "conductor.ts",
     "conductor-model.test.ts",
-    "conductor.test.ts"
+    "conductor.test.ts",
+    "conductor-page.tsx",
+    "conductor-page.ui.test.tsx",
+    "server-boot.test.ts",
+    "conductor-client.ts",
+    "conductor-brief.tsx",
+    "autopilot.ts",
+    "autopilot.test.ts",
+    "conductor-brief.ui.test.tsx"
   ]
 }

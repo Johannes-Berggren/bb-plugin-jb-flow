@@ -13,6 +13,8 @@ export const MIGRATIONS = [
   // Conductor activity log: what each conductor did, for its page.
   "CREATE TABLE conductor_log (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL, thread_id TEXT, text TEXT NOT NULL)",
   "CREATE INDEX conductor_log_recent ON conductor_log (workspace_id, id)",
+  // What a wake-up autopilot or the conductor spared a worker would have cost (its last turn's tokens).
+  "ALTER TABLE conductor_log ADD COLUMN saved_tokens INTEGER",
 ];
 
 /** Brings the database up to date. Safe to call more than once: applied statements are skipped. */

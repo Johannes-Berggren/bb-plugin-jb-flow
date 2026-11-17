@@ -1,0 +1,128 @@
+/* The home page's "done for you" feed: what autopilot did today. */
+.jf-feed {
+  --cd-decision: var(--primary, #6d5bc2);
+  --cd-blocked: var(--warning, #aa6c16);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.jf-feed-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 6px;
+  font-weight: 500;
+}
+.jf-feed-summary > [data-icon-root] {
+  width: 14px;
+  height: 14px;
+  color: var(--cd-decision);
+}
+.jf-feed-refused {
+  color: var(--cd-blocked);
+  font-size: 12px;
+}
+.jf-feed-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jf-feed-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.jf-feed-list li + li {
+  border-top: 1px solid var(--border-hairline, var(--border));
+}
+.jf-feed-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+.jf-feed-icon [data-icon-root] {
+  width: 12px;
+  height: 12px;
+}
+.jf-feed-list li[data-kind="auto-merged"] .jf-feed-icon {
+  color: var(--pr-merged, var(--cd-decision));
+  background: color-mix(in oklch, var(--pr-merged, var(--cd-decision)) 12%, transparent);
+}
+.jf-feed-list li[data-kind="merge-refused"] .jf-feed-icon {
+  color: var(--cd-blocked);
+  background: color-mix(in oklch, var(--cd-blocked) 12%, transparent);
+}
+.jf-feed-main {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.jf-feed-title {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  cursor: pointer;
+}
+.jf-feed-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.jf-feed-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+}
+.jf-feed-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.jf-feed-undo,
+.jf-feed-more {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.jf-feed-undo:hover,
+.jf-feed-more:hover {
+  color: var(--foreground);
+}
+.jf-feed-conductors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0 0 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-feed-conductors button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.jf-feed-conductors button:hover {
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}

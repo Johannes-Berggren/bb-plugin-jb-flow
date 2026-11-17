@@ -15,6 +15,8 @@ import { childrenByParent, descendants, subthreadRows, topLevel } from "./subthr
 import { resolveLanes, sectionNames } from "./lanes";
 import { needsMe, replyQueued } from "./needs-me";
 import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
+import { useConductorBriefs } from "./conductor-client";
+import { headlineOf } from "./conductor-model";
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Glyph } from "@/components/ui/glyph";
 import type { GlyphName } from "@/components/ui/glyph";
@@ -399,16 +401,23 @@ export function TriageThreadList({
     [queue],
   );
 
-  const rowReason = (entry: NowEntry | undefined) =>
-    entry && state
+  // A thread the conductor briefed says what's needed instead of who holds it.
+  const briefs = useConductorBriefs();
+  const rowReason = (entry: NowEntry | undefined) => {
+    const brief = entry ? briefs.get(entry.thread.id) : undefined;
+    return entry && state
       ? {
-          text: reasonLabel(entry, state, now),
+          text: brief ? headlineOf(brief.item, 60) : reasonLabel(entry, state, now),
+          detail: brief
+            ? `${headlineOf(brief.item, 200)}${brief.item.recommendation ? `\n→ ${brief.item.recommendation}` : ""}\n${reasonLabel(entry, state, now)}`
+            : undefined,
           urgent:
             entry.state === "blocked" ||
             (entry.dueAt !== null && entry.dueAt - now <= DUE_NOW_MS) ||
             (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
         }
       : undefined;
+  };
 
   const [focusFull, setFocusFull] = useState<string | null>(null);
   const [dueTarget, setDueTarget] = useState<string | null>(null);

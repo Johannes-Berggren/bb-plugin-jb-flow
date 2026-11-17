@@ -43,6 +43,8 @@ import "./workspaces.css";
 
 const isCatchUpPanel = (item: ExperimentalSidebarNavigationItem) =>
   item.action.kind === "open-plugin-panel" && item.action.pluginId === "jb-flow" && item.action.panelId === "catch-up";
+const isConductorPanel = (item: ExperimentalSidebarNavigationItem) =>
+  item.action.kind === "open-plugin-panel" && item.action.pluginId === "jb-flow" && item.action.panelId === "conductor";
 
 function NavItem({
   item,
@@ -382,7 +384,9 @@ function WorkspaceNavigationInner(
     (item) =>
       pluginInWorkspace(item.pluginId, selected, state) &&
       // bb's own rail still lists the panel (a panel can't hide itself); this list can.
-      (catchUpOn || !isCatchUpPanel(item)),
+      (catchUpOn || !isCatchUpPanel(item)) &&
+      // The conductor comes to you (Catch up, Now, Done for you); its page waits under More tools.
+      !isConductorPanel(item),
   );
   return (
     <div className="jf-workspaces">

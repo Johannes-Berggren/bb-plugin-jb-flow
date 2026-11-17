@@ -417,23 +417,30 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **Wake-ups aren't lost.** A CI or release watch ends only after its message has been sent. A failed send is tried again on the next check, for about an hour, unless the thread is gone.
 
 ### Conductor (one per workspace, off by default)
-A conductor is a permanent agent thread that looks after one workspace. Its worker threads stop being woken for routine news; the conductor handles that news and leaves you one briefing instead of a pile of unread threads.
+A conductor is a permanent agent thread that looks after one workspace. Its worker threads stop being woken for routine news; the plugin and the conductor handle that news, so you aren't left with a pile of unread threads that only say "merged".
 - **Routing.** With a conductor running, the CI watcher and the release watcher split each thread's news:
   - CI failures and review feedback still wake the worker straight away.
   - CI green, merged or closed PRs, "no checks", timeouts and released builds go to the conductor's inbox. The exception is green when the worker said `after_green: "continue"`.
   - Without a conductor, or with the setting off, every thread hears its own news as before.
-- **Workers' hand-backs.** When a worker in the workspace ends a turn that asks you something, is ready to go, has finished, is waiting for input, or failed, that goes to the inbox too. A hand-back you've already read, or whose thread is running again, is dropped.
-- **Batched wake-ups.** Once the oldest unhandled news has waited *Conductor: minutes to collect news* (default 10) and the conductor is idle, it gets one message with everything since. The first wake-up of each day compacts its conversation first, so a permanent thread stays small.
-- **What it does on its own:**
-  - It merges a green PR when the worker said `after_green: "merge"` or its status report says so. It uses the repo's default merge method and never bypasses branch protection or required reviews; a refusal goes into the briefing.
-  - It reruns a failure that looks flaky, once per commit.
-  - It archives a thread whose PR merged and that has nothing left.
-  - It forwards to a worker only what the worker must act on.
-  - It never decides product, scope or outward-facing questions for you.
-- **Briefing.** Every turn ends with a briefing: one item per thread that needs you (summary, recommendation, the exact reply for the worker), plus what it handled. Reply in the conductor with `2 go, 4 snooze 3d, 5: use option B`: it sends each reply, snoozes or archives, and marks those threads read. `bb jb-flow conductor briefing <workspace-id>` prints it.
+- **Headlines from the workers' own words, at no cost.** In Now, a thread that needs you says what it needs instead of who holds it: the decision it asks for, what it's blocked on, or the question its reply ends with (hover for its recommendation). They're built from its own status report; no agent is involved. A headline older than the thread's latest news isn't shown.
+- **Batched wake-ups.** The conductor agent is woken only for judgement calls. Once the oldest one has waited *Conductor: minutes to collect news* (default 10) and the conductor is idle, it gets one message with everything since. The first wake-up of each day compacts its conversation first, so a permanent thread stays small.
+- **Autopilot: routine PR work, done without an agent.** The plugin itself acts on the routed news:
+  - **Merges.** CI green on a PR whose worker said it merges once checks pass (`after_green: "merge"`, or its status report says so): it merges with the repo's default method, only the commit that went green, never bypassing protection. A refusal goes to the conductor.
+  - **Archives.** A merged PR that was the thread's last open one, meant to merge, archives the thread. With more PRs open, the worker hears about it and carries on.
+  - **Notes.** Green the worker didn't ask about is only noted; nobody is woken.
+  - **Forwards.** What a worker must act on (a closed PR, a watch that ran out, a release) is passed on to it.
+  - **Done for you.** On the home page, *Done for you* lists what autopilot did today and how many wake-ups that spared, costed at each thread's last turn. Archives can be undone.
+- **The conductor (an agent) only gets judgement calls:** a merge GitHub refused, a PR autopilot couldn't handle, anything unusual. When it has something for you, its headline replaces the automatic one for that thread in Now. It never decides product, scope or outward-facing questions for you. `bb jb-flow conductor briefing <workspace-id>` prints its current items.
 - **Permanent.** The thread is hidden from the thread list. Archiving it brings it straight back, and a deleted one is started again at the next wake-up. Preferences you state ("always merge dependency bumps") are kept with its `conductor_memory` tool and included in its instructions.
 - **Only its own workspace.** Its tools (`conductor_inbox`, `fleet_status`, `thread_brief`, `merge_pr`, `rerun_failed`, `forward_to_thread`, `thread_action`, `post_briefing`, `conductor_memory`) are given to conductor threads only. They act only on threads and PRs of its workspace.
-- **Starting one.** Turn on **Conductor** in the settings, then `bb jb-flow conductor start <workspace-id>`. It lives in the workspace's first project unless you pass `--project`, and `--provider` and `--model` pick its agent. `stop` turns routing off and keeps the thread for next time.
+- **The Conductor page.** Each conductor has its own page, reached from the conductors listed in *Done for you* or under *More tools* (JB Flow's sidebar doesn't list it, since the conductor comes to you). It has three tabs:
+  - **Conversation.** Its live conversation, so you can tell it what to do, e.g. `2 go, 4 snooze 3d`: it sends each reply, snoozes or archives, and marks those threads read.
+  - **Threads.** Every thread in the workspace, those that need you first, with PRs and Next/Blocked. A thread opens beside the page.
+  - **Activity.** What the conductor did: merges, reruns, forwards, archives and wake-ups.
+- **Starting one.** Turn on **Conductor** in the settings, then start one under **Settings → Conductors**, on the Conductor page, or with `bb jb-flow conductor start <workspace-id>`.
+  - It lives in the workspace's first project unless you choose another.
+  - Its agent defaults to that project's default; Settings → Conductors or `--provider`/`--model` pick another.
+  - Stopping turns routing off and keeps the thread for next time.
 
 ### Focus tracking (for Stream Deck and scripts)
 - Every BB window reports which thread is focused, including the focused pane in a split view.
@@ -485,7 +492,7 @@ Under **Settings → JB Flow**:
 - **Conductor: minutes to collect news before waking it** (default 10).
 - **Conductor: your instructions**: added to every conductor's instructions, e.g. which PRs it may merge on its own (empty by default).
 - **Advanced config (JSON)**: see below.
-- **Triage lanes**, **Repo commands** and **Area tags** have their own sections.
+- **Triage lanes**, **Repo commands**, **Area tags** and **Conductors** have their own sections.
 
 ## Configuration
 

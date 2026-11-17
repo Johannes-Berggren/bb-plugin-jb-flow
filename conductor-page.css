@@ -1,0 +1,381 @@
+/* The Conductor page. Kind colors come from the theme's status tokens, so the
+   page follows light, dark and custom themes. */
+.jf-cd,
+.jf-cd-page {
+  --cd-decision: var(--primary, #6d5bc2);
+  --cd-blocked: var(--warning, #aa6c16);
+  --cd-ready: var(--success, #28724e);
+  --cd-fyi: var(--muted-foreground, #8a8790);
+  --cd-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+.jf-cd {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.jf-cd-page {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+.jf-cd h1,
+.jf-cd-page h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.jf-cd h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.jf-cd-muted {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-cd-error {
+  margin: 6px 0 0;
+  color: var(--destructive-text, var(--destructive));
+  font-size: 12px;
+}
+.jf-cd-loading {
+  padding: 32px 0;
+  text-align: center;
+}
+/* --- status dots --- */
+.jf-cd-dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--cd-fyi);
+  vertical-align: 1px;
+}
+.jf-cd-dot[data-state="idle"] {
+  background: var(--cd-ready);
+}
+.jf-cd-dot[data-state="working"],
+.jf-cd-dot[data-state="running"] {
+  background: var(--cd-decision);
+  animation: jf-cd-pulse 1.6s ease-in-out infinite;
+}
+.jf-cd-dot[data-state="off"],
+.jf-cd-dot[data-state="cold"],
+.jf-cd-dot[data-state="recent"] {
+  background: color-mix(in oklch, var(--cd-fyi) 55%, transparent);
+}
+.jf-cd-dot[data-state="blocked"],
+.jf-cd-dot[data-state="stalled"] {
+  background: var(--destructive, #b33d4b);
+}
+.jf-cd-dot[data-state="yours"],
+.jf-cd-dot[data-state="go"] {
+  background: var(--cd-decision);
+}
+.jf-cd-dot[data-state="pr"] {
+  background: var(--cd-blocked);
+}
+.jf-cd-dot[data-state="others"],
+.jf-cd-dot[data-state="watched"] {
+  background: color-mix(in oklch, var(--cd-ready) 60%, transparent);
+}
+@keyframes jf-cd-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-cd-dot {
+    animation: none !important;
+  }
+}
+
+/* --- header --- */
+.jf-cd-frame {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.jf-cd-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px;
+}
+.jf-cd-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: var(--cd-decision);
+  background: color-mix(in oklch, var(--cd-decision) 14%, transparent);
+}
+.jf-cd-avatar[data-state="off"] {
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--cd-fyi) 14%, transparent);
+}
+.jf-cd-identity {
+  flex: 1;
+  min-width: 0;
+}
+.jf-cd-identity p {
+  margin: 1px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-cd-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- tabs --- */
+.jf-cd-tabs {
+  border-bottom: 1px solid var(--border);
+}
+.jf-cd-tabs-inner {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+}
+.jf-cd-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 9px;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.jf-cd-tab:hover {
+  color: var(--foreground);
+}
+.jf-cd-tab[aria-selected="true"] {
+  color: var(--foreground);
+}
+.jf-cd-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 6px -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--foreground);
+}
+.jf-cd-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--foreground) 9%, transparent);
+  color: var(--foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* --- body --- */
+.jf-cd-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.jf-cd-body[data-tab="conversation"] {
+  overflow: hidden;
+}
+.jf-cd-fleet,
+.jf-cd-activity {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 12px 16px 24px;
+  outline: none;
+}
+
+/* --- empty states --- */
+.jf-cd-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 40px 16px;
+  text-align: center;
+}
+.jf-cd-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 4px;
+  border-radius: 10px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+.jf-cd-empty-title {
+  margin: 0;
+  font-weight: 600;
+}
+.jf-cd-empty .jf-cd-muted {
+  max-width: 34em;
+  margin: 0;
+}
+
+/* --- threads --- */
+.jf-cd-fleet section,
+.jf-cd-activity section {
+  margin-bottom: 18px;
+}
+.jf-cd-fleet ul,
+.jf-cd-activity ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jf-cd-fleet li {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jf-cd-fleet li .jf-cd-dot {
+  margin-top: 6px;
+}
+.jf-cd-fleet-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.jf-cd-fleet-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.jf-cd-fleet li[data-needs-you] .jf-cd-fleet-title,
+.jf-cd-fleet-title[data-unread] {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.jf-cd-fleet-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.jf-cd-fleet-next {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-cd-fleet-side {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  max-width: 45%;
+}
+.jf-cd-fleet-side .jf-cd-chip[data-attention="checks_failed"],
+.jf-cd-fleet-side .jf-cd-chip[data-attention="changes_requested"],
+.jf-cd-fleet-side .jf-cd-chip[data-attention="conflicts"] {
+  color: var(--destructive-text, var(--destructive));
+}
+.jf-cd-fleet-side .jf-cd-chip[data-attention="ready_to_merge"] {
+  color: var(--cd-ready);
+}
+
+/* --- activity --- */
+.jf-cd-activity li {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+}
+.jf-cd-activity li p {
+  margin: 0;
+}
+.jf-cd-activity-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+.jf-cd-activity-icon [data-icon-root] {
+  width: 13px;
+  height: 13px;
+}
+.jf-cd-activity li[data-kind="merged"] .jf-cd-activity-icon {
+  color: var(--pr-merged, var(--cd-decision));
+  background: color-mix(in oklch, var(--pr-merged, var(--cd-decision)) 12%, transparent);
+}
+.jf-cd-activity li[data-kind="merge-refused"] .jf-cd-activity-icon {
+  color: var(--cd-blocked);
+  background: color-mix(in oklch, var(--cd-blocked) 12%, transparent);
+}
+.jf-cd-activity li[data-yours] .jf-cd-activity-icon {
+  color: var(--cd-ready);
+  background: color-mix(in oklch, var(--cd-ready) 12%, transparent);
+}
+
+/* --- overview and settings --- */
+.jf-cd-overview ul,
+.jf-cd-settings {
+  display: flex;
+  flex-direction: column;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.jf-cd-overview li,
+.jf-cd-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.jf-cd-overview li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jf-cd-overview-name {
+  font-weight: 600;
+}
+.jf-cd-overview li > .jf-cd-muted,
+.jf-cd-settings-row > .jf-cd-muted {
+  flex: 1;
+}
+.jf-cd-settings > li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jf-cd-settings select {
+  padding: 2px 6px;
+  border: 1px solid var(--input, var(--border));
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+}

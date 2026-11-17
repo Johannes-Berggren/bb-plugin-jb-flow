@@ -69,3 +69,32 @@ test("the activity log is per workspace, newest first, and pruned with the inbox
   inbox.prune(15);
   assert.deepEqual(inbox.recentLog("ws").map((entry) => entry.kind), ["archive"]);
 });
+
+test("an event added once gets an id; a retried one doesn't", () => {
+  const inbox = store();
+  const id = inbox.addOne("ws", "thr_a", green, 1);
+  assert.equal(typeof id, "number");
+  assert.equal(inbox.addOne("ws", "thr_a", green, 2), null);
+});
+
+test("the feed lists chosen kinds across workspaces, with what they saved", () => {
+  const inbox = store();
+  inbox.log("ws", "auto-merged", "thr_a", "Merged acme/web-app#12", 10, 900_000);
+  inbox.log("other", "absorbed", "thr_b", "Green on api#3", 20, 1_200_000);
+  inbox.log("ws", "briefing", null, "8 items", 30);
+  inbox.log("ws", "auto-archived", "thr_a", "Archived", 5);
+  const entries = inbox.feed(["auto-merged", "absorbed", "auto-archived"], 8);
+  assert.deepEqual(entries.map((entry) => [entry.workspaceId, entry.kind, entry.savedTokens]), [
+    ["other", "absorbed", 1_200_000],
+    ["ws", "auto-merged", 900_000],
+  ]);
+});
+
+test("open events of retired kinds can be cleared everywhere at once", () => {
+  const inbox = store();
+  inbox.add("ws", "thr_a", [{ kind: "needs-you", text: "a" }, { kind: "merge-refused", text: "b" }], 1);
+  inbox.add("other", "thr_b", [{ kind: "finished", text: "c" }], 1);
+  assert.equal(inbox.ackKinds(["needs-you", "finished"], 5), 2);
+  assert.deepEqual(inbox.open("ws").map((event) => event.kind), ["merge-refused"]);
+  assert.deepEqual(inbox.open("other"), []);
+});

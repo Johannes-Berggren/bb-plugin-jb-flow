@@ -87,7 +87,14 @@ export async function evaluateWatch(
   const name = shortName(watch);
   const notes: CiNote[] = [];
   const note = (kind: CiNoteKind, text: string) =>
-    notes.push({ kind, text, repo: watch.repo, pr: watch.pr, ...(watch.afterGreen ? { afterGreen: watch.afterGreen } : {}) });
+    notes.push({
+      kind,
+      text,
+      repo: watch.repo,
+      pr: watch.pr,
+      ...(watch.afterGreen ? { afterGreen: watch.afterGreen } : {}),
+      ...(kind === "green" || kind === "failed" || kind === "no-checks" ? { headSha: pr.headRefOid } : {}),
+    });
   let done = false;
   let checksReported = false;
 

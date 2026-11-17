@@ -1,6 +1,6 @@
 // The Conductor: one permanent, hidden agent thread per workspace that takes
 // its workers' routine news (CI green, merges, releases, finished turns),
-// does the routine steps itself and leaves the user one briefing.
+// does the routine steps itself and headlines what each thread needs from you.
 //
 // - Routed news lands in the conductor's inbox (conductor-store.ts), and a
 //   minute schedule wakes the conductor with a batch once it's idle.
@@ -10,7 +10,9 @@
 //   respawned at the next wake-up, with its standing preferences.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { handBack } from "./awaiting.ts";
+import { asksUser } from "./awaiting.ts";
+import { decide, followUpsAfterMerge, mergeIntent, nothingLeft, waitsForReview } from "./autopilot.ts";
+import { nextMove } from "./decisions.ts";
 import { isGoneError } from "./ci-watch.ts";
 import { gh as runGh } from "./gh.ts";
 import {
@@ -23,19 +25,20 @@ import {
   conductorInstructions,
   conductorRecordSchema,
   failedRunIds,
-  handBackEvent,
+  briefFromThread,
   mergeFlag,
   relayText,
   wakeDue,
   wakeMessage,
   type Briefing,
+  type BriefingItem,
   type ConductorRecord,
 } from "./conductor-model.ts";
 import type { ConductorInboxEvent, ConductorSink } from "./conductor-routing.ts";
-import type { ConductorStore, StoredConductorEvent } from "./conductor-store.ts";
+import type { ConductorStore } from "./conductor-store.ts";
 import { ballState, reasonLabel, serverNowThread, type NowFlow } from "./now-model.ts";
 import type { PrStatus } from "./prs";
-import { parseStatusReport, type ThreadStatus } from "./thread-status.ts";
+import type { ThreadStatus } from "./thread-status.ts";
 import { workspaceForThread, type WorkspaceState } from "./workspaces.ts";
 
 type ListedThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
@@ -53,8 +56,10 @@ export const CONDUCTOR_TOOLS = [
   "conductor_memory",
 ] as const;
 
-/** Inbox kinds that describe a worker's turn; stale once the user has read the thread or it runs again. */
-const HAND_BACK_KINDS = new Set(["needs-you", "ready", "finished", "input", "turn-failed"]);
+/** What autopilot logs, for the "done for you" feed. */
+export const AUTOPILOT_KINDS = ["auto-merged", "auto-archived", "absorbed", "forwarded", "merge-refused"] as const;
+/** Entries that each spared a worker a wake-up. */
+const SPARED_KINDS: ReadonlySet<string> = new Set(["auto-merged", "auto-archived", "absorbed"]);
 const BUSY = new Set(["active", "starting", "stopping", "pending"]);
 /** Inbox events and log entries older than this are forgotten. */
 export const CONDUCTOR_RETENTION_MS = 14 * 24 * 3_600_000;
@@ -83,6 +88,8 @@ export type ConductorDeps = {
 };
 
 const RECORDS_KEY = "conductors";
+/** bb's own id for the Personal project, the one project whose threads get a plain folder. */
+const PERSONAL_PROJECT_ID = "proj_personal";
 const briefingKey = (workspaceId: string) => `conductorBriefing:${workspaceId}`;
 const memoryKey = (workspaceId: string) => `conductorMemory:${workspaceId}`;
 const RERUNS_KEY = "conductorReruns";
@@ -105,6 +112,13 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     memories.set(workspaceId, (await kv.get<string>(memoryKey(workspaceId))) ?? "");
   }
   await refreshNames().catch((error) => bb.log.warn(`conductor names: ${String(error)}`));
+  // Workers' hand-backs used to wake the conductor, and the page's briefing cards told it what you
+  // did; neither exists any more, so any still waiting from an earlier version would only cost a wake-up.
+  try {
+    deps.store.ackKinds(["needs-you", "ready", "finished", "input", "turn-failed", "user-action"], now());
+  } catch (error) {
+    bb.log.warn(`conductor inbox cleanup: ${String(error)}`);
+  }
 
   let saving: Promise<unknown> = Promise.resolve();
   function save(): Promise<void> {
@@ -115,9 +129,9 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   async function refreshNames() {
     for (const workspace of (await deps.workspaces()).workspaces) names.set(workspace.id, workspace.name);
   }
-  const log = (workspaceId: string, kind: string, threadId: string | null, text: string) => {
+  const log = (workspaceId: string, kind: string, threadId: string | null, text: string, savedTokens: number | null = null) => {
     try {
-      deps.store.log(workspaceId, kind, threadId, text, now());
+      deps.store.log(workspaceId, kind, threadId, text, now(), savedTokens);
     } catch (error) {
       bb.log.warn(`conductor log: ${String(error)}`);
     }
@@ -146,10 +160,120 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     return workspaceId !== null && active(workspaceId) && records[workspaceId]!.threadId !== null ? workspaceId : null;
   }
 
+  // --- autopilot ---------------------------------------------------------------
+  // Routine PR news is handled here, without waking anyone: see autopilot.ts.
+
+  /** The PRs autopilot merged itself ("owner/repo#n" → when), so their merge archives the thread. */
+  const AUTO_MERGED_KEY = "autopilotMerged";
+
+  async function mergePr(repo: string, number: number, headSha?: string): Promise<void> {
+    const info = JSON.parse(await gh(["repo", "view", repo, "--json", "viewerDefaultMergeMethod"])) as { viewerDefaultMergeMethod?: string };
+    // Only the commit that went green: a push since then waits for its own checks.
+    await gh(["pr", "merge", String(number), "-R", repo, mergeFlag(info.viewerDefaultMergeMethod), ...(headSha ? ["--match-head-commit", headSha] : [])], 120_000);
+  }
+
+  /** What waking this thread costs: its last turn's tokens, when bb has them. */
+  async function lastTurnTokens(threadId: string): Promise<number | null> {
+    try {
+      const [row] = await bb.sdk.threads.events.list({ threadId, types: ["thread/tokenUsage/updated"], order: "desc", limit: "1" });
+      const total = (row as { data?: { tokenUsage?: { last?: { totalTokens?: unknown } } } } | undefined)?.data?.tokenUsage?.last?.totalTokens;
+      return typeof total === "number" && total > 0 ? total : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const shortPr = (meta: { repo?: unknown; pr?: unknown }) =>
+    typeof meta.repo === "string" && typeof meta.pr === "number" ? `${meta.repo.split("/")[1]}#${meta.pr}` : "the PR";
+
+  /** Whether the thread's last reply still asks the user something; read in full, only for a merge. */
+  async function stillAsks(threadId: string, kind: string): Promise<boolean> {
+    if (kind !== "merged") return false;
+    const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
+    return asksUser(output.output ?? "");
+  }
+
+  /** One routed event: act on it, or leave it in the inbox for the conductor. */
+  async function autopilot(threadId: string, workspaceId: string, event: ConductorInboxEvent, id: number): Promise<void> {
+    const meta = (event.meta ?? {}) as { repo?: string; pr?: number; afterGreen?: "merge" | "continue" | "nothing"; headSha?: string };
+    const [status, prs, merged] = await Promise.all([
+      deps.threadStatus(threadId).catch(() => null),
+      deps.prsByThread().catch(() => ({}) as Record<string, PrStatus[]>),
+      kv.get<Record<string, number>>(AUTO_MERGED_KEY).then((value) => value ?? {}),
+    ]);
+    const own = prs[threadId] ?? [];
+    const pr = own.find((candidate) => candidate.repo === meta.repo && candidate.number === meta.pr) ?? null;
+    const key = `${meta.repo}#${meta.pr}`;
+    const decision = decide({
+      kind: event.kind,
+      afterGreen: meta.afterGreen,
+      mergeIntent: mergeIntent(status?.report?.next, status?.report?.doingNow, status?.latest),
+      followUps: followUpsAfterMerge(status?.report?.next, status?.report?.doingNow, status?.latest),
+      // A report's Next, or the "Next:" line of a reply that had no full report; and nothing
+      // in the whole reply still asks the user ("Say if you want that reverted").
+      nothingLeft: nothingLeft(status?.report?.next ?? /\bNext:\**\s*(.+)/i.exec(status?.latest ?? "")?.[1]) && !(await stillAsks(threadId, event.kind)),
+      hold: waitsForReview(status?.report?.next, status?.report?.blocked, status?.latest),
+      pr: pr ? { state: pr.state, attention: pr.attention } : null,
+      otherOpenPrs: own.filter((candidate) => candidate !== pr && (candidate.state === "open" || candidate.state === "draft")).length,
+    });
+    const done = (kind: string, text: string, saved: number | null) => {
+      deps.store.ack(workspaceId, [id], now());
+      log(workspaceId, kind, threadId, text, saved);
+      deps.changed();
+    };
+    switch (decision.action) {
+      case "conductor":
+        return; // stays in the inbox for its next wake-up
+      case "record":
+        return done("absorbed", `${event.text} (${decision.reason})`, await lastTurnTokens(threadId));
+      case "forward":
+        await bb.sdk.threads.send({
+          threadId,
+          mode: "queue-if-active",
+          input: [{ type: "text", text: event.kind === "release" ? event.text : `[ci watcher] ${event.text}`, mentions: [] }],
+        });
+        // The worker merges and carries on itself: tell it in the words it was waiting for.
+        return done("forwarded", `${event.text} (${decision.reason})`, null);
+      case "merge": {
+        if (typeof meta.repo !== "string" || typeof meta.pr !== "number") return;
+        // The worker woke up meanwhile (you replied to it): it merges itself.
+        const current = await bb.sdk.threads.get({ threadId }).catch(() => null);
+        if (current && BUSY.has(current.status)) {
+          return done("absorbed", `${event.text} (the worker is running, so it merges itself)`, null);
+        }
+        try {
+          await mergePr(meta.repo, meta.pr, meta.headSha);
+        } catch (error) {
+          // Protection, a required review, a newer push: the conductor briefs the user.
+          log(workspaceId, "merge-refused", threadId, `${shortPr(meta)}: ${String(error).slice(0, 300)}`);
+          deps.store.add(workspaceId, threadId, [{ kind: "merge-refused", text: `Autopilot couldn't merge ${shortPr(meta)}: ${String(error).slice(0, 300)}`, meta }], now());
+          deps.store.ack(workspaceId, [id], now());
+          return;
+        }
+        for (const [old, at] of Object.entries(merged)) if (now() - at > 30 * 24 * 3_600_000) delete merged[old];
+        merged[key] = now();
+        await kv.set(AUTO_MERGED_KEY, merged);
+        return done("auto-merged", `Merged ${shortPr(meta)} once it was green (${decision.reason}).`, await lastTurnTokens(threadId));
+      }
+      case "archive": {
+        const result = await deps.archive([threadId]);
+        if (result.failed.length > 0) return;
+        return done("auto-archived", `${shortPr(meta)} merged and nothing else was open, so the thread is archived.`, await lastTurnTokens(threadId));
+      }
+    }
+  }
+
   const sink: ConductorSink = {
     workspaceFor,
     deliver: async (threadId, workspaceId, events) => {
-      deps.store.add(workspaceId, threadId, events, now());
+      for (const event of events) {
+        // Stored first: a retried delivery finds it and does nothing twice.
+        const id = deps.store.addOne(workspaceId, threadId, event, now());
+        if (id === null) continue;
+        await autopilot(threadId, workspaceId, event, id).catch((error) => {
+          bb.log.warn(`autopilot ${threadId} ${event.kind}: ${String(error)}`);
+        });
+      }
     },
   };
 
@@ -159,7 +283,16 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     const record = records[workspaceId]!;
     const workspace = (await deps.workspaces()).workspaces.find((candidate) => candidate.id === workspaceId);
     if (!workspace) throw new Error(`Workspace ${workspaceId} no longer exists.`);
-    const projectId = record.projectId ?? workspace.projectIds[0] ?? (await bb.sdk.projects.list())[0]?.id;
+    // bb's Personal project takes a plain folder; any other project would give the conductor a git checkout.
+    const personal = await (async () => {
+      try {
+        const project = await bb.sdk.projects.get({ projectId: PERSONAL_PROJECT_ID });
+        return project.kind === "personal" ? project.id : null;
+      } catch {
+        return null;
+      }
+    })();
+    const projectId = record.projectId ?? personal ?? workspace.projectIds[0] ?? (await bb.sdk.projects.list())[0]?.id;
     if (!projectId) throw new Error("Add a project to this workspace first; the conductor lives in one.");
     const memory = memories.get(workspaceId) ?? "";
     const base = {
@@ -227,6 +360,31 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     return { workspaceId, threadId };
   }
 
+  /**
+   * A fresh thread for a workspace's conductor, in bb's Personal project when it exists. The old
+   * thread is archived first (no longer protected), so bb can clean up its folder or checkout.
+   * Its standing preferences and briefing carry over; only the conversation starts anew.
+   */
+  async function restart(workspaceId: string) {
+    if (!deps.options().enabled) throw new Error("Turn on Conductor in the JB Flow settings first.");
+    const record = records[workspaceId];
+    if (!record) throw new Error(`Workspace ${workspaceId} has no conductor.`);
+    const previous = record.threadId;
+    if (previous) byThread.delete(previous);
+    const fresh: ConductorRecord = { ...record, enabled: true, threadId: null };
+    delete fresh.lastWakeAt;
+    delete fresh.compactedOn;
+    records[workspaceId] = fresh;
+    await save();
+    if (previous) {
+      await bb.sdk.threads.archive({ threadId: previous }).catch((error) => bb.log.warn(`conductor restart archive: ${String(error)}`));
+      log(workspaceId, "restarted", previous, "Archived the conductor's old thread to start a fresh one.");
+    }
+    const threadId = await spawn(workspaceId);
+    deps.changed();
+    return { workspaceId, previous, threadId };
+  }
+
   /** Stops routing and waking. The thread stays, so starting again carries on where it left off. */
   async function stop(workspaceId: string) {
     const record = records[workspaceId];
@@ -255,43 +413,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     log(workspaceId, "deleted", thread.id, "The conductor's thread was deleted; a new one starts at the next wake-up.");
   });
 
-  // --- hand-backs ------------------------------------------------------------
-
-  async function addHandBack(threadId: string, event: ConductorInboxEvent | null) {
-    if (event === null) return;
-    const workspaceId = await workspaceFor(threadId).catch(() => null);
-    if (workspaceId !== null) deps.store.add(workspaceId, threadId, [event], now());
-  }
-  bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
-    if (byThread.has(thread.id) || thread.parentThreadId !== null || thread.visibility !== "visible" || !lastAssistantText) return;
-    const report = parseStatusReport(lastAssistantText, 0);
-    await addHandBack(thread.id, handBackEvent(handBack(lastAssistantText), lastAssistantText, report));
-  });
-  bb.events.on("interaction.pending", async ({ thread }) => {
-    if (byThread.has(thread.id) || thread.parentThreadId !== null || thread.visibility !== "visible") return;
-    await addHandBack(thread.id, { kind: "input", text: "Waiting for the user's input (a question or a permission)." });
-  });
-  bb.events.on("thread.failed", async ({ thread, error }) => {
-    if (byThread.has(thread.id) || thread.parentThreadId !== null || thread.visibility !== "visible") return;
-    await addHandBack(thread.id, { kind: "turn-failed", text: `The turn failed: ${(error ?? "no error message").slice(0, 280)}` });
-  });
-
   // --- waking ----------------------------------------------------------------
-
-  /** Hand-backs the user has read since, or whose thread is running again, need no conductor. */
-  async function dropStale(workspaceId: string, events: StoredConductorEvent[]): Promise<StoredConductorEvent[]> {
-    const handBacks = events.filter((event) => HAND_BACK_KINDS.has(event.kind));
-    if (handBacks.length === 0) return events;
-    const threads = new Map((await deps.listThreads()).map((thread) => [thread.id, thread]));
-    const stale = handBacks.filter((event) => {
-      const thread = threads.get(event.threadId);
-      return !thread || BUSY.has(thread.status) || (thread.lastReadAt !== null && thread.lastReadAt >= event.createdAt);
-    });
-    if (stale.length === 0) return events;
-    deps.store.ack(workspaceId, stale.map((event) => event.id), now());
-    const gone = new Set(stale.map((event) => event.id));
-    return events.filter((event) => !gone.has(event.id));
-  }
 
   const titleCache = new Map<string, string>();
   async function titles(): Promise<(threadId: string) => string> {
@@ -302,7 +424,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   type WakeResult = "off" | "nothing" | "waiting" | "busy" | "woken";
   async function wake(workspaceId: string, force = false): Promise<WakeResult> {
     if (!active(workspaceId)) return "off";
-    const events = await dropStale(workspaceId, deps.store.undelivered(workspaceId));
+    const events = deps.store.undelivered(workspaceId);
     if (events.length === 0 && !force) return "nothing";
     const batchMs = Math.max(0, deps.options().batchMinutes) * 60_000;
     if (!force && !wakeDue(events[0]?.createdAt ?? null, now(), batchMs)) return "waiting";
@@ -319,7 +441,9 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
       ...(compact ? { compactFirst: true } : {}),
     });
     deps.store.markDelivered(events.map((event) => event.id), now());
-    records[workspaceId] = { ...record, lastWakeAt: now(), ...(compact ? { compactedOn: day } : {}) };
+    // Every wake-up marks the day: the first one of a day starts it compacted, or (the very
+    // first) with a fresh conversation, so later ones that day leave it alone.
+    records[workspaceId] = { ...record, lastWakeAt: now(), compactedOn: day };
     await save();
     log(workspaceId, "woken", threadId, `Woken with ${events.length} event${events.length === 1 ? "" : "s"}${compact ? " (compacted first)" : ""}.`);
     return "woken";
@@ -442,6 +566,22 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   }
 
   const NEEDS_YOU = new Set(["blocked", "yours", "stalled", "pr", "go"]);
+  /** The workspace's threads for the page's Fleet tab, those that need the user first. */
+  async function fleet(workspaceId: string): Promise<FleetRow[]> {
+    const rows = (await fleetRows(workspaceId)).map(({ thread, ball, reason, status, prs }) => ({
+      threadId: thread.id,
+      title: thread.title ?? thread.titleFallback ?? "Untitled",
+      projectId: thread.projectId,
+      state: ball,
+      reason,
+      needsYou: NEEDS_YOU.has(ball),
+      unread: thread.latestAttentionAt !== null && (thread.lastReadAt ?? 0) < thread.latestAttentionAt,
+      prs: prs.map((pr) => ({ repo: pr.repo, number: pr.number, attention: pr.attention, url: pr.url })),
+      next: status?.report?.next ?? null,
+      blocked: status?.report?.blocked || null,
+    }));
+    return rows.sort((a, b) => Number(b.needsYou) - Number(a.needsYou));
+  }
   tool(
     "fleet_status",
     "Every thread in this workspace: who holds the next move, unread, its open PRs and the Next/Blocked of its last status report. needs_you_only narrows it to threads waiting on the user or with an actionable PR.",
@@ -485,13 +625,14 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
 
   tool(
     "merge_pr",
-    "Merge a workspace thread's PR with the repo's default merge method. Never bypasses branch protection or required reviews: if GitHub refuses, the reason is returned; put it in the briefing.",
+    "Merge a workspace thread's PR with the repo's default merge method, only when its worker said it merges once green and the worker isn't running. Never bypasses branch protection or required reviews: if GitHub refuses, the reason is returned; put it in the briefing.",
     z.object({ repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).describe("owner/name"), number: z.number().int().positive() }),
     async ({ repo, number }, workspaceId) => {
       const { thread } = await prOwner(workspaceId, repo, number);
-      const info = JSON.parse(await gh(["repo", "view", repo, "--json", "viewerDefaultMergeMethod"])) as { viewerDefaultMergeMethod?: string };
+      // A running worker may be merging it this very moment: two merges race and confuse it.
+      if (BUSY.has(thread.status)) throw new Error(`The worker on ${repo}#${number} is running; leave the merge to it.`);
       try {
-        await gh(["pr", "merge", String(number), "-R", repo, mergeFlag(info.viewerDefaultMergeMethod)], 120_000);
+        await mergePr(repo, number);
       } catch (error) {
         log(workspaceId, "merge-refused", thread.id, `${repo}#${number}: ${String(error).slice(0, 300)}`);
         throw new Error(`GitHub didn't merge ${repo}#${number}: ${error instanceof Error ? error.message : String(error)}`);
@@ -600,7 +741,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
 
   tool(
     "post_briefing",
-    "Leave the user the current briefing; it replaces the previous one on the conductor page. items: every thread that needs the user now (not only new ones), each with a short summary, your recommendation and the exact reply to send its worker if they agree. handled: what you did since the last briefing.",
+    "Leave the user the current briefing; it replaces the previous one. Each item's headline becomes that thread's line in the user's Now list, with the summary and recommendation on hover, until the thread has news again. items: threads that need the user's judgement beyond what their worker's own report says, each with a headline (what you need from them, at most 8 words, e.g. \"Pick a chart library\"), a one- or two-sentence summary, your recommendation and the exact reply to send its worker if they agree. handled: what you did since the last briefing.",
     z.object({
       items: z.array(briefingItemSchema.extend({ kind: z.enum(BRIEFING_KINDS) })).max(40),
       handled: z.array(z.object({ threadId: z.string().max(200).nullable(), what: z.string().min(1).max(300) })).max(60).optional(),
@@ -654,15 +795,118 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     return (await kv.get<Briefing>(briefingKey(workspaceId))) ?? null;
   }
 
-  function status() {
-    return Object.entries(records).map(([workspaceId, record]) => ({
+  // The options parse reads the thread's last reply; redo it only when the thread changed.
+  const optionsCache = new Map<string, { updatedAt: number; move: ReturnType<typeof nextMove> }>();
+
+  /**
+   * The conductor's current brief for each thread that needs the user, for
+   * Now's row headlines. A brief older than the thread's latest news is left
+   * out: the conductor hasn't seen what happened since.
+   */
+  async function briefs(): Promise<Brief[]> {
+    if (!deps.options().enabled) return [];
+    const result: Brief[] = [];
+    for (const workspaceId of Object.keys(records)) {
+      if (active(workspaceId)) result.push(...(await workspaceBriefs(workspaceId)));
+    }
+    return result;
+  }
+
+  /**
+   * What each thread in a workspace needs from you, built from the worker's own
+   * words (its status report, or the options and question its reply ends with)
+   * at no cost, with the conductor's own items, when it posted any, on top.
+   */
+  async function workspaceBriefs(workspaceId: string): Promise<Brief[]> {
+    const [rows, current] = await Promise.all([fleetRows(workspaceId), briefing(workspaceId)]);
+    const byThread = new Map<string, Brief>();
+    for (const { thread, ball, status } of rows) {
+      if (!["blocked", "yours", "go", "stalled"].includes(ball) || BUSY.has(thread.status)) continue;
+      const latest = status?.latest ?? "";
+      const move = await movesFor(thread);
+      const pending = thread.hasPendingInteraction ? "input" : thread.status === "error" ? "failed" : null;
+      const item = briefFromThread(thread.id, { ball, report: status?.report ?? null, latest, move, pending });
+      if (item) byThread.set(thread.id, { workspaceId, threadId: thread.id, at: thread.latestAttentionAt ?? status?.latestAt ?? thread.createdAt, item });
+    }
+    // The conductor's judgement items, while they're newer than the thread's own news.
+    const attention = new Map(rows.map(({ thread }) => [thread.id, thread.latestAttentionAt ?? thread.createdAt]));
+    for (const item of current?.items ?? []) {
+      const latest = attention.get(item.threadId);
+      if (latest === undefined || latest > current!.at) continue;
+      byThread.set(item.threadId, { workspaceId, threadId: item.threadId, at: current!.at, item });
+    }
+    return [...byThread.values()];
+  }
+
+  async function movesFor(thread: ListedThread): Promise<ReturnType<typeof nextMove>> {
+    const cached = optionsCache.get(thread.id);
+    if (cached && cached.updatedAt === thread.updatedAt) return cached.move;
+    const output = await bb.sdk.threads.output({ threadId: thread.id }).catch(() => ({ output: null }));
+    const move = nextMove(output.output ?? "");
+    optionsCache.set(thread.id, { updatedAt: thread.updatedAt, move });
+    return move;
+  }
+
+  /** What autopilot did since `since`, every workspace, with totals: the "done for you" feed. */
+  async function feed(since: number) {
+    const entries = deps.store.feed(AUTOPILOT_KINDS, since, 200);
+    const spared = entries.filter((entry) => SPARED_KINDS.has(entry.kind));
+    const titles = new Map((await deps.listThreads()).map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""]));
+    const missing = [...new Set(entries.slice(0, 30).flatMap((entry) => (entry.threadId && !titles.has(entry.threadId) ? [entry.threadId] : [])))];
+    await Promise.all(
+      missing.map(async (threadId) => {
+        const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
+        if (thread) titles.set(threadId, thread.title ?? "");
+      }),
+    );
+    return {
+      since,
+      merged: entries.filter((entry) => entry.kind === "auto-merged").length,
+      archived: entries.filter((entry) => entry.kind === "auto-archived").length,
+      forwarded: entries.filter((entry) => entry.kind === "forwarded").length,
+      refused: entries.filter((entry) => entry.kind === "merge-refused").length,
+      wakeupsSpared: spared.length,
+      tokensSpared: spared.reduce((sum, entry) => sum + (entry.savedTokens ?? 0), 0),
+      entries: entries.slice(0, 30).map((entry) => ({
+        id: entry.id,
+        at: entry.at,
+        kind: entry.kind,
+        workspaceId: entry.workspaceId,
+        workspace: names.get(entry.workspaceId) ?? entry.workspaceId,
+        threadId: entry.threadId,
+        title: entry.threadId ? (titles.get(entry.threadId) ?? "") : "",
+        text: entry.text,
+        savedTokens: entry.savedTokens,
+      })),
+    };
+  }
+
+  /** Everything the conductor page shows for one workspace. */
+  async function page(workspaceId: string) {
+    const record = records[workspaceId] ?? null;
+    const thread = record?.threadId ? await bb.sdk.threads.get({ threadId: record.threadId }).catch(() => null) : null;
+    return {
       workspaceId,
-      name: names.get(workspaceId) ?? workspaceId,
-      ...record,
+      threadId: record?.threadId ?? null,
+      threadStatus: thread?.status ?? null,
       active: active(workspaceId),
+      log: deps.store.recentLog(workspaceId, 60),
       open: deps.store.open(workspaceId, 500).length,
-      undelivered: deps.store.undelivered(workspaceId).length,
-    }));
+      lastWakeAt: record?.lastWakeAt ?? null,
+    };
+  }
+
+  async function status() {
+    return Promise.all(
+      Object.entries(records).map(async ([workspaceId, record]) => ({
+        workspaceId,
+        name: names.get(workspaceId) ?? workspaceId,
+        ...record,
+        active: active(workspaceId),
+        open: deps.store.open(workspaceId, 500).length,
+        undelivered: deps.store.undelivered(workspaceId).length,
+      })),
+    );
   }
 
   return {
@@ -670,11 +914,16 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     configureFor,
     isConductor: (threadId: string) => byThread.has(threadId),
     start,
+    restart,
     stop,
     wake,
     tick,
     status,
     briefing,
+    briefs,
+    feed,
+    fleet,
+    page,
     inbox: (workspaceId: string) => deps.store.open(workspaceId),
     log: (workspaceId: string, limit?: number) => deps.store.recentLog(workspaceId, limit),
     prune: () => deps.store.prune(now() - CONDUCTOR_RETENTION_MS),
@@ -682,3 +931,19 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
 }
 
 export type Conductor = Awaited<ReturnType<typeof createConductor>>;
+
+/** What one thread needs from you, for Now's row headlines. */
+export type Brief = { workspaceId: string; threadId: string; at: number; item: BriefingItem };
+
+export type FleetRow = {
+  threadId: string;
+  title: string;
+  projectId: string;
+  state: string;
+  reason: string;
+  needsYou: boolean;
+  unread: boolean;
+  prs: Array<{ repo: string; number: number; attention: string; url: string }>;
+  next: string | null;
+  blocked: string | null;
+};
