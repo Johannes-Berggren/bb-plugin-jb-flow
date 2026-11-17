@@ -39,6 +39,7 @@ import {
   DialogDescription,
 } from "./components/ui/dialog";
 import { WORKSPACE_BAR_EVENT } from "./workspace-topbar";
+import { PaneStrip } from "./pane-strip";
 import { createSwipeTracker, swipeTarget, workspaceTabOrder, type SwipeTab } from "./workspace-swipe";
 import "./workspaces.css";
 
@@ -280,6 +281,7 @@ function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInf
           Retry workspaces
         </button>
       )}
+      <PaneStrip state={state} threads={threads} />
     </header>
   );
 }

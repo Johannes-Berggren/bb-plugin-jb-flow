@@ -13,6 +13,8 @@ const SCROLLER = "#split-workspace-main-panel > div";
 /** BB measures a divider drag once, at pointer-down. */
 const DRAGGING = "#split-workspace-main-panel [data-dragging]";
 const MAXIMIZED = '#split-workspace-main-panel [data-split-pane-id][data-maximized="true"]';
+/** On a page load BB draws a saved split a little after the plugin starts; look for it this many frames. */
+const FRAMES_TO_WAIT = 180;
 
 type Focused = { key: string; x: number; width: number };
 type Preference = { width: number | null; focused: Focused | null };
@@ -66,8 +68,13 @@ export function mountSplitScroll({ signal }: { signal: AbortSignal }) {
   const settle = (reveal: "smooth" | "auto" | null) => {
     owed = reveal ?? owed;
     cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => {
+    let waited = 0;
+    const look = () => {
       const scroller = measure();
+      if (!scroller && on() && waited++ < FRAMES_TO_WAIT) {
+        frame = requestAnimationFrame(look);
+        return;
+      }
       watchSizes(scroller);
       const behavior = owed;
       owed = null;
@@ -80,7 +87,8 @@ export function mountSplitScroll({ signal }: { signal: AbortSignal }) {
         scrollLeft: scroller.scrollLeft,
       });
       if (left !== Math.round(scroller.scrollLeft)) scroller.scrollTo({ left, behavior });
-    });
+    };
+    frame = requestAnimationFrame(look);
   };
   const watchAttributes = (enabled: boolean) => {
     if (!enabled) {

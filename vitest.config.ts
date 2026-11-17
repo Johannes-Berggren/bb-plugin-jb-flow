@@ -12,6 +12,7 @@ export default defineConfig({
       "shell-appearance.ui.test.tsx",
       "pane-appearance.ui.test.tsx",
       "split-scroll.ui.test.tsx",
+      "pane-strip.ui.test.tsx",
       "live-activity.ui.test.tsx",
       "timeline-activity.ui.test.tsx",
       "inline-code-copy.ui.test.tsx",

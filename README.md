@@ -212,6 +212,15 @@ pane-focus keys, brings it into view. Your pane proportions and BB's dividers
 keep working, so dragging a divider can still make one pane narrower than the
 minimum, and the side panel stays in place.
 
+With **Pane strip in the workspace bar** on (the default, and it needs
+Workspaces on), the far end of the workspace bar lists the open panes while a
+split is open: one chip per pane, left to right, with its workspace's color, the
+thread's title and a dot for what it is doing (working, waiting on you, stopped
+with an error, finished and unread, or idle). The focused pane's chip is
+outlined and the chips of the panes on screen are lit, so a thread that needs
+you is visible even when its pane is scrolled out of view. Click a chip to go
+to its pane.
+
 - BB opens at most eight panes in a split; this setting doesn't change that.
 - The split fits the window again while a pane is maximized, and returns to
   the focused pane when you restore it.
@@ -512,6 +521,7 @@ Under **Settings → JB Flow**:
 - **Frame the active split pane**: a frame on the active pane in a split, and each pane's workspace color (on by default).
 - **Scroll split panes sideways**: a split with more panes than fit scrolls sideways instead of squeezing them (on by default).
 - **Minimum pane width**: the width each pane of a scrolling split gets, in pixels (640).
+- **Pane strip in the workspace bar**: one chip per open split pane with its color, title and state; click to go to it (on by default).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **Swipe between workspaces**: a two-finger sideways swipe on the sidebar moves to the next or previous workspace tab, and the sidebar slides as the workspace changes (off by default).
