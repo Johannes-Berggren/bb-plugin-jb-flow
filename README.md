@@ -16,7 +16,7 @@ On by default (turn off under Settings → JB Flow → **Workspaces**). Choose *
 if another navigation provider is pinned. A new install has no workspaces yet: the bar shows **Create your first workspace**, which
 opens a form to name it and pick its projects. After that your workspaces, plus **All** and
 **No workspace**, appear as tabs (**+** adds another, the gear manages them) across the top of the BB window and filter its threads, sections
-and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention. With **Now and Focus** on, a second number replaces the dot when threads in that tab's Now are waiting on you right now: blocked, your answer, or overdue. So work in another tab stays visible.
+and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention. With **Now and Focus** on, a second number replaces the dot when threads in that tab's Now are waiting on you right now: blocked, your answer, or overdue. So work in another tab stays visible. A subthread that needs you counts on its own for the dot and the number, as in the Triage list's chips, but isn't added to the total. It goes with its row: not counted while the row is snoozed, and out of Now while the row is pinned.
 Hover a tab for both counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
 uses its first available project. Opening a thread from another workspace
@@ -452,7 +452,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   | Shortcut | Command |
   |---|---|
   | Alt+Shift+S | Snooze this thread |
-  | Alt+Shift+N | Open the next thread that needs me. With **Now and Focus** on, it steps through Now in order from the thread you're on, across every workspace, because threads stay in Now after you read them |
+  | Alt+Shift+N | Open the next thread that needs me. With **Now and Focus** on, it steps through Now in order from the thread you're on, across every workspace, because threads stay in Now after you read them. A subthread that needs you is opened itself, in the order the list shows it: under its parent's row, after the parent if the parent is in Now too |
   | Alt+Shift+O | Open what needs me side by side, as split panes (see Split panes) |
   | Alt+Shift+F | Add this thread to Focus, or remove it |
   | Alt+Shift+E | Archive and open the next one (a pinned thread is left as is) |
@@ -511,9 +511,9 @@ A conductor is a permanent agent thread that looks after one workspace. Its work
   - `bb jb-flow decisions` lists the numbered options it's waiting on (the Stream Deck turns them into keys)
   - `bb jb-flow tell <text>` sends a message to it
   - `bb jb-flow stop` stops its run
-  - `bb jb-flow needs-me` lists threads waiting on you
+  - `bb jb-flow needs-me` lists threads waiting on you, subthreads included
   - `bb jb-flow next` opens the next waiting thread
-  - `bb jb-flow now` lists Now in order, with what's Moving
+  - `bb jb-flow now` lists Now in the Triage list's order (a row's subthreads right after it), with what's Moving
 - `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script. With **Now and Focus** on, it also has `now`: the count and the top thread. `focused.workspace` is the focused thread's workspace: its `id`, `name`, `color` name and the same color as `hex`, for a key that should wear it (null outside a workspace; `color` and `hex` are null when the workspace has none).
 
 ## Install

@@ -416,6 +416,32 @@ describe("Now and Focus", () => {
     expect(tab.getAttribute("aria-description")).not.toContain("waiting on you");
   });
 
+  it("a workspace tab counts a subthread that's waiting on you, as Now does, but not as a thread of its own", async () => {
+    const slot = await mountBar(
+      { nowQueue: true },
+      [
+        thread("parent"),
+        thread("child", { parentThreadId: "parent", hasPendingInteraction: true }),
+        // A subthread goes with its row: a pinned row keeps it out of Now, a snoozed one out of the tab.
+        thread("pinned", { isPinned: true, pinnedAt: NOW }),
+        thread("pinned-child", { parentThreadId: "pinned", hasPendingInteraction: true }),
+        thread("sleeper", { sectionId: "snoozed" }),
+        thread("sleeper-child", { parentThreadId: "sleeper", hasPendingInteraction: true }),
+      ],
+      { snoozedSectionId: "snoozed" },
+    );
+    const tab = await slot.findByRole("tab", { name: "Acme" });
+    await waitFor(() => expect(tab.querySelector(".jf-workspace-needs-you")?.textContent).toBe("1"));
+    expect(tab.getAttribute("aria-description")).toBe("2 threads · 2 need attention · 1 waiting on you now");
+  });
+
+  it("with the setting off, a subthread that needs you lights its tab's dot", async () => {
+    const slot = await mountBar({ nowQueue: false }, [thread("parent"), thread("child", { parentThreadId: "parent", hasPendingInteraction: true })], {});
+    const tab = await slot.findByRole("tab", { name: "Acme" });
+    await waitFor(() => expect(tab.querySelector(".jf-workspace-attention")).not.toBeNull());
+    expect(tab.getAttribute("aria-description")).toBe("1 thread · 1 needs attention");
+  });
+
   it("a Now row keeps its title readable: its chip truncates and its tags move to the hover card", async () => {
     const slot = await mount({
       threads: [thread("asked", { latestAttentionAt: NOW - 18 * HOUR }), thread("lane")],

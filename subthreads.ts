@@ -117,3 +117,43 @@ export function arrowAction(
   if (open) return "fold";
   return row.hasParent ? "parent" : null;
 }
+
+/**
+ * Every thread in these rows' trees, each with the row it sits under (itself for
+ * a row): rows in the order given, each followed by its subthreads depth first.
+ * A subthread goes with its row's pin, snooze and workspace, so callers ask the row.
+ */
+export function withRows<T extends Node>(rows: readonly T[], trees: ReadonlyMap<string, readonly T[]>): Array<{ thread: T; row: T }> {
+  return rows.flatMap((row) => (trees.get(row.id) ?? [row]).map((thread) => ({ thread, row })));
+}
+
+/**
+ * A flat thread list as the Triage list draws it: its rows (`topLevel`), each
+ * row's tree (`treesOf`) and every thread with its row (`withRows`). Subthreads
+ * keep the order given. For the server and the workspace tabs, which start from
+ * a plain list.
+ */
+export function forest<T extends Node>(threads: readonly T[]) {
+  const rows = topLevel(threads);
+  const trees = treesOf(rows, childrenByParent(threads));
+  return { rows, trees, members: withRows(rows, trees) };
+}
+
+/**
+ * Ids in the order a list that draws subthreads under their row shows them:
+ * grouped by row, the rows in the order their first id comes up, and each row's
+ * ids in tree order (the row, then its subthreads depth first). Ids outside
+ * every tree keep their place. Duplicates go.
+ */
+export function inRowOrder<T extends Node>(ids: readonly string[], trees: ReadonlyMap<string, readonly T[]>): string[] {
+  const place = new Map<string, { rowId: string; index: number }>();
+  for (const [rowId, members] of trees) members.forEach((member, index) => place.set(member.id, { rowId, index }));
+  const groups = new Map<string, string[]>();
+  for (const id of ids) {
+    const key = place.get(id)?.rowId ?? id;
+    const group = groups.get(key);
+    if (!group) groups.set(key, [id]);
+    else if (!group.includes(id)) group.push(id);
+  }
+  return [...groups.values()].flatMap((group) => group.sort((a, b) => (place.get(a)?.index ?? 0) - (place.get(b)?.index ?? 0)));
+}
