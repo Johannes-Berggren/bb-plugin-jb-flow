@@ -42,6 +42,7 @@
     "snooze.ts",
     "stale-digest.ts",
     "wakeups.ts",
+    "pr-ci.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",
