@@ -1,0 +1,43 @@
+/* A split that scrolls sideways instead of squeezing its panes. Every rule sits
+   under the content-script class, which is only set while a split is open and
+   the setting is on. The selectors follow BB's own DOM and are
+   version-sensitive: when they don't match, BB's fit-to-window split is what
+   you get. The side panel is a sibling of the scrolled element and stays put. */
+.jb-flow-split-scroll #split-workspace-main-panel > div {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--foreground) 22%, transparent) transparent;
+}
+/* The child combinators pick the outermost split only, not nested ones. As a
+   min-width it does nothing while the panes already fit. */
+.jb-flow-split-scroll #split-workspace-main-panel > div > [data-split-resize-grid-root] {
+  min-width: var(--jb-flow-split-min-width);
+}
+.jb-flow-split-scroll #split-workspace-main-panel [data-split-pane-id] {
+  scroll-snap-align: start;
+}
+/* A maximized pane is placed against the scrolled element, so it must not be wider than the view. */
+.jb-flow-split-scroll #split-workspace-main-panel > div:has([data-split-pane-id][data-maximized="true"]) > [data-split-resize-grid-root] {
+  min-width: 0;
+}
+/* BB measures a divider drag once, at pointer-down. Hold the strip still until it ends. */
+.jb-flow-split-scroll #split-workspace-main-panel > div:has([data-dragging]) {
+  overflow-x: hidden;
+  scroll-snap-type: none;
+}
+/* BB pins its side-panel toggle to the split's top right corner, and only the
+   last pane leaves room for it. While the strip is wider than the view any
+   pane of the top row can sit under it, so the others leave room too. */
+.jb-flow-split-overflow [data-testid="split-workspace-panel-toggle"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-row > div:not(:last-child) [data-testid="app-page-header-content-row"],
+.jb-flow-split-overflow [data-testid="split-workspace-panel-toggle"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-col > div:first-child > [data-split-resize-grid-root].flex-row > div:not(:last-child) [data-testid="app-page-header-content-row"] {
+  padding-right: calc(var(--bb-title-bar-control-size, 28px) + 4px);
+}
+/* The same on the left: with the sidebar collapsed, BB's first pane leaves room
+   for what sits over the split's top left corner. The others follow. */
+.jb-flow-split-overflow [data-side="left"][data-collapsible="offcanvas"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-row > div:not(:first-child) [data-testid="app-page-header-content-row"],
+.jb-flow-split-overflow [data-side="left"][data-collapsible="offcanvas"] ~ * #split-workspace-main-panel > div > [data-split-resize-grid-root].flex-col > div:first-child > [data-split-resize-grid-root].flex-row > div:not(:first-child) [data-testid="app-page-header-content-row"] {
+  padding-left: 32px;
+}

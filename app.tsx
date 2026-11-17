@@ -23,6 +23,7 @@ import { Glyph } from "@/components/ui/glyph";
 import { cn } from "@/lib/utils";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { mountPaneAppearance, PaneAppearancePreference } from "./pane-appearance";
+import { mountSplitScroll, SplitScrollPreference } from "./split-scroll";
 import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 import { TabSwitcherHost } from "./tab-switcher";
@@ -237,6 +238,8 @@ export default definePluginApp((app) => {
   app.slots.experimental_appOverlay({ id: "shell-appearance-preference", component: ShellAppearancePreference });
   app.contentScripts.register({ id: "pane-appearance", mount: mountPaneAppearance });
   app.slots.experimental_appOverlay({ id: "pane-appearance-preference", component: PaneAppearancePreference });
+  app.contentScripts.register({ id: "split-scroll", mount: mountSplitScroll });
+  app.slots.experimental_appOverlay({ id: "split-scroll-preference", component: SplitScrollPreference });
   app.slots.navPanel({
     id: "catch-up",
     title: "Catch up",

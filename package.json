@@ -60,7 +60,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts gh.test.ts thread-list.test.ts ci-watch.test.ts autopilot.test.ts conductor-model.test.ts conductor.test.ts conductor-routing.test.ts conductor-store.test.ts snooze-wake.test.ts awaiting.test.ts decisions.test.ts releases.test.ts release-delivery.test.ts unreleased.test.ts lanes.test.ts sidebar-groups.test.ts subthreads.test.ts workspace-swipe.test.ts needs-me.test.ts now-model.test.ts now-store.test.ts palette-model.test.ts tab-switcher-model.test.ts catch-up-model.test.ts plan-model.test.ts next-needs-me.test.ts generic.test.ts; status=$?; npm run test:ui && exit $status",
+    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts gh.test.ts thread-list.test.ts ci-watch.test.ts autopilot.test.ts conductor-model.test.ts conductor.test.ts conductor-routing.test.ts conductor-store.test.ts snooze-wake.test.ts awaiting.test.ts decisions.test.ts releases.test.ts release-delivery.test.ts unreleased.test.ts lanes.test.ts sidebar-groups.test.ts subthreads.test.ts workspace-swipe.test.ts needs-me.test.ts now-model.test.ts now-store.test.ts palette-model.test.ts tab-switcher-model.test.ts split-scroll-model.test.ts catch-up-model.test.ts plan-model.test.ts next-needs-me.test.ts generic.test.ts; status=$?; npm run test:ui && exit $status",
     "test:ui": "vitest run"
   },
   "license": "MIT",
