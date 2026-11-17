@@ -36,6 +36,7 @@
     "when.ts",
     "server.ts",
     "local-config.ts",
+    "changes.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",

@@ -23,6 +23,7 @@ import { laneSections } from "./lanes";
 import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { loadLocalConfig, readLocalConfigFile } from "./local-config";
+import { createChanges } from "./changes";
 import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
 import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
@@ -39,7 +40,6 @@ import { approvePlan, planModels } from "./plan-model";
 import { nextNeedsMe } from "./next-needs-me";
 
 const SNOOZED_SECTION_NAME = "😴 Snoozed";
-const CHANGED = "jb-flow-changed";
 const DAY_MS = 86_400_000;
 
 const snoozeSchema = z.object({
@@ -576,53 +576,7 @@ export default async function plugin(bb: BbPluginApi) {
   async function getKept(): Promise<Record<string, number>> {
     return (await bb.storage.kv.get<Record<string, number>>("kept")) ?? {};
   }
-  // One thread event can change several stores within milliseconds; publish
-  // once after they settle so every window refetches once, not four times.
-  // Async work can finish after a reload disposed this instance; publishing on
-  // the stale handle throws inside a timer, which takes the whole BB server down.
-  let publishTimer: ReturnType<typeof setTimeout> | null = null;
-  let disposed = false;
-  function changed() {
-    if (disposed) return;
-    bumpDeck();
-    if (publishTimer !== null) return;
-    publishTimer = setTimeout(() => {
-      publishTimer = null;
-      if (disposed) return;
-      try {
-        bb.realtime.publish(CHANGED, {});
-      } catch (error) {
-        bb.log.warn(`publish failed: ${String(error)}`);
-      }
-    }, 250);
-  }
-  bb.onDispose(() => {
-    disposed = true;
-    if (publishTimer !== null) clearTimeout(publishTimer);
-  });
-
-  // The Stream Deck long-polls `deck --wait <version>`: the call returns as soon
-  // as something it shows may have changed (focus, a thread starting/stopping,
-  // plugin state), so switching threads updates the keys at once.
-  let deckVersion = 0;
-  const deckWaiters = new Set<() => void>();
-  function bumpDeck() {
-    deckVersion += 1;
-    for (const wake of deckWaiters) wake();
-    deckWaiters.clear();
-  }
-  function waitForDeckChange(version: number, timeoutMs: number): Promise<void> {
-    if (version !== deckVersion) return Promise.resolve();
-    return new Promise((resolve) => {
-      const done = () => {
-        clearTimeout(timer);
-        deckWaiters.delete(done);
-        resolve();
-      };
-      const timer = setTimeout(done, timeoutMs);
-      deckWaiters.add(done);
-    });
-  }
+  const { changed, bumpDeck, waitForDeckChange, deckVersion } = createChanges(bb);
   // A thread starting or stopping changes counts too: drop the cached list.
   const onThreadState = ({ thread }: { thread: { id: string } }) => {
     threadListCache = null;
@@ -632,9 +586,6 @@ export default async function plugin(bb: BbPluginApi) {
   };
   bb.events.on("thread.active", onThreadState);
   bb.events.on("thread.idle", onThreadState);
-  bb.onDispose(() => {
-    for (const wake of deckWaiters) wake();
-  });
 
   // The Snoozed section is created by the first snooze, not on install, so
   // people who never snooze don't get an empty section. Looked up by name and
@@ -1874,7 +1825,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             // --wait <version>: block (max 25s) until something changes, then answer.
             const waitIndex = argv.indexOf("--wait");
             if (waitIndex !== -1) await waitForDeckChange(Number(argv[waitIndex + 1]), 25_000);
-            const version = deckVersion;
+            const version = deckVersion();
             return { exitCode: 0, stdout: JSON.stringify({ version, ...(await deckSnapshot()) }) };
           }
           case "pr-radar": {
