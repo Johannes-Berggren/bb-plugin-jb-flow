@@ -88,7 +88,14 @@ const workspaceState: WorkspaceState = {
   threadWorkspaces: {},
 };
 
-async function mount(options: { settings?: Record<string, unknown>; workspaces?: WorkspaceState } = {}) {
+async function mount(
+  options: {
+    settings?: Record<string, unknown>;
+    workspaces?: WorkspaceState;
+    threadId?: string | null;
+    splitLayout?: { panes: { paneId: string; threadId: string | null; isFocused: boolean }[] };
+  } = {},
+) {
   const app = await loadPluginApp(() => import("./app"));
   const overlay = app.appOverlays.find((item) => item.id === "tab-switcher")!;
   return renderSlot(
@@ -101,7 +108,10 @@ async function mount(options: { settings?: Record<string, unknown>; workspaces?:
         workspaces_get: () => options.workspaces ?? { workspaces: [], threadWorkspaces: {} },
       } as never,
       sidebarThreads: { status: "ready", threads, projects, sections: [] },
-      context: { threadId: "a" },
+      context: { threadId: options.threadId === undefined ? "a" : options.threadId },
+      sidebarSplitLayout: options.splitLayout
+        ? { panes: options.splitLayout.panes.map((pane) => ({ ...pane, rect: { x: 0, y: 0, width: 0.5, height: 1 } })) }
+        : null,
       sdk: { subscribe: (() => () => {}) as never },
       realtimeConnectionState: "connected",
     },
@@ -154,6 +164,28 @@ describe("Ctrl+Tab switcher", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("with splits, the focused pane's thread is the current one", async () => {
+    const slot = await mount({
+      splitLayout: {
+        panes: [
+          { paneId: "left", threadId: "a", isFocused: false },
+          { paneId: "right", threadId: "b", isFocused: true },
+        ],
+      },
+    });
+    await waitFor(() => expect(ctrl()).toBe(true));
+    release();
+    // b is where you are; the quick flip goes to the last other thread, not back to b.
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "c" });
+  });
+
+  it("on a page that isn't a thread, a quick tap opens the thread viewed last", async () => {
+    const slot = await mount({ threadId: null });
+    await waitFor(() => expect(ctrl()).toBe(true));
+    release();
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "c" });
+  });
+
   it("Shift+Tab steps back, wrapping to the oldest", async () => {
     const slot = await mount();
     await waitFor(() => expect(ctrl()).toBe(true));
@@ -161,6 +193,19 @@ describe("Ctrl+Tab switcher", () => {
     expect(ctrl("Tab", { shiftKey: true })).toBe(true);
     release();
     expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "d" });
+  });
+
+  it("pressing Shift while it's open keeps it open, and Ctrl+Shift+Tab steps back", async () => {
+    const slot = await mount();
+    await waitFor(() => expect(ctrl()).toBe(true));
+    ctrl("Tab");
+    // Shift goes down first, on its own: that mustn't close the switcher.
+    expect(ctrl("Shift", { code: "ShiftLeft", shiftKey: true })).toBe(false);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    expect(ctrl("Tab", { shiftKey: true })).toBe(true);
+    release();
+    // Opened on index 1 (c), Tab to 2 (b), ⇧Tab back to 1 (c).
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "c" });
   });
 
   it("Escape cancels without opening anything", async () => {
