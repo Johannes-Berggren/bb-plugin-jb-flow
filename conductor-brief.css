@@ -216,3 +216,39 @@ button.jf-brief-icon:hover {
   font-size: 11px;
   text-align: center;
 }
+
+/* Phones: the brief is a single compact line over the thread. The icon stays small
+   because it still opens the conductor, the "all the steps" line goes, and the
+   headline stops after two lines. */
+@media (max-width: 640px) {
+  .jf-brief {
+    gap: 8px;
+    margin: 6px 0 2px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.35;
+  }
+  .jf-brief-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+  }
+  .jf-brief-icon [data-icon-root] {
+    width: 11px;
+    height: 11px;
+  }
+  .jf-brief-rec {
+    display: none;
+  }
+  .jf-brief-headline {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .jf-brief-send {
+    padding: 2px 8px;
+    font-size: 11.5px;
+  }
+}
