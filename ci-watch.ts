@@ -1,6 +1,7 @@
 // The CI and review watcher's decisions, apart from gh and bb so they can be
 // tested: what a watch should report, when it ends, and that a wake-up is only
 // forgotten once its message has really been sent. watchers.ts wires it up.
+import { splitNotes, type AfterGreen, type CiNote, type CiNoteKind } from "./conductor-routing.ts";
 
 /** How long to wait for checks. */
 export const CI_TIMEOUT_MS = 3 * 3_600_000;
@@ -37,6 +38,8 @@ export type CiWatch = {
   lastCheckedAt?: number;
   /** Failed attempts to send this watch's current news. */
   sendFailures?: number;
+  /** What the worker does once checks pass; decides whether green wakes it or its conductor. */
+  afterGreen?: AfterGreen;
 };
 
 export type PrState = {
@@ -65,7 +68,7 @@ const shortName = (watch: Pick<CiWatch, "repo" | "pr">) => `${watch.repo.split("
 export type WatchEvaluation = {
   /** The watch's new state. The input is left untouched, so a failed send can retry from it. */
   watch: CiWatch;
-  notes: string[];
+  notes: CiNote[];
   /** The watch has nothing left to wait for. */
   done: boolean;
   /** There's news to send. */
@@ -82,12 +85,14 @@ export async function evaluateWatch(
 ): Promise<WatchEvaluation> {
   const watch: CiWatch = { ...original };
   const name = shortName(watch);
-  const notes: string[] = [];
+  const notes: CiNote[] = [];
+  const note = (kind: CiNoteKind, text: string) =>
+    notes.push({ kind, text, repo: watch.repo, pr: watch.pr, ...(watch.afterGreen ? { afterGreen: watch.afterGreen } : {}) });
   let done = false;
   let checksReported = false;
 
   if (pr.state !== "OPEN") {
-    notes.push(`PR ${name} is now ${pr.state.toLowerCase()}.`);
+    note(pr.state === "MERGED" ? "merged" : "closed", `PR ${name} is now ${pr.state.toLowerCase()}.`);
     done = true;
   }
   // A new push restarts the checks; keep waiting on the new head. Reviews keep
@@ -108,10 +113,10 @@ export async function evaluateWatch(
     if (checks.length > 0 && checks.every((check) => !check.pending)) {
       const failed = checks.filter((check) => !check.ok);
       if (failed.length === 0) {
-        notes.push(`✅ CI is green on ${name} (${pr.headRefOid.slice(0, 7)}): ${checks.length} checks passed.`);
+        note("green", `✅ CI is green on ${name} (${pr.headRefOid.slice(0, 7)}): ${checks.length} checks passed.`);
       } else {
         const log = await failedLog(failed[0]!.url, watch.repo);
-        notes.push(`❌ CI failed on ${name} (${pr.headRefOid.slice(0, 7)}): ${failed.map((check) => check.name).join(", ")}.${log}`);
+        note("failed", `❌ CI failed on ${name} (${pr.headRefOid.slice(0, 7)}): ${failed.map((check) => check.name).join(", ")}.${log}`);
       }
       // "both" keeps listening for reviews (review bots often answer after CI).
       if (watch.watchFor === "both") {
@@ -120,7 +125,7 @@ export async function evaluateWatch(
         checksReported = true;
       } else done = true;
     } else if (checks.length === 0 && now - watch.since > NO_CHECKS_AFTER_MS) {
-      notes.push(`${name} has no CI checks after 10 minutes; nothing to wait for.`);
+      note("no-checks", `${name} has no CI checks after 10 minutes; nothing to wait for.`);
       if (watch.watchFor === "both") {
         watch.watchFor = "reviews";
         watch.quiet = true;
@@ -136,21 +141,22 @@ export async function evaluateWatch(
     const reviews = pr.reviews.filter((review) => Date.parse(review.submittedAt) > cutoff && human(review.author, review.body));
     const comments = pr.comments.filter((comment) => Date.parse(comment.createdAt) > cutoff && human(comment.author, comment.body));
     for (const review of reviews) {
-      notes.push(`Review from ${review.author?.login ?? "someone"}: ${review.state}${review.body ? ` — ${truncate(review.body, 800)}` : ""}`);
+      note(review.state === "CHANGES_REQUESTED" ? "changes-requested" : "review", `Review from ${review.author?.login ?? "someone"}: ${review.state}${review.body ? ` — ${truncate(review.body, 800)}` : ""}`);
     }
     for (const comment of comments) {
-      notes.push(`Comment from ${comment.author?.login ?? "someone"}: ${truncate(comment.body, 800)}`);
+      note("comment", `Comment from ${comment.author?.login ?? "someone"}: ${truncate(comment.body, 800)}`);
     }
     if (reviews.length + comments.length > 0) {
       reviewNews = true;
-      notes.push(`Full comments: \`gh pr view ${watch.pr} -R ${watch.repo} --comments\`; inline: \`gh api repos/${watch.repo}/pulls/${watch.pr}/comments\``);
+      note("review-hint", `Full comments: \`gh pr view ${watch.pr} -R ${watch.repo} --comments\`; inline: \`gh api repos/${watch.repo}/pulls/${watch.pr}/comments\``);
       // Reviews only: done. Both: report now, keep watching the checks.
       if (watch.watchFor === "reviews") done = true;
     }
   }
 
   if (!done && now - watch.since > watchTimeoutMs(watch)) {
-    notes.push(
+    note(
+      "timeout",
       watch.watchFor === "reviews"
         ? `No review on ${name} after 7 days; stopped watching. Call wait_for_ci again if you still need one. ${pr.url}`
         : `Still waiting on ${name} after 3 hours; stopped watching. ${pr.url}`,
@@ -180,6 +186,13 @@ export type CiCycle = {
   me: () => Promise<string>;
   failedLog: (detailsUrl: string | undefined, repo: string) => Promise<string>;
   send: (threadId: string, text: string) => Promise<unknown>;
+  /**
+   * The workspace whose conductor hears this thread's routine news, or null
+   * for none (the worker hears everything, as before). Optional for the same.
+   */
+  conductorFor?: (threadId: string) => Promise<string | null>;
+  /** Hands routine news to the conductor's inbox. Delivering the same notes twice must be harmless. */
+  toConductor?: (threadId: string, workspaceId: string, notes: CiNote[]) => Promise<unknown>;
   /** True only when the thread is known to be archived or deleted, not on a lookup failure. */
   threadGone: (threadId: string) => Promise<boolean>;
   warn: (message: string) => void;
@@ -212,7 +225,7 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
   const { watches } = cycle;
   const changes = new Map<string, CiWatch | null>();
   // One message per thread per cycle, however many of its PRs have news.
-  const outbox = new Map<string, { notes: string[]; staged: Map<string, CiWatch | null>; stillWatching: boolean }>();
+  const outbox = new Map<string, { notes: CiNote[]; staged: Map<string, CiWatch | null>; stillWatching: boolean }>();
   const stage = (threadId: string) => {
     const entry = outbox.get(threadId) ?? { notes: [], staged: new Map<string, CiWatch | null>(), stillWatching: false };
     outbox.set(threadId, entry);
@@ -253,7 +266,7 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
       // gh missing, logged out or the PR gone: give up after the usual limit, and say so.
       if (now - watch.since > watchTimeoutMs(watch)) {
         const entry = stage(watch.threadId);
-        entry.notes.push(`Couldn't read ${shortName(watch)} from GitHub; stopped watching it.`);
+        entry.notes.push({ kind: "unreadable", text: `Couldn't read ${shortName(watch)} from GitHub; stopped watching it.`, repo: watch.repo, pr: watch.pr });
         entry.staged.set(key, null);
       } else {
         changes.set(key, { ...watch, lastCheckedAt: now });
@@ -286,7 +299,14 @@ export async function runCiCycle(cycle: CiCycle): Promise<Map<string, CiWatch | 
         ? `\n\n(Still watching ${others} PR${others === 1 ? "" : "s"}; you'll get another message when there's news.)`
         : "";
     try {
-      await cycle.send(threadId, `[ci watcher] ${entry.notes.join("\n\n")}${suffix}`);
+      // Unknown or unreachable: the worker hears everything, as without a conductor.
+      const workspaceId = cycle.conductorFor && cycle.toConductor ? await cycle.conductorFor(threadId).catch(() => null) : null;
+      const routed = splitNotes(entry.notes, workspaceId !== null);
+      // The inbox first: it's local and dedupes, so a retry after a failed send can't double it.
+      if (routed.conductor.length > 0) await cycle.toConductor!(threadId, workspaceId!, routed.conductor);
+      if (routed.worker.length > 0) {
+        await cycle.send(threadId, `[ci watcher] ${routed.worker.map((note) => note.text).join("\n\n")}${suffix}`);
+      }
       for (const [key, next] of entry.staged) changes.set(key, next);
     } catch (error) {
       cycle.warn(`ci notify: ${String(error)}`);
