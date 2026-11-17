@@ -63,6 +63,8 @@ test("a fresh switcher starts on the one before the current", () => {
   assert.equal(startIndex(5), 1);
   assert.equal(startIndex(1), 0);
   assert.equal(startIndex(0), 0);
+  // No current item first (a page that isn't a thread): start on the most recent.
+  assert.equal(startIndex(5, false), 0);
 });
 
 test("labels for All, No workspace and named workspaces", () => {

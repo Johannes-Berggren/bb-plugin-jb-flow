@@ -4,13 +4,11 @@
 // a row above the threads. The panel never takes focus, so the composer keeps
 // its caret and the Ctrl keyup reaches the window.
 import "./tab-switcher.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import {
-  experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
   experimental_useSidebarThreads as useSidebarThreads,
-  useBbContext,
   useBbNavigate,
   useSettings,
 } from "@get-bb/plugin-sdk/app";
@@ -19,7 +17,7 @@ import type { FlowState } from "./server";
 import { useFlowState } from "./flow-state";
 import { MODAL_OPEN, currentPlatform } from "./palette";
 import { ago } from "./palette-model";
-import { readRecentThreads, readRecentWorkspaces, useRecentThreadsTracker, useRecentWorkspacesTracker } from "./recents";
+import { readRecentThreads, readRecentWorkspaces, useCurrentThreadId, useRecentThreadsTracker, useRecentWorkspacesTracker } from "./recents";
 import {
   opensSwitcher,
   startIndex,
@@ -36,7 +34,7 @@ import { inWorkspace, workspaceForThread, type WorkspaceState } from "./workspac
 import { cn } from "@/lib/utils";
 
 /** Held this long, the panel appears; a quicker tap just flips. */
-export const SHOW_AFTER_MS = 140;
+export const SHOW_AFTER_MS = 90;
 
 type Row = "threads" | "workspaces";
 type Switcher = {
@@ -58,7 +56,10 @@ export function TabSwitcherHost() {
   useRecentWorkspacesTracker(selected, workspacesOn);
   const { threads, projects } = useSidebarThreads();
   const { state: workspaceState } = useWorkspaces();
-  const context = useBbContext();
+  const currentThreadId = useCurrentThreadId();
+  // Read once here, where it's always mounted: mounting it in the panel refetched
+  // the plugin's state on every open and re-rendered everything that reads it.
+  const { state: flow } = useFlowState();
   const navigate = useBbNavigate();
 
   const [switcher, setSwitcherState] = useState<Switcher | null>(null);
@@ -67,8 +68,8 @@ export function TabSwitcherHost() {
     current.current = next;
     setSwitcherState(next);
   };
-  const live = useRef({ enabled, workspacesOn, threads, projects, workspaceState, selected, threadId: context.threadId, navigate });
-  live.current = { enabled, workspacesOn, threads, projects, workspaceState, selected, threadId: context.threadId, navigate };
+  const live = useRef({ enabled, workspacesOn, threads, projects, workspaceState, selected, threadId: currentThreadId, navigate });
+  live.current = { enabled, workspacesOn, threads, projects, workspaceState, selected, threadId: currentThreadId, navigate };
 
   const actions = useRef({
     commit: () => {},
@@ -110,13 +111,16 @@ export function TabSwitcherHost() {
           ? workspaceItems(readRecentWorkspaces(), workspaceTabOrder(now.workspaceState.workspaces), now.selected)
           : [];
       const items = row === "threads" ? threads : workspaces;
-      if (items.length < 2) return false;
-      const first = back ? items.length - 1 : startIndex(items.length);
+      // On a page that isn't a thread (Catch up, home), nothing is "current": start on the most recent.
+      const threadsFromCurrent = now.threadId !== null && threads[0] === now.threadId;
+      const minimum = row === "threads" && !threadsFromCurrent ? 1 : 2;
+      if (items.length < minimum) return false;
+      const first = back ? items.length - 1 : startIndex(items.length, row === "threads" ? threadsFromCurrent : true);
       setSwitcher({
         row,
         threads,
         workspaces,
-        threadIndex: row === "threads" ? first : startIndex(threads.length),
+        threadIndex: row === "threads" ? first : startIndex(threads.length, threadsFromCurrent),
         workspaceIndex: row === "workspaces" ? first : 0,
         visible: false,
       });
@@ -156,7 +160,8 @@ export function TabSwitcherHost() {
         if (begin(row, event.shiftKey)) swallow(event);
         return;
       }
-      if (event.key === "Control") return;
+      // A modifier on its own (Shift before ⇧Tab, Ctrl repeating) changes nothing yet.
+      if (event.key === "Control" || event.key === "Shift") return;
       // Ctrl came up without a keyup reaching us (another window had it): go.
       if (!event.ctrlKey && event.key !== "Escape" && event.key !== "Enter") {
         commit();
@@ -243,7 +248,8 @@ export function TabSwitcherHost() {
       threads={threads}
       projects={projects}
       workspaceState={workspaceState}
-      currentThreadId={context.threadId}
+      flow={flow}
+      currentThreadId={currentThreadId}
       selected={selected}
       showWorkspaceNames={workspacesOn && workspaceState.workspaces.length > 0}
       onHover={(row, index) => actions.current.hover(row, index)}
@@ -255,6 +261,7 @@ export function TabSwitcherHost() {
 
 function SwitcherPanel({
   switcher,
+  flow,
   threads,
   projects,
   workspaceState,
@@ -265,6 +272,7 @@ function SwitcherPanel({
   onPick,
 }: {
   switcher: Switcher;
+  flow: FlowState | null;
   threads: readonly PluginSidebarThread[];
   projects: readonly PluginSidebarProject[];
   workspaceState: WorkspaceState;
@@ -274,11 +282,25 @@ function SwitcherPanel({
   onHover: (row: Row, index: number) => void;
   onPick: (row: Row, index: number) => void;
 }) {
-  const { state: flow } = useFlowState();
   const now = useNow(30_000);
   const mac = currentPlatform() === "mac";
-  const byId = new Map(threads.map((thread) => [thread.id, thread]));
-  const projectName = new Map(projects.map((project) => [project.id, project.name]));
+  const byId = useMemo(() => new Map(threads.map((thread) => [thread.id, thread])), [threads]);
+  const projectName = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
+  // Counted once per open, not on every Tab press: each count walks every thread.
+  const unreadByTab = useMemo(
+    () =>
+      new Map(
+        switcher.workspaces.map((tab) => [
+          tab,
+          threads.filter((thread) => thread.isUnread && !thread.isArchived && !thread.isHidden && inWorkspace(thread, tab, workspaceState, threads)).length,
+        ]),
+      ),
+    [switcher.workspaces, threads, workspaceState],
+  );
+  const workspaceOf = useMemo(
+    () => new Map(switcher.threads.map((id) => [id, showWorkspaceNames && byId.has(id) ? workspaceForThread(byId.get(id)!, workspaceState, threads) : undefined])),
+    [switcher.threads, showWorkspaceNames, byId, workspaceState, threads],
+  );
   const activeThread = switcher.row === "threads" ? switcher.threads[switcher.threadIndex] : undefined;
   // Pressing a row picks it. Mouse down, not click: with Ctrl held, macOS turns a click into a right-click.
   const press = (row: Row, index: number) => (event: ReactMouseEvent) => {
@@ -290,9 +312,7 @@ function SwitcherPanel({
       {switcher.workspaces.length > 0 ? (
         <div className="jf-switcher-workspaces" role="listbox" aria-label="Workspaces" data-active={switcher.row === "workspaces" || undefined}>
           {switcher.workspaces.map((tab, index) => {
-            const unread = threads.filter(
-              (thread) => thread.isUnread && !thread.isArchived && !thread.isHidden && inWorkspace(thread, tab, workspaceState, threads),
-            ).length;
+            const unread = unreadByTab.get(tab) ?? 0;
             const chosen = switcher.row === "workspaces" && index === switcher.workspaceIndex;
             return (
               <div
@@ -321,7 +341,7 @@ function SwitcherPanel({
         {switcher.threads.map((id, index) => {
           const thread = byId.get(id);
           if (!thread) return null;
-          const workspace = showWorkspaceNames ? workspaceForThread(thread, workspaceState, threads) : undefined;
+          const workspace = workspaceOf.get(id);
           return (
             <ThreadOption
               key={id}
@@ -379,13 +399,13 @@ function ThreadOption({
   onMouseEnter: () => void;
   onMouseDown: (event: ReactMouseEvent) => void;
 }) {
-  const { pullRequest } = useSidebarThreadPullRequest(thread.id);
+  // The plugin's own PR records only: a per-row branch-PR lookup made opening slow.
   const busy = thread.status === "active" || thread.status === "starting";
   const status = rowStatus(
     thread,
     busy,
     flow?.watching[thread.id],
-    threadPrs(flow?.threadPrs[thread.id], pullRequest),
+    threadPrs(flow?.threadPrs[thread.id], null),
     busy ? runInfo(flow?.running[thread.id], now) : null,
   );
   const ref = useRef<HTMLDivElement>(null);

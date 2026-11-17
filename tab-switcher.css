@@ -12,9 +12,8 @@
   transform: translateX(-50%);
   border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
   border-radius: 14px;
-  background: color-mix(in oklab, var(--popover, var(--background)) 88%, transparent);
-  backdrop-filter: blur(18px) saturate(1.4);
-  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  /* Solid, no backdrop blur: blurring the whole window behind it made every step lag. */
+  background: var(--popover, var(--background));
   box-shadow:
     0 1px 0 color-mix(in oklab, var(--foreground) 4%, transparent) inset,
     0 24px 60px -12px rgb(0 0 0 / 0.35),
@@ -23,7 +22,8 @@
   font-size: 13px;
   line-height: 1.35;
   user-select: none;
-  animation: jf-switcher-in 90ms ease-out;
+  animation: jf-switcher-in 70ms ease-out;
+  contain: layout paint;
 }
 
 /* --- workspace tabs --- */
@@ -47,7 +47,6 @@
   color: var(--muted-foreground);
   font-size: 12px;
   cursor: default;
-  transition: background-color 80ms, color 80ms;
 }
 .jf-switcher-workspace[data-current] {
   color: var(--foreground);
@@ -82,7 +81,6 @@
   padding: 7px 10px;
   border-radius: 9px;
   cursor: default;
-  transition: background-color 80ms;
 }
 .jf-switcher-thread[aria-selected="true"] {
   background: var(--accent);
