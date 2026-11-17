@@ -45,6 +45,7 @@
     "pr-ci.ts",
     "now-queue.ts",
     "deck.ts",
+    "triage-state.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",
