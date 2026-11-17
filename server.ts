@@ -541,7 +541,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Conductor",
       description:
-        "Routine PR news for a workspace's threads is handled for them: green PRs a worker said it would merge are merged, finished threads archived, and what each thread needs from you is briefed in Catch up and Now from its own status report. A permanent agent thread per workspace takes the judgement calls. Start one per workspace under Settings → Conductors or on the Conductor page. The agent uses your quota, only when woken.",
+        "Routine PR news for a workspace's threads is handled for them: green PRs a worker said it would merge are merged, finished threads archived, and what each thread needs from you is headlined in Now from its own status report. A permanent agent thread per workspace takes the judgement calls. Start one per workspace under Settings → Conductors or on the Conductor page. The agent uses your quota, only when woken.",
       default: false,
     },
     conductorBatchMinutes: {
