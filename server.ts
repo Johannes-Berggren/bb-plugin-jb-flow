@@ -191,7 +191,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Model choice on plan approval",
       description:
-        "Adds a model menu next to Approve plan, so a plan can be implemented on another of the thread's models (for example plan on one model, build on another). The last choice is remembered.",
+        "Adds a model menu next to Approve plan, so a plan can be implemented on another of the thread's models (for example plan on one model, build on another). The switch lands as the plan is approved, so the first step after approval can still run on the planning model. The last choice is remembered.",
       default: true,
     },
     hideRepeatedChoices: {

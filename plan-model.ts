@@ -1,10 +1,16 @@
 // Approve a plan and implement it on another model (the "Model choice on plan
 // approval" setting). BB's plan card only approves on the model that wrote the
-// plan, and a thread's model change normally waits for the next turn. Here the
-// plan is approved, the thread's model is set, and the running turn is steered
-// with the chosen model: a steer switches the live session's model, so the
-// implementation itself runs on it. Works for any provider whose plans need
-// approval, with that provider's own models.
+// plan, and a thread's model change normally waits for the next turn. An
+// approved plan runs in the same turn, so the live session's model has to be
+// switched by a steer, the only bb call that changes it mid-turn.
+//
+// The steer is sent before the approval. While the plan waits, bb can't take a
+// prompt, so it queues the steer (waiting on the interaction) and sends it into
+// the running turn itself the moment the approval is delivered. That lands the
+// switch as early as bb allows, with no polling, and while the turn is still
+// running, so it joins that turn instead of starting a new one. BB has no way
+// to approve and switch in one step, so the first request after the approval
+// may still go out on the planning model.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type Sdk = Pick<BbPluginApi["sdk"], "threads" | "system">;
@@ -60,40 +66,28 @@ async function threadModels(sdk: Sdk, threadId: string): Promise<Omit<PlanModels
   return { current: defaults?.model ?? null, models };
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Waits until bb has delivered the approval, so the steer isn't held behind it. */
-async function settled(sdk: Sdk, threadId: string, interactionId: string, timeoutMs: number, pollMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const current = await sdk.threads.interactions.get({ threadId, interactionId }).catch(() => null);
-    if (current && current.status !== "pending" && current.status !== "resolving") return;
-    await sleep(pollMs);
-  }
-}
-
-export async function approvePlan(
-  sdk: Sdk,
-  args: { threadId: string; model: string | null },
-  timing: { timeoutMs: number; pollMs: number } = { timeoutMs: 15_000, pollMs: 250 },
-): Promise<void> {
+export async function approvePlan(sdk: Sdk, args: { threadId: string; model: string | null }): Promise<void> {
   const { threadId, model } = args;
   const plan = pendingPlan(await sdk.threads.interactions.list({ threadId }));
   if (!plan) throw new Error("No plan is waiting for approval on this thread.");
-  const name =
-    model === null ? null : ((await threadModels(sdk, threadId)).models.find((option) => option.model === model)?.name ?? model);
+  const approve = () =>
+    sdk.threads.interactions.resolve({
+      threadId,
+      interactionId: plan.id,
+      resolution: { decision: "allow_once", grantedPermissions: null },
+    });
+  if (model === null) {
+    await approve();
+    return;
+  }
+  const name = (await threadModels(sdk, threadId)).models.find((option) => option.model === model)?.name ?? model;
   // Set first: bb checks the model against the provider's catalog, so a bad
-  // choice fails before anything is approved. It also keeps the model for
-  // later turns, and the composer follows it.
-  if (model !== null) await sdk.threads.update({ threadId, model });
-  await sdk.threads.interactions.resolve({
-    threadId,
-    interactionId: plan.id,
-    resolution: { decision: "allow_once", grantedPermissions: null },
-  });
-  if (model === null) return;
-  await settled(sdk, threadId, plan.id, timing.timeoutMs, timing.pollMs);
-  await sdk.threads.send({
+  // choice fails before anything is sent or approved. It also keeps the model
+  // for later turns, and the composer follows it.
+  await sdk.threads.update({ threadId, model });
+  // Steer while the plan still waits: bb queues it and delivers it into this
+  // turn as soon as the approval goes through (see the header).
+  const steer = await sdk.threads.send({
     threadId,
     mode: "steer-if-active",
     model,
@@ -101,4 +95,16 @@ export async function approvePlan(
       { type: "text", text: `Switched to ${name} to implement the approved plan. Carry on.`, mentions: [] },
     ],
   });
+  try {
+    await approve();
+  } catch (cause) {
+    // Not approved: drop the held steer, or bb would send it once the plan is
+    // settled some other way, possibly as a new turn.
+    if (steer.delivery === "queued") {
+      await sdk.threads.queuedMessages
+        .delete({ threadId, queuedMessageId: steer.queuedMessage.id })
+        .catch(() => undefined);
+    }
+    throw cause;
+  }
 }
