@@ -24,6 +24,7 @@ import { createMachines, machinesSchema } from "./machines";
 import { createRepoCommands, devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
 import { loadLocalConfig, readLocalConfigFile } from "./local-config";
 import { createChanges } from "./changes";
+import { createThreadLists, type ListedThread } from "./thread-cache";
 import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when";
 import { isGoneError } from "./ci-watch";
 import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
@@ -383,8 +384,6 @@ export const rpcContract = defineRpcContract({
   },
 });
 
-type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
-
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     workspaces: {
@@ -577,9 +576,11 @@ export default async function plugin(bb: BbPluginApi) {
     return (await bb.storage.kv.get<Record<string, number>>("kept")) ?? {};
   }
   const { changed, bumpDeck, waitForDeckChange, deckVersion } = createChanges(bb);
+  const threadLists = createThreadLists(bb);
+  const { listAllActiveThreads, listThreadsCached } = threadLists;
   // A thread starting or stopping changes counts too: drop the cached list.
   const onThreadState = ({ thread }: { thread: { id: string } }) => {
-    threadListCache = null;
+    threadLists.invalidate();
     // Only a thread the cache doesn't know (new, or new environment) can change machines.
     machines.invalidateFor(thread.id);
     bumpDeck();
@@ -606,14 +607,6 @@ export default async function plugin(bb: BbPluginApi) {
     snoozedSectionId = (await bb.sdk.threadSections.create({ name: SNOOZED_SECTION_NAME })).id;
     snoozedCheckedAt = Date.now();
     return snoozedSectionId;
-  }
-
-  async function listAllActiveThreads(): Promise<Thread[]> {
-    const threads = await listLiveThreads(bb);
-    // Filter as well: archived/hidden rows must never reach the digest.
-    return threads.filter(
-      (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible",
-    );
   }
 
   // --- snooze ---------------------------------------------------------------
@@ -1458,19 +1451,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   // The deck polls every few seconds while agents keep bb busy, so these read
   // cached data: one thread list per 10s, no message bodies except the focused
   // thread's (re-read only when it changes).
-
-  type ListedThread = Awaited<ReturnType<typeof bb.sdk.threads.list>>[number];
-  let threadListCache: { at: number; threads: Promise<ListedThread[]> } | null = null;
-  function listThreadsCached(): Promise<ListedThread[]> {
-    if (threadListCache === null || Date.now() - threadListCache.at > 10_000) {
-      const threads = listLiveThreads(bb);
-      threadListCache = { at: Date.now(), threads };
-      threads.catch(() => {
-        threadListCache = null;
-      });
-    }
-    return threadListCache.threads;
-  }
 
   async function prRadar() {
     // Threads with an open PR that needs fixing or is ready to merge,

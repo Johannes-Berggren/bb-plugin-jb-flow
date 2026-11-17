@@ -37,6 +37,7 @@
     "server.ts",
     "local-config.ts",
     "changes.ts",
+    "thread-cache.ts",
     "app.tsx",
     "flow-state.tsx",
     "dialogs.tsx",
