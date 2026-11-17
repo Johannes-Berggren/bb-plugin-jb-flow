@@ -2,7 +2,7 @@
 // browser's storage. The palette's Recent section and the Ctrl+Tab switcher
 // read them; whichever is mounted keeps them up to date.
 import { useEffect } from "react";
-import { useBbContext } from "@get-bb/plugin-sdk/app";
+import { useBbContext, useSidebarSplitLayout } from "@get-bb/plugin-sdk/app";
 import { pushRecent } from "./palette-model";
 import { pushRecentWorkspace, type WorkspaceTab } from "./tab-switcher-model";
 
@@ -36,12 +36,23 @@ export function readRecentWorkspaces(): WorkspaceTab[] {
   return Array.isArray(value) ? value.filter((item): item is WorkspaceTab => item === null || typeof item === "string") : [];
 }
 
-/** Remembers each thread you open. Writing the same thread twice is harmless, so several callers may mount it. */
-export function useRecentThreadsTracker() {
+/**
+ * The thread you're looking at: the focused split pane's, else the route's.
+ * With splits, the route keeps the first pane's thread while you work in another.
+ */
+export function useCurrentThreadId(): string | null {
   const context = useBbContext();
+  const layout = useSidebarSplitLayout();
+  const focused = layout?.panes.find((pane) => pane.isFocused);
+  return focused ? focused.threadId : context.threadId;
+}
+
+/** Remembers each thread you open or focus. Writing the same thread twice is harmless, so several callers may mount it. */
+export function useRecentThreadsTracker() {
+  const threadId = useCurrentThreadId();
   useEffect(() => {
-    if (context.threadId) writeJson(RECENT_THREADS_KEY, pushRecent(readRecentThreads(), context.threadId));
-  }, [context.threadId]);
+    if (threadId) writeJson(RECENT_THREADS_KEY, pushRecent(readRecentThreads(), threadId));
+  }, [threadId]);
 }
 
 /** Remembers each workspace tab you select. */
