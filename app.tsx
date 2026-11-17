@@ -33,7 +33,7 @@ import { TriageThreadList } from "./triage-list";
 import { DigestSection } from "./digest";
 import { LaneSettings, MigrationSettings } from "./settings-panels";
 import { EXPAND_PLANS_FLAG, mountPlanExpander } from "./plan-expander";
-import { CONDUCTOR_PANEL, ConductorPage, ConductorSettings, useConductorBadge } from "./conductor-page";
+import { CONDUCTOR_PANEL, ConductorPage, ConductorSettings } from "./conductor-page";
 import { DoneForYouSection } from "./conductor-brief";
 
 // --- thread header: status strip + Pull requests panel ------------------------------
@@ -253,7 +253,6 @@ export default definePluginApp((app) => {
     icon: "Workflow",
     path: CONDUCTOR_PANEL,
     component: ConductorPage,
-    experimental_useBadge: useConductorBadge,
   });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });

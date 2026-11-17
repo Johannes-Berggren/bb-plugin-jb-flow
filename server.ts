@@ -28,7 +28,7 @@ import { formatDue, formatWhen, parseDue, parseDueLine, parseWhen } from "./when
 import { isGoneError } from "./ci-watch";
 import { AFTER_GREEN, type AfterGreen, type ConductorSink } from "./conductor-routing";
 import { createConductor, type Conductor } from "./conductor";
-import { briefingContextSchema, briefingItemSchema, briefingSchema } from "./conductor-model";
+import { briefingItemSchema } from "./conductor-model";
 import { createConductorStore } from "./conductor-store";
 import { migrate } from "./migrations";
 import { wakeDueSnoozes } from "./snooze-wake";
@@ -150,7 +150,6 @@ const conductorStatusSchema = z.object({
   threadId: z.string().nullable(),
   open: z.number(),
   undelivered: z.number(),
-  needsYou: z.number(),
   lastWakeAt: z.number().optional(),
   projectId: z.string().optional(),
   providerId: z.string().optional(),
@@ -159,12 +158,9 @@ const conductorStatusSchema = z.object({
 export type ConductorStatus = z.infer<typeof conductorStatusSchema>;
 const conductorPageSchema = z.object({
   workspaceId: z.string(),
-  contexts: z.record(z.string(), briefingContextSchema),
   threadId: z.string().nullable(),
   threadStatus: z.string().nullable(),
   active: z.boolean(),
-  briefing: briefingSchema.nullable(),
-  resolved: z.array(z.string()),
   log: z.array(z.object({ id: z.number(), at: z.number(), kind: z.string(), threadId: z.string().nullable(), text: z.string() })),
   open: z.number(),
   lastWakeAt: z.number().nullable(),
@@ -218,16 +214,6 @@ export const rpcContract = defineRpcContract({
   conductor_briefs: { input: z.null(), output: z.object({ briefs: z.array(conductorBriefSchema) }) },
   conductor_feed: { input: z.object({ since: z.number() }), output: conductorFeedSchema },
   conductor_fleet: { input: z.object({ workspaceId: z.string().min(1).max(80) }), output: z.array(fleetRowSchema) },
-  conductor_card: {
-    input: z.object({
-      workspaceId: z.string().min(1).max(80),
-      threadId: z.string().min(1).max(200),
-      action: z.enum(["go", "reply", "snooze", "dismiss"]),
-      text: z.string().max(20_000).optional(),
-      until: z.string().max(40).optional(),
-    }),
-    output: z.object({ done: z.string() }),
-  },
   conductor_start: {
     input: z.object({
       workspaceId: z.string().min(1).max(80),
@@ -1228,9 +1214,6 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     conductor_briefs: async () => ({ briefs: conductor ? await conductor.briefs() : [] }),
     conductor_feed: ({ since }) => loadedConductor().feed(since),
     conductor_fleet: ({ workspaceId }) => loadedConductor().fleet(workspaceId),
-    conductor_card: async ({ workspaceId, threadId, action, text, until }) => ({
-      done: await loadedConductor().cardAction(workspaceId, threadId, action, { text, until }),
-    }),
     conductor_start: async ({ workspaceId, projectId, providerId, model }) => ({
       threadId: (await loadedConductor().start(workspaceId, { projectId, providerId, model })).threadId,
     }),

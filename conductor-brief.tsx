@@ -1,67 +1,11 @@
-// The conductor where you already work: its brief on a thread's Catch up card,
-// and on the home page what autopilot did for you today.
+// The conductor where you already work: on the home page, what autopilot did
+// for you today.
 import "./conductor-brief.css";
 import { useState } from "react";
-import { useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
-import type { ConductorFeed, rpcContract } from "./server";
+import { useBbNavigate, useSdk } from "@get-bb/plugin-sdk/app";
+import type { ConductorFeed } from "./server";
 import { Icon } from "@/components/ui/icon";
-import { headlineOf } from "./conductor-model";
-import { tokens, useConductorBriefs, useConductorFeed, useConductorList } from "./conductor-client";
-import { errorText } from "./flow-state";
-
-const shortReply = (text: string) => {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= 14 ? `Send “${flat}”` : "Send suggestion";
-};
-
-/** The conductor's brief for a thread, as a strip on its Catch up card: what's needed, and a one-click answer. */
-export function ConductorBriefStrip({ threadId }: { threadId: string }) {
-  const brief = useConductorBriefs().get(threadId);
-  const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
-  const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
-  const [error, setError] = useState<string | null>(null);
-  if (!brief || state === "sent") return null;
-  const { item } = brief;
-  const send = async () => {
-    setState("sending");
-    setError(null);
-    try {
-      await rpc.call("conductor_card", { workspaceId: brief.workspaceId, threadId, action: "go" });
-      setState("sent");
-    } catch (cause) {
-      setError(errorText(cause));
-      setState("idle");
-    }
-  };
-  return (
-    <div className="jf-brief" data-kind={item.kind} role="note" aria-label="The conductor's brief">
-      <button
-        type="button"
-        className="jf-brief-icon"
-        title="Open the conductor: its whole briefing and conversation"
-        aria-label="Open the conductor"
-        onClick={() => navigate.toPluginPanel("conductor", { subPath: brief.workspaceId })}
-      >
-        <Icon name="Workflow" />
-      </button>
-      <div className="jf-brief-main">
-        <p className="jf-brief-headline">{headlineOf(item, 120)}</p>
-        {item.recommendation && <p className="jf-brief-rec">{item.recommendation}</p>}
-        {error && (
-          <p role="alert" className="jf-brief-error">
-            {error}
-          </p>
-        )}
-      </div>
-      {item.reply && (
-        <button type="button" className="jf-brief-send" disabled={state === "sending"} title={`Send to the thread: ${item.reply}`} onClick={() => void send()}>
-          {state === "sending" ? "Sending…" : shortReply(item.reply)}
-        </button>
-      )}
-    </div>
-  );
-}
+import { tokens, useConductorFeed, useConductorList } from "./conductor-client";
 
 const FEED: Record<string, { icon: string; label: string }> = {
   "auto-merged": { icon: "GitMerge", label: "Merged" },
@@ -108,7 +52,6 @@ export function DoneForYouSection() {
           {conductors.map((entry) => (
             <button key={entry.workspaceId} type="button" onClick={() => navigate.toPluginPanel("conductor", { subPath: entry.workspaceId })}>
               {entry.name}
-              {entry.needsYou > 0 ? <span className="jf-feed-count">{entry.needsYou}</span> : null}
             </button>
           ))}
         </p>

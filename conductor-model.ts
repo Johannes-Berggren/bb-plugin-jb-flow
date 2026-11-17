@@ -1,6 +1,6 @@
 // The conductor's decisions and texts, apart from bb so they can be tested:
 // when to wake it, what the wake-up says, what it's told to do, and the shape
-// of the briefing it leaves for the user. conductor.ts wires it up.
+// of the briefs that headline threads in Now. conductor.ts wires it up.
 import { z } from "zod";
 import type { StoredConductorEvent } from "./conductor-store.ts";
 
@@ -42,23 +42,6 @@ export const briefingSchema = z.object({
   note: z.string().max(1000).optional(),
 });
 export type BriefingItem = z.infer<typeof briefingItemSchema>;
-
-/** What the page shows around a briefing item, read from the thread itself. */
-export const briefingContextSchema = z.object({
-  status: z.string(),
-  /** Since when the thread has waited on the user (or last asked for attention). */
-  waitingSince: z.number().nullable(),
-  dueAt: z.number().nullable(),
-  dueReason: z.string().nullable(),
-  goal: z.string().nullable(),
-  next: z.string().nullable(),
-  blocked: z.string().nullable(),
-  prs: z.array(z.object({ repo: z.string(), number: z.number(), attention: z.string(), url: z.string(), title: z.string() })),
-  /** The numbered options the worker ended on: one number ("choice"), several ("multi") or "go 1,3" ("go"). */
-  options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
-  optionsMode: z.enum(["go", "choice", "multi"]).nullable(),
-});
-export type BriefingContext = z.infer<typeof briefingContextSchema>;
 
 /** The line a briefing item is scanned by: its headline, or the first sentence of its summary. */
 export function headlineOf(item: Pick<BriefingItem, "headline" | "summary">, max = 90): string {
@@ -262,7 +245,7 @@ When the user writes to you:
 - A bare item number or "go" means: send that item's recommended reply to its worker (forward_to_thread with mark_read).
 - "2 go, 4 snooze 3d, 5: <text>": do each, with forward_to_thread or thread_action, then post_briefing again.
 - Keep standing preferences they state with conductor_memory.
-Act on other threads only through these tools, not \`bb thread tell\`. Keep your own replies short; the briefing is what the user reads.`;
+Act on other threads only through these tools, not \`bb thread tell\`. Keep your own replies short; your briefing items become the headlines the user scans on those threads in Now.`;
 
 /** The conductor's instructions, within bb's 4096-character limit; the user's own text is cut first. */
 export function conductorInstructions(workspaceName: string, prompt: string, memory: string): string {

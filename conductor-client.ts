@@ -25,7 +25,7 @@ export function useConductorThreadIds(): ReadonlySet<string> {
   return ids;
 }
 
-/** The conductor's current brief per thread (the ones that need you), for Catch up and Now. */
+/** The conductor's current brief per thread (the ones that need you), for Now's row headlines. */
 export function useConductorBriefs(): ReadonlyMap<string, ConductorBrief> {
   const enabled = useSettings().values?.conductor === true;
   const rpc = useRpc<typeof rpcContract>();
@@ -75,7 +75,7 @@ export function tokens(count: number): string {
   return String(count);
 }
 
-/** Every conductor's status (running or not, what its briefing still needs from you), kept current. */
+/** Every conductor's status (running or not, its inbox), kept current. */
 export function useConductorList(): ConductorStatus[] {
   const enabled = useSettings().values?.conductor === true;
   const rpc = useRpc<typeof rpcContract>();
