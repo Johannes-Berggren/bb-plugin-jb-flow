@@ -217,8 +217,9 @@ Workspaces on), the far end of the workspace bar lists the open panes while a
 split is open: one chip per pane, left to right, with its workspace's color, the
 thread's title and a dot for what it is doing (working, waiting on you, stopped
 with an error, finished and unread, or idle). The focused pane's chip is
-outlined, and chips of panes scrolled out of view are dimmed, so a thread that
-needs you is visible even when its pane isn't. Click a chip to go to its pane.
+outlined and the chips of the panes on screen are lit, so a thread that needs
+you is visible even when its pane is scrolled out of view. Click a chip to go
+to its pane.
 
 - BB opens at most eight panes in a split; this setting doesn't change that.
 - The split fits the window again while a pane is maximized, and returns to

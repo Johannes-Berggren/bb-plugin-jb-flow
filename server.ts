@@ -515,7 +515,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Pane strip in the workspace bar",
       description:
-        "While a split is open, the workspace bar lists its panes: each one's workspace color, title, and whether the thread is working, waiting on you or finished. Panes scrolled out of view are dimmed; click one to go to it. Needs Workspaces on.",
+        "While a split is open, the workspace bar lists its panes: each one's workspace color, title, and whether the thread is working, waiting on you or finished. The panes on screen are lit; click a chip to go to its pane. Needs Workspaces on.",
       default: true,
     },
     splitMinPaneWidth: {

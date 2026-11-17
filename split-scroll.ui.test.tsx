@@ -158,6 +158,25 @@ it("still scrolls to the focused pane when another layout change follows before 
   controller.abort();
 });
 
+it("waits for BB to draw a saved split after a page load, then shows the focused pane", () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => frames.push(run));
+  const controller = new AbortController();
+  mountSplitScroll({ signal: controller.signal });
+  // The plugin starts first: no split in the page yet.
+  send({ width: 2560, focused: { key: "last", x: 0.75, width: 0.25 } });
+  frames.shift()!(0);
+  frames.shift()!(0);
+  expect(overflowing()).toBe(false);
+  const { scrollTo } = hostSplit();
+  frames.shift()!(0);
+  expect(overflowing()).toBe(true);
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ left: 1280, behavior: "smooth" });
+  // Found: it stops looking.
+  expect(frames).toHaveLength(0);
+  controller.abort();
+});
+
 it("marks the strip as overflowing only while it is wider than the view", () => {
   const controller = new AbortController();
   mountSplitScroll({ signal: controller.signal });

@@ -105,11 +105,13 @@ it("lists the open panes in order with their workspace color and state, and goes
   slot.lifecycle.unmount();
 });
 
-it("dims the panes that are scrolled out of view and follows the scroll", async () => {
-  const scroller = hostSplit(0);
+it("lights the panes on screen, follows the scroll, and finds a split BB draws after the bar", async () => {
   const slot = await bar(host({ paneStrip: true }, split));
   await slot.findByRole("toolbar", { name: "Open panes" });
   const inView = () => chips(slot).map((chip) => chip.hasAttribute("data-in-view"));
+  // No split in the page yet: nothing scrolls, so every pane counts as on screen.
+  expect(inView()).toEqual([true, true, true, true]);
+  const scroller = hostSplit(0);
   // A 2560 wide split in a 1280 wide view: the first two panes show.
   await waitFor(() => expect(inView()).toEqual([true, true, false, false]));
   expect(chips(slot)[2]!.getAttribute("aria-label")).toBe("Thread c: finished, unread, out of view");

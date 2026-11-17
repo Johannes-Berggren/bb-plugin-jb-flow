@@ -27,8 +27,6 @@
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
-  /* Out of view until the strip says otherwise. */
-  opacity: 0.55;
 }
 button.jf-pane-chip {
   cursor: pointer;
@@ -36,11 +34,12 @@ button.jf-pane-chip {
 button.jf-pane-chip:hover {
   background: var(--state-hover, var(--accent));
   color: var(--foreground);
-  opacity: 1;
 }
+/* The panes on screen read as one lit window over the row; the status dots of
+   the others stay at full strength, since those are the ones you can't see. */
 .jf-pane-chip[data-in-view] {
-  background: color-mix(in oklch, var(--foreground) 6%, transparent);
-  opacity: 1;
+  background: color-mix(in oklch, var(--foreground) 9%, transparent);
+  color: var(--foreground);
 }
 /* The focused pane, in its workspace's color like the pane's own frame. */
 .jf-pane-chip[aria-current="true"] {
