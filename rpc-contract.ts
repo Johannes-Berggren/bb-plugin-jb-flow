@@ -259,6 +259,8 @@ export const rpcContract = defineRpcContract({
     input: z.object({ archiveThreadId: z.string().nullable() }),
     output: z.object({ opened: z.string().nullable() }),
   },
+  /** The threads that need you, most urgent first: what "next" walks through. */
+  needs_me_queue: { input: z.null(), output: z.object({ threadIds: z.array(z.string()) }) },
   plan_models: {
     input: z.object({ threadId: z.string() }),
     output: z.object({

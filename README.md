@@ -227,6 +227,21 @@ to its pane.
 - It relies on BB's own page structure. After a BB update that changes it, the
   split falls back to fitting the window until the plugin catches up.
 
+Two commands work on the whole split. Both are in BB's command palette and the
+JB Flow palette:
+
+- **Open what needs me side by side** (Alt+Shift+O) opens the threads that need
+  you as panes beside the ones already open, most urgent first, until the split
+  is full, and ends on the most urgent one. It uses the same order as **Open the
+  next thread that needs me**: Now, or Needs me with Now and Focus off. Threads
+  already open are skipped. Where splits are off it opens the first thread only.
+- **Update status in every open pane…** lists the open panes whose status
+  report is out of date (none yet, the agent has replied since, or over 6 hours
+  old) and asks them all with one click. A thread that is working, stopped on
+  an error or waiting on your answer is never asked. Nothing is sent until you
+  confirm: each thread gets the **Status report prompt**, and each reply uses
+  your agent's quota. It needs the thread monitor on.
+
 ### App-wide appearance
 
 **Polish the entire BB interface** (Settings → JB Flow, on by default) applies
@@ -437,6 +452,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   |---|---|
   | Alt+Shift+S | Snooze this thread |
   | Alt+Shift+N | Open the next thread that needs me. With **Now and Focus** on, it steps through Now in order from the thread you're on, across every workspace, because threads stay in Now after you read them |
+  | Alt+Shift+O | Open what needs me side by side, as split panes (see Split panes) |
   | Alt+Shift+F | Add this thread to Focus, or remove it |
   | Alt+Shift+E | Archive and open the next one (a pinned thread is left as is) |
   | Alt+Shift+D | Start dev servers |

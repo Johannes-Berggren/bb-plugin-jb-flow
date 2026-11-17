@@ -24,6 +24,8 @@ import { cn } from "@/lib/utils";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { mountPaneAppearance, PaneAppearancePreference } from "./pane-appearance";
 import { mountSplitScroll, SplitScrollPreference } from "./split-scroll";
+import { PaneCommandsHost, paneCommands } from "./pane-commands";
+import { OPEN_QUEUE_EVENT, STATUS_PANES_EVENT } from "./pane-commands-model";
 import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 import { TabSwitcherHost } from "./tab-switcher";
@@ -240,6 +242,7 @@ export default definePluginApp((app) => {
   app.slots.experimental_appOverlay({ id: "pane-appearance-preference", component: PaneAppearancePreference });
   app.contentScripts.register({ id: "split-scroll", mount: mountSplitScroll });
   app.slots.experimental_appOverlay({ id: "split-scroll-preference", component: SplitScrollPreference });
+  app.slots.experimental_appOverlay({ id: "pane-commands", component: PaneCommandsHost });
   app.slots.navPanel({
     id: "catch-up",
     title: "Catch up",
@@ -362,6 +365,22 @@ export default definePluginApp((app) => {
     defaultShortcut: { key: "n", alt: true, shift: true },
     run: async () => {
       await commandRpc?.call("next_needs_me", { archiveThreadId: null });
+    },
+  });
+  app.commands.register({
+    id: "open-queue-panes",
+    title: "Open what needs me side by side",
+    defaultShortcut: { key: "o", alt: true, shift: true },
+    run: () => {
+      window.dispatchEvent(new CustomEvent(OPEN_QUEUE_EVENT));
+    },
+  });
+  app.commands.register({
+    id: "status-open-panes",
+    title: "Update status in every open pane…",
+    isAvailable: () => paneCommands.statusAvailable,
+    run: () => {
+      window.dispatchEvent(new CustomEvent(STATUS_PANES_EVENT));
     },
   });
   app.commands.register({
