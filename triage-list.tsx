@@ -11,7 +11,7 @@ import type { FlowState } from "./server";
 import { useSidebarThreadActions } from "./thread-actions";
 import { allSettled, threadPrs, useNow } from "./ui-extras";
 import { groupByProject, groupBySection, quietFor, sortRows } from "./sidebar-groups";
-import { childrenByParent, descendants, foldKey, pruneFolds, rootIds, subthreadRows, topLevel, treesOf, withMatches } from "./subthreads";
+import { childrenByParent, descendants, foldKey, pruneFolds, rootIds, subthreadRows, topLevel, treesOf, withMatches, withRows } from "./subthreads";
 import { resolveLanes, sectionNames } from "./lanes";
 import { needsMe, replyQueued } from "./needs-me";
 import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
@@ -405,12 +405,10 @@ export function TriageThreadList({
     if (!state) return { now: [], moving: [] };
     // Subthreads are candidates too; each follows its row's pin and snooze. One
     // that wants you brings its row into Now, and shows under it there.
-    const candidates = liveRows
-      .filter((row) => !row.isPinned)
-      .flatMap((row) => {
-        const snoozed = state.snoozedSectionId !== null && row.sectionId === state.snoozedSectionId;
-        return (trees.get(row.id) ?? [row]).map((thread) => sidebarNowThread(thread, snoozed));
-      });
+    const candidates = withRows(
+      liveRows.filter((row) => !row.isPinned),
+      trees,
+    ).map(({ thread, row }) => sidebarNowThread(thread, state.snoozedSectionId !== null && row.sectionId === state.snoozedSectionId));
     const result = nowQueue(candidates, state, { now: Date.now(), openThreadId: activeThreadId ?? null, previous: lastNowOrder.current });
     lastNowOrder.current = result.now.map((entry) => entry.thread.id);
     return result;

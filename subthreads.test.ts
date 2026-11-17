@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { arrowAction, childrenByParent, descendants, foldKey, pruneFolds, rootIds, subthreadRows, topLevel, treesOf, withMatches } from "./subthreads.ts";
+import { arrowAction, childrenByParent, descendants, foldKey, forest, inRowOrder, pruneFolds, rootIds, subthreadRows, topLevel, treesOf, withMatches, withRows } from "./subthreads.ts";
 
 const node = (id: string, parentThreadId: string | null = null) => ({ id, parentThreadId });
 const ids = (rows: Array<{ id: string }>) => rows.map((thread) => thread.id);
@@ -106,4 +106,30 @@ test("← folds open subthreads, then moves to the parent; → unfolds", () => {
   assert.equal(arrowAction("ArrowRight", { subthreads: folded, hasParent: true }), "unfold");
   assert.equal(arrowAction("ArrowRight", { subthreads: open, hasParent: false }), null);
   assert.equal(arrowAction("ArrowRight", { subthreads: undefined, hasParent: true }), null);
+});
+
+test("every thread comes with the row it sits under, rows in order, each followed by its tree", () => {
+  const threads = [node("b"), node("a"), node("a1", "a"), node("a1x", "a1"), node("b1", "b"), node("orphan", "gone")];
+  const { rows, trees, members } = forest(threads);
+  assert.deepEqual(ids(rows), ["b", "a", "orphan"]);
+  assert.deepEqual(ids(trees.get("a")!), ["a", "a1", "a1x"]);
+  assert.deepEqual(
+    members.map(({ thread, row }) => [thread.id, row.id]),
+    [["b", "b"], ["b1", "b"], ["a", "a"], ["a1", "a"], ["a1x", "a"], ["orphan", "orphan"]],
+  );
+  // Only the rows given: a pinned row's tree can be left out by leaving the row out.
+  assert.deepEqual(
+    withRows([rows[1]!], trees).map(({ thread }) => thread.id),
+    ["a", "a1", "a1x"],
+  );
+});
+
+test("ids go together under their row, rows in the order they first come up, each in tree order", () => {
+  const { trees } = forest([node("a"), node("a1", "a"), node("a2", "a"), node("b"), node("b1", "b")]);
+  // The queue ranks b1 first, then a2, b, a: the list shows b (with b1 under it), then a (a2 under it).
+  assert.deepEqual(inRowOrder(["b1", "a2", "b", "a"], trees), ["b", "b1", "a", "a2"]);
+  assert.deepEqual(inRowOrder(["a2", "a1"], trees), ["a1", "a2"]);
+  // Ids outside every tree keep their place; duplicates go.
+  assert.deepEqual(inRowOrder(["x", "b1", "x", "a"], trees), ["x", "b1", "a"]);
+  assert.deepEqual(inRowOrder([], trees), []);
 });

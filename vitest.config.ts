@@ -32,6 +32,7 @@ export default defineConfig({
       "plan-model-picker.ui.test.tsx",
       "watchers.test.ts",
       "thread-row.ui.test.tsx",
+      "now-queue.test.ts",
     ],
   },
 });

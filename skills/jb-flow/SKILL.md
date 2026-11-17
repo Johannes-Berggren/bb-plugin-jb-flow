@@ -33,7 +33,7 @@ A UI feature of the Triage list, on by default (**Now and Focus** in the plugin 
 
 Due dates: press `d` on a row, or run `bb jb-flow due <thread-id|--self> <when|none> [--reason <text>]`. Agents use the `set_thread_due` tool for real outside deadlines only. A date the user set can't be changed by an agent.
 
-`bb jb-flow now [--json]` lists Now in order, and `bb jb-flow next` opens the next thread in it. Tabs count what's waiting on the user in each workspace.
+`bb jb-flow now [--json]` lists Now in order, and `bb jb-flow next` opens the next thread in it. Subthreads that need the user are in Now under their parent's row, and `next` opens the subthread itself. Tabs count what's waiting on the user in each workspace, subthreads included.
 
 When a user asks how to keep track of what matters most, point them here.
 

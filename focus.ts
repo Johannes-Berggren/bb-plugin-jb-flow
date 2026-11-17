@@ -7,6 +7,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { listLiveThreads } from "./thread-list";
 import { replyQueued } from "./needs-me";
+import { forest } from "./subthreads";
 
 export const focusReportSchema = z.object({
   clientId: z.string().min(1).max(64),
@@ -98,16 +99,11 @@ export function createFocus(
     const awaiting = await getAwaiting();
     // Snoozed threads stay hidden until they wake, as in the sidebar.
     const snoozedSectionId = await getSnoozedSectionId();
-    return threads
-      .filter(
-        (thread) =>
-          thread.archivedAt === null &&
-          thread.deletedAt === null &&
-          thread.visibility === "visible" &&
-          thread.parentThreadId === null &&
-          (snoozedSectionId === null || thread.sectionId !== snoozedSectionId) &&
-          needsAttention(thread, awaiting),
-      )
+    const live = threads.filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible");
+    // Subthreads count too, as in the Triage list's Needs me; each goes with its row's snooze.
+    return forest(live)
+      .members.filter(({ thread, row }) => (snoozedSectionId === null || row.sectionId !== snoozedSectionId) && needsAttention(thread, awaiting))
+      .map(({ thread }) => thread)
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));
   }
 

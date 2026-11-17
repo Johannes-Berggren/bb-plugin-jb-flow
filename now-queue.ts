@@ -12,6 +12,8 @@ import { nextAfter, nowQueue, reasonLabel, serverNowThread } from "./now-model";
 import type { createNowStore } from "./now-store";
 import type { createPrTracker } from "./prs";
 import type { FlowState, rpcContract } from "./rpc-contract";
+import { sortRows } from "./sidebar-groups";
+import { childrenByParent, descendants, forest, inRowOrder } from "./subthreads";
 import type { ListedThread, Thread } from "./thread-cache";
 import { listLiveThreads } from "./thread-list";
 import { parseStatusReport } from "./thread-status";
@@ -31,7 +33,7 @@ export function registerDueFromStatus(bb: BbPluginApi, { settings, nowStore }: {
 }
 
 type NowQueueDeps = {
-  settings: { get(): Promise<{ nowQueue: boolean }> };
+  settings: { get(): Promise<{ nowQueue: boolean; createdRowOrder: boolean }> };
   awaiting: ReturnType<typeof createAwaiting>;
   prTracker: ReturnType<typeof createPrTracker>;
   nowStore: NowStore;
@@ -60,10 +62,18 @@ export function createNowQueue(
     ]);
     const flow = { awaiting: waiting, promised, waitingOthers, readyToGo, watching, threadPrs, focused, due };
     const now = Date.now();
-    const rows = threads
-      .filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && thread.parentThreadId === null && thread.pinnedAt === null)
-      .map((thread) => serverNowThread(thread, snoozedSection !== null && thread.sectionId === snoozedSection));
-    const queue = nowQueue(rows, flow, { now });
+    // As in the Triage list: subthreads are candidates too, each going with its
+    // row's pin and snooze, and sit under their row in the list's order.
+    const live = threads.filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible");
+    const { trees, members } = forest(sortRows(live, (await settings.get()).createdRowOrder));
+    const candidates = members
+      .filter(({ row }) => row.pinnedAt === null)
+      .map(({ thread, row }) => serverNowThread(thread, snoozedSection !== null && row.sectionId === snoozedSection));
+    const queue = nowQueue(candidates, flow, { now });
+    // The list shows a subthread under its row, so a row's entries go together,
+    // in the order the rows come up. "next" walks them in that order.
+    const byId = new Map(queue.now.map((entry) => [entry.thread.id, entry]));
+    const ordered = inRowOrder([...byId.keys()], trees).map((id) => byId.get(id)!);
     const titles = new Map(threads.map((thread) => [thread.id, thread.title ?? thread.titleFallback ?? ""]));
     const describe = (entry: (typeof queue.now)[number]) => ({
       id: entry.thread.id,
@@ -73,21 +83,29 @@ export function createNowQueue(
       focused: entry.focused,
       dueAt: entry.dueAt,
     });
-    return { now: queue.now.map(describe), moving: queue.moving.map(describe) };
+    return { now: ordered.map(describe), moving: queue.moving.map(describe) };
   }
 
   /** The threads "next" walks through, most urgent first: Now, or Needs me with Now off. */
-  async function queueOrder(): Promise<string[]> {
+  async function queueOrder(threads?: readonly ListedThread[]): Promise<string[]> {
     const needs = await focus.needsMe();
     if (!(await settings.get()).nowQueue) return needs.map((thread) => thread.id);
-    const { now } = await currentNow(await listLiveThreads(bb));
+    const { now } = await currentNow(threads ?? (await listLiveThreads(bb)));
     // Pinned threads aren't in Now, but one that's blocked still needs you.
     return [...new Set([...now.map((entry) => entry.id), ...needs.map((thread) => thread.id)])];
   }
 
-  /** Where "next" goes. With Now off, the first thread that needs you, as before. */
-  async function nextThread(current: string | null, skip: string | null): Promise<string | null> {
-    const order = await queueOrder();
+  /**
+   * Where "next" goes. With Now off, the first thread that needs you, as before.
+   * `archiving`: the thread about to be archived. bb archives its subthreads with
+   * it, so "next" can't land on one of them.
+   */
+  async function nextThread(current: string | null, skip: string | null, { archiving = null }: { archiving?: string | null } = {}): Promise<string | null> {
+    const threads = await listLiveThreads(bb);
+    const archived = threads.find((thread) => thread.id === archiving);
+    // A pinned thread isn't archived (see next-needs-me.ts), so its subthreads stay.
+    const gone = new Set(archived && archived.pinnedAt === null ? descendants(archived.id, childrenByParent(threads)).map((thread) => thread.id) : []);
+    const order = (await queueOrder(threads)).filter((id) => !gone.has(id));
     if (!(await settings.get()).nowQueue) return order.find((id) => id !== skip) ?? null;
     return nextAfter(order, current);
   }
@@ -139,7 +157,7 @@ export function createNowQueue(
     due_set: async ({ threadId, at, reason }) => ({ ok: (await nowStore.setDue(threadId, at, reason, "you")).applied }),
     next_needs_me: ({ archiveThreadId }) =>
       nextNeedsMe(archiveThreadId, {
-        nextThread,
+        nextThread: (current, skip) => nextThread(current, skip, { archiving: skip }),
         focusedThreadId: () => focus.focusedThreadId(),
         getThread: (threadId) => bb.sdk.threads.get({ threadId }),
         archive: (threadId) => bb.sdk.threads.archive({ threadId }),

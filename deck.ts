@@ -7,6 +7,7 @@ import { parseDecisionOptions } from "./decisions";
 import { needsAttention, type createFocus } from "./focus";
 import type { createNowQueue } from "./now-queue";
 import type { createPrCi } from "./pr-ci";
+import { forest } from "./subthreads";
 import type { ListedThread } from "./thread-cache";
 import { WORKSPACE_COLOR_HEX, workspaceForThread, type WorkspaceState } from "./workspaces";
 
@@ -79,14 +80,10 @@ export function createDeck(bb: BbPluginApi, { settings, listThreadsCached, await
     ]);
     const focused = { ...focusedThread, workspace: workspaceOf(focusedThread.threadId, threads, workspaceState) };
     // Snoozed threads stay hidden until they wake, as in the sidebar and `needs-me`.
-    const open = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        thread.deletedAt === null &&
-        thread.visibility === "visible" &&
-        thread.parentThreadId === null &&
-        (snoozedSection === null || thread.sectionId !== snoozedSection),
-    );
+    // Subthreads count, each going with its row's snooze.
+    const open = forest(threads.filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible"))
+      .members.filter(({ row }) => snoozedSection === null || row.sectionId !== snoozedSection)
+      .map(({ thread }) => thread);
     const needs = open.filter((thread) => needsAttention(thread, waiting));
     const needIds = new Set(needs.map((thread) => thread.id));
     const moves = open

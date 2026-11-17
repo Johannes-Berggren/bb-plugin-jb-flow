@@ -27,6 +27,7 @@ import {
   rememberWorkspaceThread,
 } from "./workspace-client";
 import { needsYouNow, nowQueue, sidebarNowThread, type NowFlow } from "./now-model";
+import { forest } from "./subthreads";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Checkbox } from "./components/ui/checkbox";
@@ -145,21 +146,22 @@ function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInf
   const choose = (id: string | null) =>
     switchWorkspace(id, { state, threads, projects, currentThreadId: context.threadId, navigate });
   const summary = (id: string | null) => {
-    const scoped = threads.filter((thread) =>
-      inWorkspace(thread, id, state, threads),
+    const scoped = threads.filter(
+      (thread) => inWorkspace(thread, id, state, threads) && !thread.isArchived && !thread.isHidden,
     );
-    const visible = scoped.filter(
-      (thread) =>
-        !thread.isArchived &&
-        !thread.isHidden &&
-        // A snoozed thread is parked until it wakes, so it isn't counted (unless a setting says so).
-        snoozeInfo?.snoozes?.[thread.id] === undefined &&
-        !(snoozeInfo?.snoozedSectionId != null && thread.sectionId === snoozeInfo.snoozedSectionId) &&
-        (thread.parentThreadId === null ||
-          !scoped.some((parent) => parent.id === thread.parentThreadId)),
-    );
-    const attention = visible.filter(
-      (thread) =>
+    // Rows as the Triage list draws them, each with its subthreads. A subthread
+    // goes with its row: a snoozed row parks everything under it, a pinned one
+    // keeps it out of Now.
+    const { rows, members } = forest(scoped);
+    // A snoozed thread is parked until it wakes, so it isn't counted (unless a setting says so).
+    const awake = (row: (typeof rows)[number]) =>
+      snoozeInfo?.snoozes?.[row.id] === undefined &&
+      !(snoozeInfo?.snoozedSectionId != null && row.sectionId === snoozeInfo.snoozedSectionId);
+    const visible = rows.filter(awake);
+    const counted = members.filter(({ row }) => awake(row));
+    // Each thread counts on its own, subthreads included, as the Triage list's chips do.
+    const attention = counted.filter(
+      ({ thread }) =>
         thread.hasPendingInteraction ||
         thread.indicator === "waiting-for-input" ||
         thread.indicator === "unread-error" ||
@@ -170,7 +172,9 @@ function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInf
     const needsYou = flow
       ? needsYouNow(
           nowQueue(
-            visible.filter((thread) => !thread.isPinned).map((thread) => sidebarNowThread(thread, flow.snoozedSectionId != null && thread.sectionId === flow.snoozedSectionId)),
+            counted
+              .filter(({ row }) => !row.isPinned)
+              .map(({ thread, row }) => sidebarNowThread(thread, flow.snoozedSectionId != null && row.sectionId === flow.snoozedSectionId)),
             flow,
             { now },
           ).now,

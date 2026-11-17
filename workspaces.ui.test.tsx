@@ -126,8 +126,9 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
   expect(document.querySelector(".jf-workspaces [role=tablist]")).toBeNull();
   const acme = await topbar.findByRole("tab", { name: /Acme/ });
   expect(acme.textContent).toBe("Acme2");
+  // The subthread under ht needs you too: it counts on its own, but isn't a row.
   expect(acme.getAttribute("aria-description")).toBe(
-    "2 threads · 1 needs attention",
+    "2 threads · 2 need attention",
   );
   fireEvent.click(acme);
   expect(acme.getAttribute("aria-selected")).toBe("true");
