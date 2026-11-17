@@ -15,8 +15,11 @@ export async function nextNeedsMe(archiveThreadId: string | null, deps: NextNeed
   // Worked out before archiving: the archived thread's place says where "next" is.
   const nextId = await deps.nextThread(archiveThreadId ?? deps.focusedThreadId(), archiveThreadId);
   // Pinned threads are kept on purpose: a shortcut moves on from them but never archives them.
-  const pinned = archiveThreadId !== null && (await deps.getThread(archiveThreadId).catch(() => null))?.pinnedAt;
-  if (archiveThreadId !== null && !pinned) await deps.archive(archiveThreadId);
+  // A failed lookup can't rule that out, so it keeps the thread too.
+  if (archiveThreadId !== null) {
+    const thread = await deps.getThread(archiveThreadId).catch(() => null);
+    if (thread !== null && !thread.pinnedAt) await deps.archive(archiveThreadId);
+  }
   if (nextId === null) return { opened: null };
   await deps.open(nextId);
   return { opened: nextId };

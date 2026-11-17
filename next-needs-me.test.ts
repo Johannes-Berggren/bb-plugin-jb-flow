@@ -44,14 +44,14 @@ test("with no next thread, the thread is still archived and nothing opens", asyn
   assert.deepEqual(calls, ["next:a:a", "get:a", "archive:a"]);
 });
 
-test("a failed thread lookup doesn't stop it: the thread is archived and the next one opens", async () => {
+test("a failed thread lookup keeps the thread, since it may be pinned, and still opens the next one", async () => {
   const { deps, calls } = fake({
     getThread: async () => {
       throw new Error("HTTP 503");
     },
   });
   assert.deepEqual(await nextNeedsMe("a", deps), { opened: "b" });
-  assert.deepEqual(calls, ["next:a:a", "archive:a", "open:b"]);
+  assert.deepEqual(calls, ["next:a:a", "open:b"]);
 });
 
 test("without a thread to archive, it moves on from the focused thread and archives nothing", async () => {
