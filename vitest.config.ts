@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     env: { NODE_ENV: "test" },
     environment: "jsdom",
+    setupFiles: ["./vitest.setup.ts"],
     include: [
       "workspaces.test.ts",
       "workspaces.ui.test.tsx",

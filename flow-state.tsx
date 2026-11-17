@@ -17,11 +17,26 @@ let flowScheduled = false;
 let flowInflight = false;
 let flowAgain = false;
 
+// Bumped by forgetFlowState, so a fetch scheduled or in flight before it is dropped.
+let flowGeneration = 0;
+
+/** Forget the cached state and drop fetches in flight (tests, so one case doesn't see the last one's state). */
+export function forgetFlowState() {
+  flowGeneration += 1;
+  flowState = null;
+  flowScheduled = false;
+  flowInflight = false;
+  flowAgain = false;
+  projectNaming = { projectShortNames: {}, stripProjectPrefixes: [] };
+}
+
 function refetchFlowState(rpc: FlowRpc) {
   // Coalesce: every subscribed component hears the same realtime event.
   if (flowScheduled) return;
   flowScheduled = true;
+  const generation = flowGeneration;
   setTimeout(() => {
+    if (generation !== flowGeneration) return;
     flowScheduled = false;
     fetchFlowState(rpc);
   }, 0);
@@ -33,14 +48,17 @@ function fetchFlowState(rpc: FlowRpc) {
     return;
   }
   flowInflight = true;
+  const generation = flowGeneration;
   rpc
     .call("state_get", null)
     .then((next) => {
+      if (generation !== flowGeneration) return;
       projectNaming = next;
       flowState = next;
       for (const listener of flowListeners) listener(next);
     }, () => undefined)
     .finally(() => {
+      if (generation !== flowGeneration) return;
       flowInflight = false;
       if (flowAgain) {
         flowAgain = false;

@@ -7,7 +7,7 @@ import type {
   PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 import { mountWorkspaceTopBar, WORKSPACE_BAR_EVENT } from "./workspace-topbar";
-import { selectWorkspace } from "./workspace-client";
+import { selectWorkspace, setWorkspacesEnabled } from "./workspace-client";
 
 const projects = [
   {
@@ -70,6 +70,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   selectWorkspace(null);
+  setWorkspacesEnabled(false);
   sessionStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -193,6 +194,8 @@ it("settings report save failures and preserve the edited values for retry", asy
 });
 
 it("reveals the owning workspace when a deep link opens a thread from another workspace", async () => {
+  // Only the top bar turns workspaces on, and this mounts the route bridge alone.
+  setWorkspacesEnabled(true);
   selectWorkspace("globex");
   const app = await loadPluginApp(() => import("./app"));
   const slot = renderSlot(

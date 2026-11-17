@@ -110,7 +110,7 @@ const rowsUnder = (root: HTMLElement, title: string) => {
   return section ? [...section.querySelectorAll("[data-jb-flow-row]")].map((row) => row.getAttribute("data-jb-flow-row")) : null;
 };
 
-/** Flow state is cached between mounts: wait for this test's stars before pressing keys. */
+/** Flow state loads after the mount: wait for this test's stars before pressing keys. */
 const stars = (root: HTMLElement) => root.querySelectorAll('[aria-label="In Focus"]').length;
 
 describe("Now and Focus", () => {
@@ -121,7 +121,6 @@ describe("Now and Focus", () => {
     localStorage.clear();
   });
 
-  // First in the file: flow state is cached between mounts, so only this mount starts without it.
   it("before state loads, it shows Now loading, never Needs me", async () => {
     let loaded = (_state: FlowState) => {};
     const slot = await mount({ threads: [thread("a")], stateGet: () => new Promise((resolve) => (loaded = resolve)) });
@@ -129,7 +128,6 @@ describe("Now and Focus", () => {
     expect(heading(slot.container, "Needs me")).toBeUndefined();
     expect(slot.container.textContent).toContain("Loading…");
     expect(slot.container.textContent).not.toContain("You’re all caught up.");
-    // The fetch is shared between mounts: finish it, or every later test waits on it.
     loaded(baseState);
     await waitFor(() => expect(slot.container.textContent).toContain("You’re all caught up."));
   });
@@ -212,7 +210,7 @@ describe("Now and Focus", () => {
   it("a thread the conductor briefed says what's needed instead of who holds it", async () => {
     const slot = await mount({
       threads: [thread("asked", { latestAttentionAt: NOW - 18 * HOUR })],
-      state: { awaiting: { asked: NOW - 18 * HOUR } },
+      state: { awaiting: { asked: NOW - 18 * HOUR }, focused: { asked: NOW } },
       settings: { conductor: true },
       rpc: {
         conductor_briefs: () => ({
