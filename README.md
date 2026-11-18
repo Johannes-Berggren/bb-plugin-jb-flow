@@ -16,7 +16,7 @@ On by default (turn off under Settings → JB Flow → **Workspaces**). Choose *
 if another navigation provider is pinned. A new install has no workspaces yet: the bar shows **Create your first workspace**, which
 opens a form to name it and pick its projects. After that your workspaces, plus **All** and
 **No workspace**, appear as tabs (**+** adds another, the gear manages them) across the top of the BB window and filter its threads, sections
-and home-page follow-ups. Tab badges show the total number of top-level threads; a small dot marks attention. With **Now and Focus** on, a second number replaces the dot when threads in that tab's Now are waiting on you right now: blocked, your answer, or overdue. So work in another tab stays visible. A subthread that needs you counts on its own for the dot and the number, as in the Triage list's chips, but isn't added to the total. It goes with its row: not counted while the row is snoozed, and out of Now while the row is pinned.
+and home-page follow-ups. Tab badges show the total number of top-level threads, muted; a small dot marks attention. With **Now and Focus** on, a filled pill in the workspace's color replaces the dot when threads in that tab's Now are waiting on you right now: blocked, your answer, or overdue. **Thread counts on workspace tabs** off leaves only that pill. So work in another tab stays visible. A subthread that needs you counts on its own for the dot and the number, as in the Triage list's chips, but isn't added to the total. It goes with its row: not counted while the row is snoozed, and out of Now while the row is pinned.
 Hover a tab for both counts. Switching restores
 the last thread for that workspace in this browser tab; a new-thread button
 uses its first available project. Opening a thread from another workspace
@@ -41,7 +41,8 @@ and thread assignments sync between clients. The active tab and remembered
 threads belong to this browser session.
 
 A workspace can carry one of eight colors (red, orange, amber, green, teal, blue,
-violet, pink), picked in its settings. The color shows as a dot and the selected
+violet, pink), picked in its settings. A new workspace starts on the first color
+no other workspace uses; pick another or **No color** before saving. The color shows as a dot and the selected
 underline on its tab, in the Ctrl+` switcher, on that workspace's panes in a
 split (see [Split panes](#split-panes)), and as a dot on its threads' rows in the
 **All** tab, where rows of every workspace sit together.
@@ -201,8 +202,9 @@ plugin page can't hide itself yet; JB Flow's workspace navigation hides it.
 around the pane you're working in whenever two or more panes are open, in its
 workspace's color or BB's accent color when it has none. The other panes get a
 thin line in their own workspace's color, so each pane shows where it belongs.
-Nothing is dimmed. With the setting off, or with a single pane, BB's panes look
-as they do without the plugin.
+Nothing is dimmed. With a single thread open, a line in its workspace's color
+tops the page header instead. With the setting off, BB's panes look as they do
+without the plugin.
 
 **Scroll split panes sideways** (on by default) lets a split grow wider than the
 window. BB fits every pane into the window, so with many panes each one gets
@@ -543,12 +545,13 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 Under **Settings → JB Flow**:
 
 - **Polish the entire BB interface**: restyles bb, shows `> [!TIP]` callouts as callouts and folds finished commands behind *Show trace* (on by default).
-- **Frame the active split pane**: a frame on the active pane in a split, and each pane's workspace color (on by default).
+- **Frame the active split pane**: a frame on the active pane in a split, each pane's workspace color, and a line in that color over a lone thread's header (on by default).
 - **Scroll split panes sideways**: a split with more panes than fit scrolls sideways instead of squeezing them (on by default).
 - **Minimum pane width**: the width each pane of a scrolling split gets, in pixels (640).
 - **Pane strip in the workspace bar**: one chip per open split pane with its color, title and state; click to go to it (on by default).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
+- **Thread counts on workspace tabs**: each tab's thread total beside its name (on by default). Off leaves only the count of threads waiting on you.
 - **Swipe between workspaces**: a two-finger sideways swipe on the sidebar moves to the next or previous workspace tab, and the sidebar slides as the workspace changes (off by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).

@@ -110,24 +110,28 @@
   border-radius: 2px 2px 0 0;
   background: var(--jf-ws-color, var(--brand, var(--foreground)));
 }
+/* The total is reference; the number that asks for something is the filled pill beside it. */
 .jf-workspace-tabs .jf-workspace-tab-count {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
+  opacity: 0.7;
   line-height: 14px;
 }
+/* Threads waiting on you now: filled in the workspace's color, or the warning
+   color without one. The text takes the page background, which reads on the
+   darker light-theme shades and the brighter dark-theme ones alike. */
 .jf-workspace-needs-you {
+  min-width: 16px;
   padding: 1px 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--warning-text, var(--primary)) 18%, transparent);
-  color: var(--warning-text, var(--primary));
+  border-radius: 999px;
+  background: var(--jf-ws-color, var(--warning-text, var(--primary)));
+  color: var(--background);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 14px;
+  text-align: center;
 }
 .jf-workspace-attention {
   width: 4px;

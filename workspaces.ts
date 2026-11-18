@@ -69,6 +69,12 @@ export function workspaceForThread(
 }
 
 /** The color of the workspace with this id, if it has one. */
+/** The color a new workspace starts with: the first one no workspace uses yet, then round again. */
+export function nextWorkspaceColor(workspaces: readonly Pick<Workspace, "color">[]): WorkspaceColor {
+  const used = new Set(workspaces.map((workspace) => workspace.color));
+  return WORKSPACE_COLORS.find((color) => !used.has(color)) ?? WORKSPACE_COLORS[workspaces.length % WORKSPACE_COLORS.length]!;
+}
+
 export function workspaceColor(
   id: string | null,
   workspaces: readonly Pick<Workspace, "id" | "color">[],
