@@ -24,6 +24,8 @@ import { cn } from "@/lib/utils";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { mountPaneAppearance, PaneAppearancePreference } from "./pane-appearance";
 import { mountSplitScroll, SplitScrollPreference } from "./split-scroll";
+import { PaneEdgeHints } from "./pane-edge-hints";
+import { paneOrder } from "./pane-strip-model";
 import { PaneCommandsHost, paneCommands } from "./pane-commands";
 import { OPEN_QUEUE_EVENT, STATUS_PANES_EVENT } from "./pane-commands-model";
 import { LiveActivityBanner } from "./live-activity";
@@ -173,6 +175,11 @@ function FocusReporter() {
   const { threadId: routeThreadId } = useBbContext();
   const split = useSidebarSplitLayout();
   const threadId = split?.panes.find((pane) => pane.isFocused)?.threadId ?? routeThreadId;
+  // Where the focused pane sits, for a deck key that shows "2/5".
+  const ordered = split && split.panes.length > 1 ? paneOrder(split.panes) : [];
+  const focusedIndex = ordered.findIndex((pane) => pane.isFocused);
+  const paneIndex = focusedIndex >= 0 ? focusedIndex + 1 : null;
+  const paneTotal = ordered.length;
   const [clientId] = useState(() => {
     const existing = sessionStorage.getItem("jb-flow:client");
     if (existing) return existing;
@@ -192,6 +199,7 @@ function FocusReporter() {
           interactedAt: interactedAt.current,
           origin: location.origin,
           userAgent: navigator.userAgent.slice(0, 300),
+          ...(paneIndex !== null ? { panes: { index: paneIndex, total: paneTotal } } : {}),
         })
         .catch(() => undefined);
     };
@@ -226,7 +234,7 @@ function FocusReporter() {
       document.removeEventListener("visibilitychange", send);
       window.clearInterval(heartbeat);
     };
-  }, [rpc, clientId, threadId]);
+  }, [rpc, clientId, threadId, paneIndex, paneTotal]);
   return null;
 }
 
@@ -242,6 +250,7 @@ export default definePluginApp((app) => {
   app.slots.experimental_appOverlay({ id: "pane-appearance-preference", component: PaneAppearancePreference });
   app.contentScripts.register({ id: "split-scroll", mount: mountSplitScroll });
   app.slots.experimental_appOverlay({ id: "split-scroll-preference", component: SplitScrollPreference });
+  app.slots.experimental_appOverlay({ id: "pane-edge-hints", component: PaneEdgeHints });
   app.slots.experimental_appOverlay({ id: "pane-commands", component: PaneCommandsHost });
   app.slots.navPanel({
     id: "catch-up",

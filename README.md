@@ -217,10 +217,17 @@ With **Pane strip in the workspace bar** on (the default, and it needs
 Workspaces on), the far end of the workspace bar lists the open panes while a
 split is open: one chip per pane, left to right, with its workspace's color, the
 thread's title and a dot for what it is doing (working, waiting on you, stopped
-with an error, finished and unread, or idle). The focused pane's chip is
+with an error, finished and unread, or idle). "Waiting on you" includes a
+thread whose last message asks you something, even after you've read it, as in
+Your move. The focused pane's chip is
 outlined and the chips of the panes on screen are lit, so a thread that needs
 you is visible even when its pane is scrolled out of view. Click a chip to go
 to its pane.
+
+While the split scrolls, a small marker at each edge says how many panes lie
+beyond it. It turns amber and says "1 needs you" when one of those panes waits
+on you. Clicking it scrolls that pane into view without focusing it, so nothing
+is marked read.
 
 - BB opens at most eight panes in a split; this setting doesn't change that.
 - The split fits the window again while a pane is maximized, and returns to
@@ -515,7 +522,7 @@ A conductor is a permanent agent thread that looks after one workspace. Its work
   - `bb jb-flow needs-me` lists threads waiting on you, subthreads included
   - `bb jb-flow next` opens the next waiting thread
   - `bb jb-flow now` lists Now in the Triage list's order (a row's subthreads right after it), with what's Moving
-- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script. With **Now and Focus** on, it also has `now`: the count and the top thread. `focused.workspace` is the focused thread's workspace: its `id`, `name`, `color` name and the same color as `hex`, for a key that should wear it (null outside a workspace; `color` and `hex` are null when the workspace has none).
+- `bb jb-flow deck` prints one JSON snapshot with all of the above, for a Stream Deck or a status bar script. With **Now and Focus** on, it also has `now`: the count and the top thread. `focused.workspace` is the focused thread's workspace: its `id`, `name`, `color` name and the same color as `hex`, for a key that should wear it (null outside a workspace; `color` and `hex` are null when the workspace has none). `focused.panes` says where the focused pane sits in a split, `{"index": 2, "total": 5}` counting left to right, so a key can show "2/5" (null without a split).
 
 ## Install
 

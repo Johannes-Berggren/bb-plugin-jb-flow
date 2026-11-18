@@ -14,6 +14,7 @@ export default defineConfig({
       "pane-appearance.ui.test.tsx",
       "split-scroll.ui.test.tsx",
       "pane-strip.ui.test.tsx",
+      "pane-edge-hints.ui.test.tsx",
       "pane-commands.ui.test.tsx",
       "live-activity.ui.test.tsx",
       "timeline-activity.ui.test.tsx",
