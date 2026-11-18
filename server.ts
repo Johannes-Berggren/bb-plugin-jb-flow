@@ -73,6 +73,12 @@ export default async function plugin(bb: BbPluginApi) {
       description: "The number on each workspace tab includes threads that are snoozed. Off counts only threads that aren't snoozed.",
       default: false,
     },
+    tabBadgeTotals: {
+      type: "boolean",
+      label: "Thread counts on workspace tabs",
+      description: "Each workspace tab shows how many threads it holds. Off leaves only the count of threads waiting on you.",
+      default: true,
+    },
     palette: {
       type: "boolean",
       label: "⌘K opens the JB Flow palette",
@@ -123,7 +129,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Frame the active split pane",
       description:
-        "In split view, a frame marks the pane you're working in, and each pane shows its workspace's color (set under Workspaces). Off restores BB's standard panes.",
+        "In split view, a frame marks the pane you're working in, and each pane shows its workspace's color (set under Workspaces). With one thread open, a line in its workspace's color tops the page header. Off restores BB's standard panes.",
       default: true,
     },
     splitScroll: {

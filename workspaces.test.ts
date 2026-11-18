@@ -5,6 +5,7 @@ import { createWorkspaceStorage } from "./workspace-storage";
 import { exampleWorkspaces } from "./workspaces.fixtures";
 import {
   inWorkspace,
+  nextWorkspaceColor,
   pluginInWorkspace,
   workspaceColor,
   workspaceForThread,
@@ -144,5 +145,15 @@ describe("workspace colors", () => {
     await store.save({ ...acme! });
     expect((await store.read()).workspaces[0]).not.toHaveProperty("color");
     await harness.lifecycle.dispose();
+  });
+});
+
+describe("nextWorkspaceColor", () => {
+  it("picks the first color no workspace uses, then goes round again", () => {
+    expect(nextWorkspaceColor([])).toBe("red");
+    expect(nextWorkspaceColor([{ color: "red" }, { color: undefined }, { color: "amber" }])).toBe("orange");
+    const all = (["red", "orange", "amber", "green", "teal", "blue", "violet", "pink"] as const).map((color) => ({ color }));
+    expect(nextWorkspaceColor(all)).toBe("red");
+    expect(nextWorkspaceColor([...all, { color: "red" as const }])).toBe("orange");
   });
 });

@@ -380,3 +380,40 @@ it("picks a workspace color in settings and shows it on the workspace's tab", as
   expect(plain.querySelector(".jf-workspace-color-dot")).toBeNull();
   bar.lifecycle.unmount();
 });
+
+it("starts a new workspace on a color of its own", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const settings = renderSlot(
+    app.settingsSections.find((section) => section.id === "workspaces")!,
+    {},
+    {
+      settings: { workspaces: true },
+      rpc: {
+        workspaces_get: () => ({ ...state, workspaces: state.workspaces.map((workspace) => (workspace.id === "acme" ? { ...workspace, color: "red" as const } : workspace)) }),
+      },
+      sidebarThreads: { status: "ready", projects, threads: [], sections: [] },
+      sdk: { plugins: { list: async () => ({ plugins: [] }) } },
+    },
+  );
+  fireEvent.click(await settings.findByRole("button", { name: /New workspace/ }));
+  // Red is taken by Acme: the next free one.
+  expect(settings.getByRole("radio", { name: "Orange" }).getAttribute("aria-checked")).toBe("true");
+  settings.lifecycle.unmount();
+});
+
+it("hides the thread counts on the tabs when asked, and keeps the waiting-on-you count", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const bar = renderSlot(
+    app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
+    {},
+    {
+      settings: { workspaces: true, tabBadgeTotals: false },
+      rpc: { workspaces_get: () => state },
+      sidebarThreads: { status: "ready", projects, threads: [hThread], sections: [] },
+    },
+  );
+  const tab = await bar.findByRole("tab", { name: "Acme" });
+  await waitFor(() => expect(tab.getAttribute("aria-description")).toContain("1 thread"));
+  expect(document.querySelector(".jf-workspace-tab-count")).toBeNull();
+  bar.lifecycle.unmount();
+});

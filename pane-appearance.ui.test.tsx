@@ -3,7 +3,7 @@ import { cleanup, waitFor } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { exampleWorkspaces } from "./workspaces.fixtures";
-import { mountPaneAppearance, paneColorRules } from "./pane-appearance";
+import { loneThreadRule, mountPaneAppearance, paneColorRules } from "./pane-appearance";
 
 const CLASS = "jb-flow-active-pane";
 const framed = () => document.documentElement.classList.contains(CLASS);
@@ -114,4 +114,30 @@ it("writes one rule per colored thread pane and escapes pane ids", () => {
       colorOf,
     ),
   ).toBe(`.${CLASS} [data-split-pane-id="x\\"y\\\\z"]{--jf-pane-color:var(--jf-ws-blue)}`);
+});
+
+it("tops a lone thread's header with its workspace's color", async () => {
+  const { scripts, preference } = await mount();
+  const lone = renderSlot(preference, {}, { ...host, settings: { highlightActivePane: true, workspaces: true }, context: { threadId: "acme-thread", projectId: "h" } });
+  await waitFor(() => expect(rules()).toBe(loneThreadRule("teal")));
+  // No frame class: there is no split to frame.
+  expect(framed()).toBe(false);
+  lone.lifecycle.unmount();
+
+  // A workspace without a color, or the setting off: nothing.
+  const plain = renderSlot(preference, {}, { ...host, settings: { highlightActivePane: true, workspaces: true }, context: { threadId: "globex-thread", projectId: "f" } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(rules()).toBeNull();
+  plain.lifecycle.unmount();
+  const off = renderSlot(preference, {}, { ...host, settings: { highlightActivePane: false, workspaces: true }, context: { threadId: "acme-thread", projectId: "h" } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(rules()).toBeNull();
+  off.lifecycle.unmount();
+  await scripts.lifecycle.dispose();
+});
+
+it("writes the lone-thread rule only for a color, and only outside a split", () => {
+  expect(loneThreadRule(undefined)).toBe("");
+  expect(loneThreadRule("teal")).toContain("body:not(:has(#split-workspace-main-panel))");
+  expect(loneThreadRule("teal")).toContain("box-shadow:inset 0 2px 0 var(--jf-ws-teal)");
 });

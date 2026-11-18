@@ -15,6 +15,7 @@ import {
   inWorkspace,
   pluginInWorkspace,
   workspaceForThread,
+  nextWorkspaceColor,
   WORKSPACE_COLORS,
   type Workspace,
 } from "./workspaces";
@@ -104,10 +105,19 @@ export function WorkspaceTopBar({ flow = null }: { flow?: (NowFlow & SnoozeInfo)
   useEffect(() => {
     if (!isLoading) setWorkspacesEnabled(enabled);
   }, [enabled, isLoading]);
-  return enabled ? <WorkspaceTopBarInner flow={values?.nowQueue === true ? flow : null} snoozeInfo={values?.countSnoozedInTabs === true ? null : flow} /> : null;
+  return enabled ? <WorkspaceTopBarInner flow={values?.nowQueue === true ? flow : null} snoozeInfo={values?.countSnoozedInTabs === true ? null : flow} showTotals={values?.tabBadgeTotals !== false} /> : null;
 }
 
-function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInfo) | null; snoozeInfo: SnoozeInfo | null }) {
+function WorkspaceTopBarInner({
+  flow,
+  snoozeInfo,
+  showTotals,
+}: {
+  flow: (NowFlow & SnoozeInfo) | null;
+  snoozeInfo: SnoozeInfo | null;
+  /** The thread count beside each tab's name; the waiting-on-you count shows either way. */
+  showTotals: boolean;
+}) {
   const { state, ready, error, refresh } = useWorkspaces();
   const selected = useSelectedWorkspace();
   const { threads, projects } = useSidebarThreads();
@@ -254,9 +264,11 @@ function WorkspaceTopBarInner({ flow, snoozeInfo }: { flow: (NowFlow & SnoozeInf
             >
               {tab.color ? <i className="jf-workspace-color-dot" aria-hidden="true" /> : null}
               {tab.name}
-              <span className="jf-workspace-tab-count" aria-hidden="true">
-                {ready ? counts.total : "—"}
-              </span>
+              {showTotals ? (
+                <span className="jf-workspace-tab-count" aria-hidden="true">
+                  {ready ? counts.total : "—"}
+                </span>
+              ) : null}
               {counts.needsYou > 0 ? (
                 <span className="jf-workspace-needs-you" aria-hidden="true">
                   {counts.needsYou}
@@ -521,13 +533,15 @@ function WorkspaceManager({ mode }: { mode: "first" | "new" | "manage" }) {
 }
 
 type MembershipField = "projectIds" | "sectionIds" | "pluginIds";
-const emptyWorkspace = (): Workspace => ({
+/** A new workspace starts with a color of its own, which the form lets you change or clear. */
+const emptyWorkspace = (existing: readonly Workspace[]): Workspace => ({
   id: "",
   name: "",
   projectIds: [],
   sectionIds: [],
   pluginIds: [],
   sectionOrder: [],
+  color: nextWorkspaceColor(existing),
 });
 
 export function WorkspaceSettings({ startNew = false }: { startNew?: boolean } = {}) {
@@ -559,11 +573,11 @@ export function WorkspaceSettings({ startNew = false }: { startNew?: boolean } =
       mounted = false;
     };
   }, [sdk]);
-  const [editing, setEditing] = useState<Workspace | null>(startNew ? emptyWorkspace() : null);
+  const [editing, setEditing] = useState<Workspace | null>(() => (startNew ? emptyWorkspace(state.workspaces) : null));
   const [viewedId, setViewedId] = useState(selected);
   // Nothing to manage yet: open straight on a new workspace.
   useEffect(() => {
-    if (ready && state.workspaces.length === 0 && editing === null) setEditing(emptyWorkspace());
+    if (ready && state.workspaces.length === 0 && editing === null) setEditing(emptyWorkspace(state.workspaces));
   }, [ready, state.workspaces.length, editing]);
   const [field, setField] = useState<MembershipField>("projectIds");
   const [query, setQuery] = useState("");
@@ -654,7 +668,7 @@ export function WorkspaceSettings({ startNew = false }: { startNew?: boolean } =
           type="button"
           className="jf-workspace-create"
           disabled={busy}
-          onClick={() => edit(emptyWorkspace())}
+          onClick={() => edit(emptyWorkspace(state.workspaces))}
         >
           <Icon name="Plus" className="size-4" /> New workspace
         </button>
