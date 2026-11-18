@@ -552,6 +552,32 @@ export function PullRequestsPanel({
 
 export { DecisionChips } from "./decision-choices";
 
+// --- loading placeholders ------------------------------------------------------------------
+
+/**
+ * Grey rows the height of a list's real ones, so the page doesn't jump when the
+ * data arrives. Announced once as loading; the rows themselves are decoration.
+ */
+export function SkeletonRows({ rows = 3, label = "Loading" }: { rows?: number; label?: string }) {
+  return (
+    <div className="jf-skeleton" role="status" aria-label={label}>
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className="jf-skeleton-row" aria-hidden="true">
+          <span className="jf-skeleton-bar jf-skeleton-lead" />
+          <span className="jf-skeleton-bar" style={{ width: `${[68, 54, 61, 47][index % 4]}%` }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * BB draws a homepage section's title itself, so a section with nothing to say
+ * renders this marker and the stylesheet hides the whole section, title
+ * included. Where the host's markup differs, the section just stays empty.
+ */
+export const HiddenSection = () => <span data-jf-hidden-section="" hidden />;
+
 // --- Your move (homepage) ---------------------------------------------------------------
 
 /** `lead` sits above the list (the Catch up line), whatever the list shows. */
@@ -569,7 +595,7 @@ export function YourMoveSection({ lead = null }: { lead?: ReactNode } = {}) {
   useEffect(load, [load]);
   // Answered threads drop off without leaving the page.
   useRealtime("jb-flow-changed", load);
-  if (items === null) return <>{lead}<p className="text-sm text-muted-foreground">Loading…</p></>;
+  if (items === null) return <>{lead}<SkeletonRows label="Loading Your move" /></>;
   const scopedItems = items.filter((item) => {
     const thread = workspaceThreads.find((thread) => thread.id === item.threadId);
     return selectedWorkspace === null || (thread !== undefined && inWorkspace(thread, selectedWorkspace, workspaceState, workspaceThreads));
@@ -645,17 +671,41 @@ function useComposeProject(fallback: string | null): string | null {
   return fallback;
 }
 
+/**
+ * The repo to report on: the project picked in the composer, or inside a
+ * workspace tab with none picked, the first of the workspace's projects that
+ * has a GitHub repo. Nothing on All, or where no project has one.
+ */
+function useUnreleasedCandidates(projectId: string | null): { candidates: string[]; fromWorkspace: boolean } {
+  const { projects } = useSidebarThreads();
+  const { state } = useWorkspaces();
+  const selected = useSelectedWorkspace();
+  const picked = projectId !== null && projects.find((project) => project.id === projectId)?.isPersonal !== true ? projectId : null;
+  if (picked !== null) return { candidates: [picked], fromWorkspace: false };
+  const workspace = state.workspaces.find((candidate) => candidate.id === selected);
+  const personal = new Set(projects.filter((project) => project.isPersonal).map((project) => project.id));
+  return { candidates: (workspace?.projectIds ?? []).filter((id) => !personal.has(id)), fromWorkspace: true };
+}
+
 export function UnreleasedSection({ projectId: routeProjectId }: { projectId: string | null }) {
-  const projectId = useComposeProject(routeProjectId);
+  const { candidates, fromWorkspace } = useUnreleasedCandidates(useComposeProject(routeProjectId));
+  const key = candidates.join(",");
   const rpc = useRpc<typeof rpcContract>();
-  const [data, setData] = useState<UnreleasedState | null>(null);
+  // "none": no candidate has a GitHub repo.
+  const [data, setData] = useState<UnreleasedState | "none" | null>(null);
   const [loading, setLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const load = (refresh: boolean) => {
-    if (projectId === null) return;
+    if (candidates.length === 0) return;
     setLoading(true);
-    rpc
-      .call("unreleased", { projectId, refresh })
+    void (async () => {
+      for (const projectId of candidates) {
+        const result = await rpc.call("unreleased", { projectId, refresh }).catch(() => null);
+        if (result === null) continue;
+        if (result.repo !== null) return result;
+      }
+      return "none" as const;
+    })()
       .then(setData, () => setData(null))
       .finally(() => setLoading(false));
   };
@@ -663,9 +713,9 @@ export function UnreleasedSection({ projectId: routeProjectId }: { projectId: st
     setData(null);
     setShowAll(false);
     load(false);
-  }, [rpc, projectId]);
-  if (projectId === null) return <p className="text-sm text-muted-foreground">Pick a project to see what's unreleased.</p>;
-  if (data === null) return <p className="text-sm text-muted-foreground">{loading ? "Checking GitHub…" : "Couldn't load."}</p>;
+  }, [rpc, key]);
+  if (candidates.length === 0 || data === "none") return <HiddenSection />;
+  if (data === null) return loading ? <SkeletonRows rows={2} label="Checking GitHub" /> : <p className="text-sm text-muted-foreground">Couldn't load.</p>;
   if (data.error !== null) return <p className="text-sm text-muted-foreground">{data.error}</p>;
   const now = Date.now();
   const shown = showAll ? data.prs : data.prs.slice(0, 8);
@@ -675,9 +725,10 @@ export function UnreleasedSection({ projectId: routeProjectId }: { projectId: st
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 flex-1">
           {data.prs.length === 0 ? (
-            <>Nothing unreleased on {data.head}: it matches {data.base}.</>
+            <>{fromWorkspace && data.repo ? `${data.repo}: ` : ""}Nothing unreleased on {data.head}: it matches {data.base}.</>
           ) : (
             <>
+              {fromWorkspace && data.repo ? `${data.repo}: ` : ""}
               {data.prs.length} PR{data.prs.length === 1 ? "" : "s"} on {data.head} {since}
               {data.directCommits > 0 ? ` (+${data.directCommits} direct commit${data.directCommits === 1 ? "" : "s"})` : ""}
             </>
