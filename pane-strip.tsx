@@ -6,18 +6,38 @@ import {
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 import { workspaceColor, workspaceForThread, type WorkspaceState } from "./workspaces";
-import { PANE_STATE_LABEL, paneInView, paneOrder, paneState, splitViewport } from "./pane-strip-model";
+import { useFlowState } from "./flow-state";
+import { PANE_STATE_LABEL, awaitsYou, paneInView, paneOrder, paneState, splitViewport } from "./pane-strip-model";
 import "./pane-strip.css";
 
 /** BB's element around the split panes, the one the scrolling split scrolls. */
-const SCROLLER = "#split-workspace-main-panel > div";
+export const SCROLLER = "#split-workspace-main-panel > div";
 
 /** When to look again after a layout change: BB draws the split, and the scrolling split sizes it, a little later. */
 const LOOK_AGAIN_MS = [0, 100, 400, 1200];
 
+export type SplitViewport = {
+  /** The part in view, as fractions of the split's full width. */
+  left: number;
+  right: number;
+  /** Where the scrolled element sits in the window, for anything drawn over its edges. */
+  box: { top: number; left: number; width: number; height: number };
+};
+
+const sameViewport = (a: SplitViewport | null, b: SplitViewport | null) =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.left === b.left &&
+    a.right === b.right &&
+    a.box.top === b.box.top &&
+    a.box.left === b.box.left &&
+    a.box.width === b.box.width &&
+    a.box.height === b.box.height);
+
 /** Which part of the split is in view; null while it all fits or isn't scrolling. */
-function useSplitViewport(layout: string | null) {
-  const [viewport, setViewport] = useState<{ left: number; right: number } | null>(null);
+export function useSplitViewport(layout: string | null) {
+  const [viewport, setViewport] = useState<SplitViewport | null>(null);
   useEffect(() => {
     if (layout === null) {
       setViewport(null);
@@ -25,8 +45,13 @@ function useSplitViewport(layout: string | null) {
     }
     const read = () => {
       const scroller = document.querySelector<HTMLElement>(SCROLLER);
-      const next = scroller ? splitViewport(scroller) : null;
-      setViewport((current) => (current?.left === next?.left && current?.right === next?.right ? current : next));
+      const range = scroller ? splitViewport(scroller) : null;
+      let next: SplitViewport | null = null;
+      if (scroller && range) {
+        const { top, left, width, height } = scroller.getBoundingClientRect();
+        next = { ...range, box: { top, left, width, height } };
+      }
+      setViewport((current) => (sameViewport(current, next) ? current : next));
     };
     // Scroll events don't bubble, but they can be caught on the way down, so
     // this works whenever BB creates or replaces the scrolled element.
@@ -54,6 +79,7 @@ export function PaneStrip({ state, threads }: { state: WorkspaceState; threads: 
   const enabled = useSettings().values?.paneStrip === true;
   const split = useSidebarSplitLayout();
   const navigate = useBbNavigate();
+  const awaiting = useFlowState().state?.awaiting;
   const panes = useMemo(() => (enabled && split ? paneOrder(split.panes) : []), [enabled, split]);
   // Any change of the layout can move what is in view, a divider drag included.
   const layout = panes.length < 2 ? null : panes.map((pane) => `${pane.paneId}:${pane.rect.x}:${pane.rect.width}`).join("|");
@@ -72,7 +98,7 @@ export function PaneStrip({ state, threads }: { state: WorkspaceState; threads: 
               <i className="jf-pane-chip-state" data-state="idle" aria-hidden="true" />
             </span>
           );
-        const status = paneState(thread);
+        const status = paneState(thread, awaitsYou(thread, awaiting));
         const title = `${thread.displayTitle}: ${PANE_STATE_LABEL[status]}${inView ? "" : ", out of view"}`;
         return (
           <button

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { paneInView, paneOrder, paneState, splitViewport } from "./pane-strip-model.ts";
+import { awaitsYou, edgeHints, paneInView, paneOrder, paneState, splitViewport } from "./pane-strip-model.ts";
 
 const thread = (overrides: Partial<Parameters<typeof paneState>[0]> = {}) => ({
   status: "idle",
@@ -48,4 +48,35 @@ test("a pane is in view when at least half of it is", () => {
   assert.equal(paneInView({ x: 0.05, width: 0.25 }, viewport), false);
   // Nothing scrolls: everything is in view.
   assert.equal(paneInView({ x: 0.9, width: 0.1 }, null), true);
+});
+
+test("a thread whose last message asks you something waits on you, read or not", () => {
+  assert.equal(paneState(thread(), true), "needs-you");
+  assert.equal(paneState(thread({ isUnread: true }), true), "needs-you");
+  // Running again, or failed: that is what it is doing now.
+  assert.equal(paneState(thread({ status: "active" }), true), "working");
+  assert.equal(paneState(thread({ status: "error" }), true), "error");
+
+  const awaiting = { t1: 1 };
+  assert.equal(awaitsYou({ id: "t1", status: "idle" }, awaiting), true);
+  assert.equal(awaitsYou({ id: "t2", status: "idle" }, awaiting), false);
+  assert.equal(awaitsYou({ id: "t1", status: "active" }, awaiting), false);
+  // Your answer is already queued: the ask is no longer on you.
+  assert.equal(awaitsYou({ id: "t1", status: "idle", queuedWork: "waiting" }, awaiting), false);
+  assert.equal(awaitsYou({ id: "t1", status: "idle" }, undefined), false);
+});
+
+test("edge hints count the panes beyond each edge and point at the nearest that waits on you", () => {
+  const pane = (index: number, needsYou = false) => ({ rect: { x: index / 6, width: 1 / 6 }, needsYou });
+  const panes = [pane(0, true), pane(1), pane(2), pane(3), pane(4), pane(5, true)];
+  // Everything fits: no hints.
+  assert.deepEqual(edgeHints(panes, null), { left: null, right: null });
+  // Panes 2 and 3 in view.
+  const hints = edgeHints(panes, { left: 2 / 6, right: 4 / 6 });
+  assert.deepEqual(hints.left, { count: 2, needsYou: 1, target: { x: 0, width: 1 / 6 } });
+  assert.deepEqual(hints.right, { count: 2, needsYou: 1, target: { x: 5 / 6, width: 1 / 6 } });
+  // Nothing waits on you: the nearest pane.
+  const quiet = edgeHints(panes.map((entry) => ({ ...entry, needsYou: false })), { left: 0, right: 2 / 6 });
+  assert.equal(quiet.left, null);
+  assert.deepEqual(quiet.right, { count: 4, needsYou: 0, target: { x: 2 / 6, width: 1 / 6 } });
 });

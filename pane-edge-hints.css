@@ -1,0 +1,41 @@
+/* Laid over the scrolled split, letting every click through but the markers'. */
+.jf-edge-hints {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+}
+.jf-edge-hint {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--popover, var(--background)) 92%, transparent);
+  box-shadow: 0 2px 8px color-mix(in oklch, black 18%, transparent);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(6px);
+}
+.jf-edge-hint[data-side="left"] {
+  left: 8px;
+}
+.jf-edge-hint[data-side="right"] {
+  right: 8px;
+}
+.jf-edge-hint:hover {
+  color: var(--foreground);
+}
+.jf-edge-hint[data-needs-you] {
+  border-color: color-mix(in oklch, var(--attention, var(--warning, #c98a1b)) 55%, transparent);
+  background: color-mix(in oklch, var(--attention, var(--warning, #c98a1b)) 18%, var(--popover, var(--background)));
+  color: var(--foreground);
+}

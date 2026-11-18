@@ -17,6 +17,8 @@ export const focusReportSchema = z.object({
   interactedAt: z.number().optional(),
   /** Where the window runs, for `bb jb-flow focus-clients`. */
   origin: z.string().max(200).optional(),
+  /** The focused pane's place in a split, left to right (1-based), and how many panes are open. */
+  panes: z.object({ index: z.number().int().min(1).max(32), total: z.number().int().min(2).max(32) }).optional(),
   userAgent: z.string().max(300).optional(),
 });
 type FocusReport = z.infer<typeof focusReportSchema> & { at: number };
@@ -65,7 +67,8 @@ export function createFocus(
     }
   }
 
-  function focusedThreadId(): string | null {
+  /** The report of the window you last used, if any is fresh. */
+  function current(): FocusReport | undefined {
     const fresh = [...reports.values()].filter((entry) => Date.now() - entry.at < STALE_MS && entry.threadId !== null);
     // Most recently used window first. Without recent use, a window on this
     // machine (where the deck is plugged in) beats a remote one, then OS focus.
@@ -77,7 +80,16 @@ export function createFocus(
         Number(b.windowFocused) - Number(a.windowFocused) ||
         b.at - a.at,
     );
-    return fresh[0]?.threadId ?? lastFocused;
+    return fresh[0];
+  }
+
+  function focusedThreadId(): string | null {
+    return current()?.threadId ?? lastFocused;
+  }
+
+  /** Where the focused pane sits in that window's split; null without a split. */
+  function focusedPanes(): { index: number; total: number } | null {
+    return current()?.panes ?? null;
   }
 
   /** Debug view of the windows reporting focus. */
@@ -107,5 +119,5 @@ export function createFocus(
       .sort((a, b) => (a.latestAttentionAt ?? 0) - (b.latestAttentionAt ?? 0));
   }
 
-  return { report, focusedThreadId, requireFocused, needsMe, clients };
+  return { report, focusedThreadId, focusedPanes, requireFocused, needsMe, clients };
 }

@@ -42,9 +42,9 @@ const pane = (paneId: string, x: number, threadId: string | null, isFocused = fa
 });
 // Given out of order: the strip sorts by position.
 const split = { panes: [pane("p3", 0.5, "c"), pane("p1", 0, "a", true), pane("p4", 0.75, null), pane("p2", 0.25, "b")] };
-const host = (settings: Record<string, boolean>, sidebarSplitLayout?: typeof split) => ({
+const host = (settings: Record<string, boolean>, sidebarSplitLayout?: typeof split, awaiting: Record<string, number> = {}) => ({
   settings: { workspaces: true, ...settings },
-  rpc: { workspaces_get: () => state },
+  rpc: { workspaces_get: () => state, state_get: () => ({ awaiting }) } as never,
   sidebarThreads: { status: "ready" as const, projects, threads, sections: [] },
   sidebarSplitLayout,
 });
@@ -131,4 +131,13 @@ it("shows nothing without a split or with the setting off", async () => {
   await single.findByRole("tab", { name: "Acme" });
   expect(single.queryByRole("toolbar", { name: "Open panes" })).toBeNull();
   single.lifecycle.unmount();
+});
+
+it("marks a pane whose thread asks you something, even once read", async () => {
+  // Thread c is idle and its last message asks you something: Your move.
+  const slot = await bar(host({ paneStrip: true }, split, { c: 1 }));
+  await slot.findByRole("toolbar", { name: "Open panes" });
+  await waitFor(() => expect(chips(slot)[2]!.querySelector(".jf-pane-chip-state")!.getAttribute("data-state")).toBe("needs-you"));
+  expect(chips(slot)[2]!.getAttribute("aria-label")).toBe("Thread c: waiting on you");
+  slot.lifecycle.unmount();
 });

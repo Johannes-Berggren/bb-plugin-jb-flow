@@ -78,7 +78,11 @@ export function createDeck(bb: BbPluginApi, { settings, listThreadsCached, await
       findSnoozedSection(),
       workspacesCached().catch((): WorkspaceState => ({ workspaces: [], threadWorkspaces: {} })),
     ]);
-    const focused = { ...focusedThread, workspace: workspaceOf(focusedThread.threadId, threads, workspaceState) };
+    const focused = {
+      ...focusedThread,
+      workspace: workspaceOf(focusedThread.threadId, threads, workspaceState),
+      panes: focus.focusedPanes(),
+    };
     // Snoozed threads stay hidden until they wake, as in the sidebar and `needs-me`.
     // Subthreads count, each going with its row's snooze.
     const open = forest(threads.filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible"))
