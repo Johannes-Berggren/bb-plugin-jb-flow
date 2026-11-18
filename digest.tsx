@@ -13,6 +13,7 @@ import { Icon } from "@/components/ui/icon";
 import { errorText, ProjectChip } from "./flow-state";
 import { ConfirmDialog } from "./dialogs";
 import { EmptyState } from "./triage-list";
+import { SkeletonRows } from "./ui-extras";
 export function DigestSection() {
   const { state: workspaceState } = useWorkspaces();
   const selectedWorkspace = useSelectedWorkspace();
@@ -91,7 +92,7 @@ export function DigestSection() {
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-muted-foreground">
           {digest === null
-            ? "Loading…"
+            ? ""
             : `${items.length} idle thread${items.length === 1 ? "" : "s"} without a section · updated ${formatWhen(digest.generatedAt)}`}
         </span>
         <div className="ml-auto flex gap-2">
@@ -144,7 +145,7 @@ export function DigestSection() {
           {error}
         </p>
       )}
-      {digest === null ? null : items.length === 0 ? (
+      {digest === null ? <SkeletonRows label="Loading stale threads" /> : items.length === 0 ? (
         <EmptyState>No stale threads.</EmptyState>
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">

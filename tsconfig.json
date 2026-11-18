@@ -64,6 +64,7 @@
     "pane-strip.tsx",
     "pane-edge-hints.tsx",
     "pane-edge-hints.ui.test.tsx",
+    "home.ui.test.tsx",
     "pane-commands.tsx",
     "pane-commands-model.ts",
     "pane-commands-model.test.ts",

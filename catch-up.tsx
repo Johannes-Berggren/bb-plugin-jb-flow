@@ -54,7 +54,7 @@ import { ago } from "./palette-model";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { useSelectedWorkspace, useWorkspaces } from "./workspace-client";
 import { inWorkspace } from "./workspaces";
-import { PrList, StatusIcon, rowStatus, runInfo, threadPrs, useNow } from "./ui-extras";
+import { PrList, SkeletonRows, StatusIcon, rowStatus, runInfo, threadPrs, useNow } from "./ui-extras";
 import { useSidebarThreadActions } from "./thread-actions";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
@@ -688,7 +688,7 @@ function CatchUpDeck({
 
       <div className="jf-catchup-stage">
         {!ready || active === null ? (
-          <p className="jf-catchup-empty">Loading…</p>
+          <SkeletonRows rows={4} label="Loading Catch up" />
         ) : active.items.length === 0 ? (
           <div className="jf-catchup-end">
             <Icon name="Check" className="jf-catchup-end-icon" />

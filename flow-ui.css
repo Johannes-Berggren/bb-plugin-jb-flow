@@ -374,3 +374,50 @@
   white-space: nowrap;
   font-size: 10px;
 }
+
+/* --- loading placeholders --- */
+.jf-skeleton {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 10px);
+  background: var(--card);
+}
+.jf-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 12px;
+}
+.jf-skeleton-row + .jf-skeleton-row {
+  border-top: 1px solid var(--border);
+}
+.jf-skeleton-bar {
+  height: 10px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  animation: jf-skeleton-pulse 1.4s ease-in-out infinite;
+}
+.jf-skeleton-lead {
+  width: 40px;
+  flex-shrink: 0;
+}
+@keyframes jf-skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jf-skeleton-bar {
+    animation: none;
+  }
+}
+
+/* A homepage section with nothing to show: BB draws the title, so hide the
+   whole section. The selector follows BB's markup; where it doesn't match,
+   the section stays, empty. */
+section:has(> [data-bb-plugin-root] > [data-jf-hidden-section]) {
+  display: none;
+}
