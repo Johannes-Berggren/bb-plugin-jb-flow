@@ -4,6 +4,8 @@
   z-index: 40;
   pointer-events: none;
 }
+/* Solid enough to read over any page: the popover color matched BB's own
+   background, so the first version all but disappeared. */
 .jf-edge-hint {
   position: absolute;
   top: 50%;
@@ -11,19 +13,18 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
-  padding: 0 9px;
-  border: 1px solid var(--border);
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in oklch, var(--foreground) 24%, transparent);
   border-radius: 999px;
-  background: color-mix(in oklch, var(--popover, var(--background)) 92%, transparent);
-  box-shadow: 0 2px 8px color-mix(in oklch, black 18%, transparent);
-  color: var(--muted-foreground);
-  font-size: 11px;
-  font-weight: 500;
+  background: color-mix(in oklch, var(--foreground) 14%, var(--background));
+  box-shadow: 0 4px 14px color-mix(in oklch, black 35%, transparent);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
   pointer-events: auto;
-  backdrop-filter: blur(6px);
 }
 .jf-edge-hint[data-side="left"] {
   left: 8px;
@@ -32,10 +33,10 @@
   right: 8px;
 }
 .jf-edge-hint:hover {
-  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 20%, var(--background));
 }
 .jf-edge-hint[data-needs-you] {
   border-color: color-mix(in oklch, var(--attention, var(--warning, #c98a1b)) 55%, transparent);
-  background: color-mix(in oklch, var(--attention, var(--warning, #c98a1b)) 18%, var(--popover, var(--background)));
+  background: color-mix(in oklch, var(--attention, var(--warning, #c98a1b)) 26%, var(--background));
   color: var(--foreground);
 }
