@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { findApproveButton, LAST_MODEL_KEY, PlanModelMenu } from "./plan-model-picker";
+import { findPlanCards, LAST_MODEL_KEY, PlanModelMenu, PlanModelPicker } from "./plan-model-picker";
 
 afterEach(() => {
   cleanup();
@@ -66,11 +66,60 @@ it("shows nothing without a waiting plan or a second model", async () => {
   slot.lifecycle.unmount();
 });
 
-it("finds BB's Approve plan button only when one plan card is on screen", () => {
+it("finds every plan card's Approve plan button, with the pane it sits in", () => {
   const card = `<section data-testid="plan-review-banner"><button>Keep planning</button><button> Approve plan</button></section>`;
   const root = document.createElement("div");
   root.innerHTML = card;
-  expect(findApproveButton(root)?.textContent?.trim()).toBe("Approve plan");
-  root.innerHTML = card + card;
-  expect(findApproveButton(root)).toBeNull();
+  expect(findPlanCards(root).map((found) => [found.approve.textContent?.trim(), found.paneId])).toEqual([["Approve plan", null]]);
+  root.innerHTML = `<div data-split-pane-id="p1">${card}</div><div data-split-pane-id="p2">${card}</div>`;
+  expect(findPlanCards(root).map((found) => found.paneId)).toEqual(["p1", "p2"]);
+});
+
+it("in a split, each plan card gets a menu for its own pane's thread, focused or not", async () => {
+  const card = `<section data-testid="plan-review-banner"><button>Keep planning</button><button>Approve plan</button></section>`;
+  document.body.insertAdjacentHTML(
+    "beforeend",
+    `<div id="qa-split"><div data-split-pane-id="p1"></div><div data-split-pane-id="p2">${card}</div><div data-split-pane-id="p3">${card}</div></div>`,
+  );
+  const asked: string[] = [];
+  const slot = renderSlot(
+    { component: PlanModelPicker },
+    {},
+    {
+      settings: { planModelChoice: true },
+      rpc: {
+        plan_models: ({ threadId }: { threadId: string }) => (asked.push(threadId), models),
+        plan_approve: vi.fn(),
+      },
+      // The focused pane has no plan; the two others do.
+      sidebarSplitLayout: {
+        panes: ["t1", "t2", "t3"].map((threadId, index) => ({
+          paneId: `p${index + 1}`,
+          threadId,
+          isFocused: index === 0,
+          rect: { x: index / 3, y: 0, width: 1 / 3, height: 1 },
+        })),
+      },
+    } as never,
+  );
+  await waitFor(() => expect(document.querySelectorAll('button[aria-label="Approve with another model"]')).toHaveLength(2));
+  expect([...asked].sort()).toEqual(["t2", "t3"]);
+  expect(document.querySelector('[data-split-pane-id="p1"] .jf-plan-model')).toBeNull();
+  slot.lifecycle.unmount();
+  document.getElementById("qa-split")?.remove();
+});
+
+it("asks again when the card shows before the server lists the plan as waiting", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let calls = 0;
+  const slot = renderSlot(
+    { component: PlanModelMenu },
+    { threadId: "t1" },
+    { rpc: { plan_models: () => (calls += 1) > 1 ? models : { pending: false, current: null, models: [] }, plan_approve: vi.fn() } },
+  );
+  await waitFor(() => expect(calls).toBe(1));
+  await vi.advanceTimersByTimeAsync(600);
+  await slot.findByRole("button", { name: "Approve with another model" });
+  vi.useRealTimers();
+  slot.lifecycle.unmount();
 });
