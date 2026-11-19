@@ -406,7 +406,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **Tags** allow several per thread. A settings button converts "area" sections (e.g. Commercial) into tags.
 
 ### Snooze
-- A clock button in the thread header, `bb jb-flow snooze <thread|--self> <when> [--note …]`, and a `snooze_thread` agent tool.
+- A Snooze button in the thread header ("Snoozed until …" while it's snoozed), `bb jb-flow snooze <thread|--self> <when> [--note …]`, and a `snooze_thread` agent tool.
 - A snoozed thread moves to a "😴 Snoozed" section, which the Triage list keeps collapsed at the bottom.
 - When it's due, it goes back to its previous section and is marked unread. If a note was set, the note is sent as a prompt. A note that fails to send is tried again every minute, for about half an hour.
 - `<when>` accepts `2h`, `3d`, `1w`, `tomorrow`, `mon`…`sun`, `next-week`, or `YYYY-MM-DD[THH:MM]`.
@@ -454,9 +454,9 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 
 ### Thread status at a glance
 - **Row icon:** needs input / failed / running / stuck / watched / PR state.
-- **Running threads:** show elapsed time. After 15 minutes without output they're flagged "stuck", and you can stop them from the row menu or the header chip.
+- **Running threads:** show elapsed time. After 15 minutes without output they're flagged "stuck", and you can stop them from the row menu or the status strip's chip.
 - **Hover preview:** hovering a row shows the last reply, the PR stack, what's being watched, and the run time.
-- **Thread header strip:** shows run time or stuck, the watch, and the PR summary. Clicking the PR summary opens the PR panel.
+- **Status strip:** in the row above the composer, shows run time or stuck, the watch, and the PR summary, only while there's one of them to show. Clicking the PR summary opens the Pull requests tab.
 - **Command palette:**
 
   | Shortcut | Command |
