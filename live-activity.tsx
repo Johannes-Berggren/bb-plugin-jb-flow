@@ -7,9 +7,9 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   UrlLink,
-  experimental_useSidebarThreadPullRequest as useBranchPr,
   experimental_useSidebarThreads as useSidebarThreads,
 } from "@get-bb/plugin-sdk/app";
+import { useBranchPr } from "./branch-pr";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { usePortalScopeProps } from "@/lib/portal-scope";
@@ -22,17 +22,36 @@ import { statusAge } from "./status-age";
 import { useConductorThreadIds } from "./conductor-client";
 
 type Sdk = ReturnType<typeof useSdk>;
-type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
-export type ActivityTask = Timeline["activeBackgroundCommands"][number];
-export type ActivityData = Pick<
-  Timeline,
-  | "activeBackgroundCommands"
-  | "activeWorkflows"
-  | "rows"
-  | "pendingTodos"
-  | "goal"
-  | "contextWindowUsage"
->;
+// timeline() has two overloads: a full read, and a delta read after a tag. This is the full read's result.
+export type ActivityTimeline = Sdk["threads"]["timeline"] extends { (args: never): Promise<infer Full>; (args: never): Promise<unknown> } ? Full : never;
+export type ActivityTask = ActivityTimeline["activeBackgroundCommands"][number];
+/** A thread's goal (a provider's /goal), from its latest goal event: bb no longer puts it in the timeline. */
+export type ActivityGoal = {
+  objective: string;
+  status: "active" | "blocked" | "budgetLimited" | "complete" | "paused" | "usageLimited";
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+};
+export type ActivityData = Pick<ActivityTimeline, "activeBackgroundCommands" | "activeWorkflows" | "rows" | "pendingTodos" | "contextWindowUsage"> & {
+  goal: ActivityGoal | null;
+};
+
+const GOAL_STATUSES: ReadonlySet<string> = new Set(["active", "blocked", "budgetLimited", "complete", "paused", "usageLimited"]);
+
+/** The goal a `thread/goal/updated` event carries, or null for anything else. */
+export function goalOf(row: { type: string; data?: unknown } | undefined): ActivityGoal | null {
+  if (row?.type !== "thread/goal/updated") return null;
+  const data = row.data as Partial<Record<keyof ActivityGoal, unknown>> | undefined;
+  if (!data || typeof data.objective !== "string" || typeof data.status !== "string" || !GOAL_STATUSES.has(data.status)) return null;
+  return {
+    objective: data.objective,
+    status: data.status as ActivityGoal["status"],
+    tokenBudget: typeof data.tokenBudget === "number" ? data.tokenBudget : null,
+    tokensUsed: typeof data.tokensUsed === "number" ? data.tokensUsed : 0,
+    timeUsedSeconds: typeof data.timeUsedSeconds === "number" ? data.timeUsedSeconds : 0,
+  };
+}
 export type ActivityPr = {
   number: number;
   title: string;
@@ -140,15 +159,19 @@ function useActivity(threadId: string, enabled: boolean) {
       }
       inflight = true;
       try {
-        const data = await sdk.threads.timeline({
-          threadId,
-          segmentLimit: "1",
-          deferContent: "true",
-          includeNestedRows: "false",
-          signal: controller.signal,
-        });
+        const [timeline, goalRows] = await Promise.all([
+          sdk.threads.timeline({
+            threadId,
+            segmentLimit: "1",
+            deferContent: "true",
+            includeNestedRows: "false",
+            signal: controller.signal,
+          }),
+          // The latest goal event: set, updated or cleared. A failed read only hides the goal.
+          (async () => sdk.threads.events.list({ threadId, types: ["thread/goal/updated", "thread/goal/cleared"], order: "desc", limit: "1", signal: controller.signal }))().catch(() => []),
+        ]);
         if (!controller.signal.aborted) {
-          setResult({ threadId, data, updatedAt: Date.now() });
+          setResult({ threadId, data: { ...timeline, goal: goalOf(goalRows[0]) }, updatedAt: Date.now() });
         }
       } catch {
         if (!controller.signal.aborted) {
@@ -1094,8 +1117,8 @@ export function LiveActivityBanner({
   const { threads } = useSidebarThreads();
   const scope = composer.scope;
   const threadId = scope.kind === "thread" ? scope.threadId : null;
-  const { pullRequest } = useBranchPr(threadId ?? "");
   const thread = threads.find((thread) => thread.id === threadId);
+  const pullRequest = useBranchPr(thread?.environment?.id);
   const running =
     composer.isRunning ||
     thread?.status === "active" ||

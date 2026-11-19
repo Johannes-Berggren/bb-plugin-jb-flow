@@ -9,11 +9,9 @@ import {
   elapsed,
   type ActivityData,
   type ActivityTask,
+  type ActivityTimeline as Timeline,
 } from "./live-activity";
 
-type Timeline = Awaited<
-  ReturnType<ReturnType<typeof useSdk>["threads"]["timeline"]>
->;
 const task: ActivityTask = {
   id: "task1",
   itemId: "i1",
@@ -72,8 +70,9 @@ const snapshot: Timeline = {
   activePromptMode: null,
   activeThinking: null,
   contextBoundarySeq: 0,
-  goal: null,
+  extensionStates: {},
   maxSeq: 2,
+  tag: "test",
   modelFallback: null,
   providerCommands: [],
   sessionOptions: null,
@@ -415,8 +414,6 @@ it("preserves goal controls and reports failed actions without submitting the co
         ...data,
         goal: {
           objective: "Ship release",
-          sourceSeq: 2,
-          updatedAt: 2000,
           status: "active",
           tokensUsed: 100,
           tokenBudget: null,

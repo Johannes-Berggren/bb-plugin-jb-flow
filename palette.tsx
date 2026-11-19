@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import {
   experimental_copyToClipboard as copyToClipboard,
   experimental_usePluginId as usePluginId,
-  experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
+  experimental_useAppPanel as useAppPanel,
   experimental_useSidebarThreads as useSidebarThreads,
   experimental_useThreadActions as useThreadActions,
   useBbContext,
@@ -19,6 +19,8 @@ import {
   useSdk,
   useSettings,
 } from "@get-bb/plugin-sdk/app";
+import { useBranchPr } from "./branch-pr";
+import { DEV_AUTORUN, DEV_SERVERS_TAB, PRS_TAB } from "./panel-tabs";
 import type { PluginSidebarThread, PluginThreadActionEntry, PluginThreadActionTarget } from "@get-bb/plugin-sdk/app";
 import type { FlowState, rpcContract } from "./server";
 import {
@@ -233,6 +235,7 @@ const NO_TARGET: PluginThreadActionTarget = {
   isUnread: false,
   status: "idle",
   environment: null,
+  parentNotifications: "auto",
 };
 function target(thread: ThreadInfo | null, sidebar: PluginSidebarThread | undefined): PluginThreadActionTarget {
   if (thread === null) return NO_TARGET;
@@ -240,6 +243,7 @@ function target(thread: ThreadInfo | null, sidebar: PluginSidebarThread | undefi
     id: thread.id,
     projectId: thread.projectId,
     parentThreadId: sidebar?.parentThreadId ?? null,
+    parentNotifications: sidebar?.parentNotifications ?? "auto",
     archivedAt: thread.archivedAt,
     pinnedAt: sidebar?.pinnedAt ?? null,
     sectionId: thread.sectionId,
@@ -364,6 +368,7 @@ export function Palette({
   const sdk = useSdk();
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
+  const panel = useAppPanel();
   const context = useBbContext();
   const pluginId = usePluginId();
   const { threads, projects, sections: threadSections } = useSidebarThreads();
@@ -751,11 +756,11 @@ export function Palette({
       if ((flow?.threadPrs[here.id] ?? []).length > 0) {
         entries.push(
           { id: "current-watch-ci", title: "Watch CI and reviews for this thread's PRs", keywords: "pull request checks wait", icon: <Glyph name="hourglass" />, thread: true, run: () => rpc.call("thread_watch_ci", { threadId: here.id }) },
-          { id: "current-prs", title: "Show this thread's pull requests", keywords: "pr panel", icon: <Icon name="GitPullRequest" />, thread: true, run: () => navigate.openThreadPanel({ actionId: "prs", title: "Pull requests" }) },
+          { id: "current-prs", title: "Show this thread's pull requests", keywords: "pr panel", icon: <Icon name="GitPullRequest" />, thread: true, run: () => panel.openTab({ tab: PRS_TAB, title: "Pull requests" }) },
         );
       }
       entries.push(
-        { id: "current-dev", title: "Start dev servers", keywords: "scripts run dev", icon: <Icon name="Play" />, thread: true, run: () => navigate.openThreadPanel({ actionId: "dev-servers", title: "Scripts", params: { autorun: "dev" } }) },
+        { id: "current-dev", title: "Start dev servers", keywords: "scripts run dev", icon: <Icon name="Play" />, thread: true, run: () => panel.openTab({ tab: DEV_SERVERS_TAB, params: DEV_AUTORUN, title: "Scripts" }) },
         { id: "current-all", title: "All actions for this thread…", keywords: "menu more pin rename archive", icon: <Icon name="ListView" />, thread: true, open: () => ({ kind: "thread", thread: here }) },
       );
     }
@@ -1357,7 +1362,7 @@ function threadStatus(
 }
 
 function ThreadRow({ item, flow, thread, project, workspaceName, now }: RowProps & { item: Extract<PaletteItem, { kind: "thread" }> }) {
-  const { pullRequest } = useSidebarThreadPullRequest(item.threadId);
+  const pullRequest = useBranchPr(thread?.environment?.id);
   const title = thread?.displayTitle ?? item.server?.title ?? "Untitled thread";
   const projectId = thread?.projectId ?? item.server?.projectId ?? "";
   const owner = project(projectId);
@@ -1431,7 +1436,7 @@ function PalettePreview({
   workspace: string | null;
   now: number;
 }) {
-  const { pullRequest } = useSidebarThreadPullRequest(threadId);
+  const pullRequest = useBranchPr(thread?.environment?.id);
   const updatedAt = thread?.updatedAt ?? hit?.updatedAt ?? 0;
   // Arrowing past a row shouldn't fetch it.
   const preview = useThreadPreview(threadId, updatedAt, 150);

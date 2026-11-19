@@ -11,16 +11,15 @@ import { mountTimelineActivity } from "./timeline-activity";
 import { COPY_CODE_FLAG, mountInlineCodeCopy } from "./inline-code-copy";
 import { mountCallouts } from "./callouts";
 import { useEffect, useRef, useState } from "react";
-import { definePluginApp, experimental_useSidebarThreads as useSidebarThreads, useRpc, experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest, useBbContext, useComposer, useSidebarSplitLayout, useSettings } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, experimental_useSidebarThreads as useSidebarThreads, useRpc, useBbContext, useComposer, useSidebarSplitLayout, useSettings } from "@get-bb/plugin-sdk/app";
+import { useBranchPr } from "./branch-pr";
+import { DEV_AUTORUN, DEV_SERVERS_TAB, PRS_TAB, REPO_COMMANDS_TAB } from "./panel-tabs";
 import type { JsonValue } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
-import { DecisionChips, UnreleasedSection, YourMoveSection, HeaderStatusStrip, PullRequestsPanel } from "./ui-extras";
+import { DecisionChips, UnreleasedSection, YourMoveSection, ThreadStatusStrip, PullRequestsPanel, runInfo, threadPrs } from "./ui-extras";
 import { formatWhen } from "./when";
 import { focusLimitOf } from "./now-model";
-import { Button } from "@/components/ui/button";
-import { Glyph } from "@/components/ui/glyph";
-import { cn } from "@/lib/utils";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { mountPaneAppearance, PaneAppearancePreference } from "./pane-appearance";
 import { mountSplitScroll, SplitScrollPreference } from "./split-scroll";
@@ -43,17 +42,27 @@ import { CONDUCTOR_PANEL, ConductorPage, ConductorSettings } from "./conductor-p
 import { DoneForYouSection } from "./conductor-brief";
 import { PlanModelPicker } from "./plan-model-picker";
 
-// --- thread header: status strip + Pull requests panel ------------------------------
+// --- thread status strip (above the composer) + Pull requests panel ------------------
 
-function ThreadStatusHeader({ threadId }: { threadId: string }) {
+type SegmentInput = { threadId: string; environment: { id: string } | null };
+
+function ThreadStatusSegment({ threadId, environment }: SegmentInput) {
   const { state } = useFlowState();
-  const { pullRequest } = useSidebarThreadPullRequest(threadId);
-  return <HeaderStatusStrip threadId={threadId} state={state} branchPr={pullRequest} />;
+  const pullRequest = useBranchPr(environment?.id);
+  return <ThreadStatusStrip threadId={threadId} state={state} branchPr={pullRequest} />;
 }
 
-function PullRequestsTab({ threadId, params }: { threadId: string; params: JsonValue | null }) {
+/** The strip takes room in the context row only while it has a run, a watch or a PR to show. */
+function useThreadStatusVisible({ threadId, environment }: SegmentInput): boolean {
   const { state } = useFlowState();
-  const { pullRequest } = useSidebarThreadPullRequest(threadId);
+  const pullRequest = useBranchPr(environment?.id);
+  if (state === null) return false;
+  return runInfo(state.running[threadId], Date.now()) !== null || !!state.watching[threadId] || threadPrs(state.threadPrs[threadId], pullRequest).length > 0;
+}
+
+function PullRequestsTab({ threadId, environment, params }: { threadId: string; environment: { id: string } | null; params: JsonValue | null }) {
+  const { state } = useFlowState();
+  const pullRequest = useBranchPr(environment?.id);
   return <PullRequestsPanel threadId={threadId} params={params} state={state} branchPr={pullRequest} />;
 }
 
@@ -126,34 +135,6 @@ function CommandHost() {
   }, []);
   return snoozeThreadId === null ? null : (
     <SnoozeDialog threadId={snoozeThreadId} open onOpenChange={(open) => (open ? undefined : setSnoozeThreadId(null))} />
-  );
-}
-
-// --- thread header action --------------------------------------------------------
-
-function SnoozeHeaderAction({ threadId }: { threadId: string }) {
-  const { state } = useFlowState();
-  const [open, setOpen] = useState(false);
-  const snoozed = state?.snoozes[threadId];
-  const label = snoozed
-    ? `Snoozed until ${formatWhen(snoozed.until)}`
-    : "Snooze thread";
-  return (
-    <>
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn(
-          "size-7",
-          snoozed ? "text-foreground" : "text-muted-foreground",
-        )}
-        aria-label={label}
-        onClick={() => setOpen(true)}
-      >
-        <Glyph name="alarm" className={cn("size-4", snoozed && "text-amber-500")} />
-      </Button>
-      <SnoozeDialog threadId={threadId} open={open} onOpenChange={setOpen} />
-    </>
   );
 }
 
@@ -282,7 +263,7 @@ export default definePluginApp((app) => {
     component: WorkspaceNavigation,
   });
   app.slots.experimental_appOverlay({ id: "workspace-route", component: WorkspaceRouteBridge });
-  app.slots.settingsSection({ id: "workspaces", title: "Workspaces", component: WorkspaceSettings });
+  app.slots.settingsSection({ id: "workspaces", title: "Workspaces", component: () => <WorkspaceSettings /> });
   app.slots.experimental_threadAction({
     id: "workspace", title: "Workspace", icon: "Folder", group: "organize",
     useData: () => ({ ...useWorkspaces(), enabled: useSettings().values?.workspaces === true }),
@@ -307,18 +288,21 @@ export default definePluginApp((app) => {
       "What to do next on top, then lanes, project chips, tags, snooze and keyboard triage.",
     component: TriageThreadList,
   });
-  app.slots.experimental_threadHeaderAction({
+  app.slots.experimental_threadContextSegment({
     id: "status",
     title: "Thread status",
-    component: ({ threadId }) => <ThreadStatusHeader threadId={threadId} />,
+    // After bb's parent thread, before its changed files.
+    group: "2_status",
+    summary: ThreadStatusSegment,
+    useVisible: useThreadStatusVisible,
   });
-  app.slots.threadPanelAction({
-    id: "prs",
+  app.slots.experimental_tab({
+    ...PRS_TAB,
     title: "Pull requests",
     icon: "GitPullRequest",
     component: PullRequestsTab,
-    run: ({ openPanel }) => {
-      openPanel({ title: "Pull requests" });
+    run: ({ experimental_panel }) => {
+      experimental_panel.openTab({ tab: PRS_TAB, title: "Pull requests" });
     },
   });
   app.slots.experimental_appOverlay({ id: "command-host", component: CommandHost });
@@ -406,8 +390,8 @@ export default definePluginApp((app) => {
     title: "Start dev servers",
     defaultShortcut: { key: "d", alt: true, shift: true },
     isAvailable: inThread,
-    run: ({ openPanel }) => {
-      openPanel({ actionId: "dev-servers", title: "Scripts", params: { autorun: "dev" } });
+    run: ({ experimental_panel }) => {
+      experimental_panel.openTab({ tab: DEV_SERVERS_TAB, params: DEV_AUTORUN, title: "Scripts" });
     },
   });
   app.commands.register({
@@ -415,8 +399,8 @@ export default definePluginApp((app) => {
     title: "Show this thread's pull requests",
     defaultShortcut: { key: "p", alt: true, shift: true },
     isAvailable: inThread,
-    run: ({ openPanel }) => {
-      openPanel({ actionId: "prs", title: "Pull requests" });
+    run: ({ experimental_panel }) => {
+      experimental_panel.openTab({ tab: PRS_TAB, title: "Pull requests" });
     },
   });
   app.commands.register({
@@ -428,27 +412,42 @@ export default definePluginApp((app) => {
       if (threadId) await commandRpc?.call("thread_watch_ci", { threadId });
     },
   });
-  app.slots.experimental_threadHeaderAction({
+  app.slots.experimental_threadAction({
     id: "snooze",
     title: "Snooze",
-    component: ({ threadId }) => <SnoozeHeaderAction threadId={threadId} />,
+    icon: "Clock",
+    group: "1_state",
+    placement: "header",
+    useData: () => useFlowState().state?.snoozes ?? {},
+    item: ({ thread, data }) => {
+      const snoozed = data[thread.id];
+      return {
+        label: snoozed ? `Snoozed until ${formatWhen(snoozed.until)}` : "Snooze",
+        icon: "Clock",
+        // The dialog lives in CommandHost, shared with the Snooze command.
+        run: () => {
+          window.dispatchEvent(new CustomEvent(SNOOZE_EVENT, { detail: thread.id }));
+        },
+      };
+    },
   });
-  app.slots.threadPanelAction({
-    id: "dev-servers",
+  app.slots.experimental_tab({
+    ...DEV_SERVERS_TAB,
     title: "Start dev servers",
     icon: "Play",
     component: RepoCommandsPanel,
-    run: ({ openPanel }) => {
-      openPanel({ title: "Scripts", params: { autorun: "dev" } });
+    params: DEV_AUTORUN,
+    run: ({ experimental_panel }) => {
+      experimental_panel.openTab({ tab: DEV_SERVERS_TAB, params: DEV_AUTORUN, title: "Scripts" });
     },
   });
-  app.slots.threadPanelAction({
-    id: "repo-commands",
+  app.slots.experimental_tab({
+    ...REPO_COMMANDS_TAB,
     title: "Scripts",
     icon: "ListView",
     component: RepoCommandsPanel,
-    run: ({ openPanel }) => {
-      openPanel({ title: "Scripts" });
+    run: ({ experimental_panel }) => {
+      experimental_panel.openTab({ tab: REPO_COMMANDS_TAB, title: "Scripts" });
     },
   });
   app.slots.settingsSection({

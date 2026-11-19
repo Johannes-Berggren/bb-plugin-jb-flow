@@ -44,6 +44,7 @@ function thread(id: string, age: number, overrides: Partial<PluginSidebarThread>
     projectId: "p1",
     parentThreadId: null,
     lifecycleOwnerThreadId: null,
+    parentNotifications: "auto",
     sourceThreadId: null,
     sectionId: null,
     originKind: null,

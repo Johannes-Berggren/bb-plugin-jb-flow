@@ -11,7 +11,6 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent a
 import type { z } from "zod";
 import {
   ThreadChat,
-  experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
   experimental_useSidebarThreads as useSidebarThreads,
   useBbNavigate,
   useRpc,
@@ -19,6 +18,7 @@ import {
   useSettings,
 } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { useBranchPr } from "./branch-pr";
 import type { FlowState, rpcContract } from "./server";
 import {
   CATCH_UP_EVENT,
@@ -863,7 +863,7 @@ function CardView({
   swipe: Swipe;
   onOpen: () => void;
 }) {
-  const { pullRequest } = useSidebarThreadPullRequest(thread.id);
+  const pullRequest = useBranchPr(thread.environment?.id);
   const prs = threadPrs(flow?.threadPrs[thread.id], pullRequest);
   const busy = thread.status === "active" || thread.status === "starting";
   const status = rowStatus(thread, busy, flow?.watching[thread.id], prs, runInfo(flow?.running[thread.id], now));
