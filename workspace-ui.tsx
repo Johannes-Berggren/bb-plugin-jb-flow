@@ -81,7 +81,7 @@ function NavItem({
           navigate.toCompose({ projectId, focusPrompt: true });
         else
           actions.activate(item.id, {
-            openInSplit: event.metaKey || event.ctrlKey,
+            target: event.metaKey || event.ctrlKey ? "split" : "current",
           });
       }}
     >

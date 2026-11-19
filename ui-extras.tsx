@@ -6,7 +6,8 @@ import { inWorkspace } from "./workspaces";
 import { forwardRef, useCallback, useEffect, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import * as HoverCard from "@radix-ui/react-hover-card";
-import { experimental_useSidebarThreads as useSidebarThreads, useBbNavigate, useComposers, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_useAppPanel as useAppPanel, experimental_useSidebarThreads as useSidebarThreads, useBbNavigate, useComposers, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { PRS_TAB } from "./panel-tabs";
 import type { JsonValue, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import { PR_ATTENTION_RANK } from "./palette-model";
@@ -403,7 +404,8 @@ export const ThreadHoverPreview = forwardRef<HTMLAnchorElement, HoverPreviewProp
 
 // --- thread header status strip -----------------------------------------------------
 
-export function HeaderStatusStrip({
+/** A thread's run time, its CI or release watch, and its PRs, in the context row above the composer. */
+export function ThreadStatusStrip({
   threadId,
   state,
   branchPr,
@@ -413,7 +415,7 @@ export function HeaderStatusStrip({
   branchPr: Parameters<typeof threadPrs>[1];
 }) {
   const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
+  const panel = useAppPanel();
   const now = useNow();
   if (state === null) return null;
   const prs = threadPrs(state.threadPrs[threadId], branchPr);
@@ -452,7 +454,7 @@ export function HeaderStatusStrip({
           type="button"
           className={cn(chip, PR_TONE[worst.attention])}
           title={prs.map((pr) => `${pr.repo}#${pr.number} · ${attentionLabel(pr.attention)} · ${pr.title}`).join("\n")}
-          onClick={() => navigate.openThreadPanel({ actionId: "prs", title: "Pull requests" })}
+          onClick={() => panel.openTab({ tab: PRS_TAB, title: "Pull requests" })}
         >
           <Glyph name={prGlyph(worst)} className="size-3.5" />
           {prs.length === 1 ? `#${worst.number}` : `${prs.length} PRs`}

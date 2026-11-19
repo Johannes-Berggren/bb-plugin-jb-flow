@@ -75,6 +75,7 @@
     "split-scroll-model.test.ts",
     "live-activity.tsx",
     "live-activity.ui.test.tsx",
+    "sdk-surfaces.ui.test.tsx",
     "needs-me.ts",
     "components",
     "lib",

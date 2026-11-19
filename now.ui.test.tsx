@@ -38,6 +38,7 @@ function thread(id: string, overrides: Partial<PluginSidebarThread> = {}): Plugi
     projectId: "p1",
     parentThreadId: null,
     lifecycleOwnerThreadId: null,
+    parentNotifications: "auto",
     sourceThreadId: null,
     sectionId: null,
     originKind: null,

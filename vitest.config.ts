@@ -18,6 +18,7 @@ export default defineConfig({
       "home.ui.test.tsx",
       "pane-commands.ui.test.tsx",
       "live-activity.ui.test.tsx",
+      "sdk-surfaces.ui.test.tsx",
       "timeline-activity.ui.test.tsx",
       "inline-code-copy.ui.test.tsx",
       "callouts.ui.test.tsx",
