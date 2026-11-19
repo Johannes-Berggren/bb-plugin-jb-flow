@@ -352,7 +352,8 @@ more", "all that apply"), the options are checkboxes with the recommended ones
 already ticked, and **Send 1, 3** replies `1,3`. Any other decision can be
 switched to the same ticking with **Pick several** in the header, or by
 ⌘/Ctrl-clicking an option. Go-lists work the same way with **Go**; ticking every
-step sends plain `go`.
+step sends plain `go`. A single step to run ("Reply **go** to run it") shows that
+step and a **Go** button.
 
 A reply can end with more than one list, such as a path forward (answered with
 `go`) and a decision (answered with a number). Then each list gets its own
@@ -442,7 +443,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - The approval sets the thread's model, then sends a short steer message with it just before approving. bb holds the steer while the plan waits and adds it to the running turn as soon as the approval goes through, which switches the live session to the new model. It joins that turn rather than starting a new one, and later turns stay on the new model.
 - bb can't approve and switch models in one step, so the switch lands just after the agent resumes: its first step after approval can still run on the planning model, and the rest of the implementation runs on the new one.
 - The last choice is remembered on this device and shown as a one-click **Approve with …** button. Picking the current model clears it.
-- The menu attaches when one plan card is on screen and the open thread has the plan waiting. It depends on bb's plan-banner markup.
+- Every plan card on screen gets the menu, including in split panes that aren't focused; each one approves its own pane's thread. The menu shows only when the thread's provider lists at least two models. It depends on bb's plan-banner markup.
 
 ### Multi-PR threads (stacked and cross-repo)
 - Every PR a thread opens with `gh pr create` is linked automatically, in any repo. You can also link PRs manually.

@@ -459,3 +459,17 @@ it("Go with all answers a path forward with plain go, and an unanswered list is 
   expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "Path forward: go" }]);
   slot.lifecycle.unmount();
 });
+
+it("a single step to run shows the step and a Go, nothing to tick", async () => {
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ mode: "go", options: [{ n: 1, text: "Set the after-amount", recommended: false }] }), thread_reply: reply } },
+  );
+  expect(await slot.findByText("Set the after-amount")).toBeTruthy();
+  expect(slot.queryByRole("checkbox")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Go" }));
+  await waitFor(() => expect(reply).toHaveBeenCalledWith({ threadId: "t1", text: "go" }));
+  slot.lifecycle.unmount();
+});
