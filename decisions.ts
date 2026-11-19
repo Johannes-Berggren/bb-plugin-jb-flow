@@ -35,12 +35,18 @@ export function parseDecisionOptions(message: string, { strict = true }: { stric
   return findDecision(message, strict).options;
 }
 
-type Decision = { options: DecisionOption[]; intro: string; outro: string };
-const none = (): Decision => ({ options: [], intro: "", outro: "" });
+/** `start`: where the list begins in the lines searched, its intro line included. */
+type Decision = { options: DecisionOption[]; intro: string; outro: string; start: number };
+const none = (): Decision => ({ options: [], intro: "", outro: "", start: 0 });
 
 /** The trailing choice list, with the line before it and the lines after it. */
 function findDecision(message: string, strict: boolean): Decision {
-  const lines = message.trim().split("\n").slice(-30);
+  return findDecisionIn(message.trim().split("\n"), strict);
+}
+
+function findDecisionIn(all: readonly string[], strict: boolean): Decision {
+  const offset = Math.max(0, all.length - 30);
+  const lines = all.slice(offset);
   // Walk up from the end, skipping trailing chatter (timestamps, "Reply with the number").
   let end = lines.length - 1;
   while (end >= 0 && !/^\s*(?:>\s*)*\d+[.)]\s+\S/.test(lines[end]!)) {
@@ -64,7 +70,9 @@ function findDecision(message: string, strict: boolean): Decision {
     });
   }
   // "When it's green, I'll: 1. Merge 2. Release" is the agent's own plan, not a choice.
-  const intro = lines.slice(0, first).reverse().find((line) => line.trim() !== "" && !/^\s*(?:>\s*)*$/.test(line)) ?? "";
+  let introAt = first - 1;
+  while (introAt >= 0 && (lines[introAt]!.trim() === "" || /^\s*(?:>\s*)*$/.test(lines[introAt]!))) introAt -= 1;
+  const intro = introAt >= 0 ? lines[introAt]! : "";
   if (/\bI('ll| will|'m going to)\b[^?]*:\s*\**\s*$/i.test(intro) && !options.some((option) => option.recommended)) return none();
   // "Summary of changes: 1. Renamed… 2. Added…" reports what happened.
   const recommended = options.some((option) => option.recommended);
@@ -82,7 +90,41 @@ function findDecision(message: string, strict: boolean): Decision {
   if (/^\s*(?:>\s*)*#{1,6}\s/m.test(outro)) return none();
   const asks = CHOICE_INTRO.test(lastSentence(intro)) || CHOICE_OUTRO.test(outro) || MULTI_REPLY.test(`${intro}\n${outro}`);
   if (strict && !recommended && !asks) return none();
-  return { options, intro, outro };
+  return { options, intro, outro, start: offset + (introAt >= 0 ? introAt : first) };
+}
+
+/** A numbered list the user answers on its own, and what it is about. */
+export type DecisionGroup = {
+  mode: DecisionMode;
+  /** The line that introduces the list, without markup: "Decision needed: which rollout?" */
+  title: string;
+  /** Its bold lead-in when it has one ("Decision needed"), to name it in a combined reply. */
+  label: string;
+  options: DecisionOption[];
+};
+
+const modeOf = (around: string): DecisionMode => (GO_REPLY.test(around) ? "go" : MULTI_REPLY.test(around) ? "multi" : "choice");
+
+/**
+ * The choice lists a message ends with, in order, when there are several: a
+ * status report can end with a path forward (answered with "go") and a
+ * decision (answered with a number). Each list counts only with its own
+ * intro and reply line, and only what sits between the lists separates
+ * them, so a list further up in the message isn't one. At most three.
+ */
+export function decisionGroups(message: string): DecisionGroup[] {
+  const lines = message.trim().split("\n");
+  const groups: DecisionGroup[] = [];
+  let cut = lines.length;
+  while (groups.length < 3) {
+    const found = findDecisionIn(lines.slice(0, cut), true);
+    if (found.options.length === 0) break;
+    const title = plain(found.intro.replace(/^\s*(?:>\s*)*/, "")).replace(/\s+/g, " ").trim().slice(0, 300);
+    const label = /^\s*(?:>\s*)*\*\*([^*\n]{1,40}?):?\*\*/.exec(found.intro)?.[1]?.replace(/:$/, "").trim() ?? "";
+    groups.unshift({ mode: modeOf(`${found.intro}\n${found.outro}`), title, label, options: found.options });
+    cut = found.start;
+  }
+  return groups;
 }
 
 /**
@@ -91,6 +133,9 @@ function findDecision(message: string, strict: boolean): Decision {
  * with "go", one number, or several.
  */
 export function nextMove(message: string): { mode: DecisionMode; options: DecisionOption[] } {
+  // Several lists: the last one, with its own way of answering, not the first one's "go".
+  const groups = decisionGroups(message);
+  if (groups.length > 1) return { mode: groups.at(-1)!.mode, options: groups.at(-1)!.options };
   const steps = parseStatusReport(message, 0)?.steps;
   if (steps) {
     return {
@@ -104,4 +149,17 @@ export function nextMove(message: string): { mode: DecisionMode; options: Decisi
   if (GO_REPLY.test(tail)) return { mode: "go", options };
   // Only the lines around the list: "several" earlier in the message isn't about it.
   return { mode: MULTI_REPLY.test(`${intro}\n${outro}`) ? "multi" : "choice", options };
+}
+
+/**
+ * Every list the last reply asks you to answer: one per list when it ends
+ * with several, else the one `nextMove` finds (a status report's next steps
+ * included). Empty when it asks nothing.
+ */
+export function nextMoves(message: string): DecisionGroup[] {
+  const groups = decisionGroups(message);
+  if (groups.length > 1) return groups;
+  const move = nextMove(message);
+  if (move.options.length === 0) return [];
+  return [{ ...move, title: groups[0]?.title ?? "", label: groups[0]?.label ?? "" }];
 }

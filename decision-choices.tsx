@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent, RefObject } from "react";
 import { useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
-import type { DecisionMode, DecisionOption } from "./decisions";
+import type { DecisionGroup, DecisionMode, DecisionOption } from "./decisions";
 import { Icon } from "@/components/ui/icon";
 import "./decision-choices.css";
 
@@ -70,22 +70,27 @@ export function repeatedReplyLines(list: Element): Element[] {
 }
 
 /** While the buttons show, hide the same list (and its "Reply with…" line) in the message above them. */
-function useHideRepeatedList(section: RefObject<HTMLElement | null>, options: readonly DecisionOption[], enabled: boolean) {
+function useHideRepeatedList(
+  section: RefObject<HTMLElement | null>,
+  lists: readonly (readonly DecisionOption[])[],
+  enabled: boolean,
+) {
   const [hidden, setHidden] = useState(false);
   useEffect(() => {
-    if (!enabled || options.length === 0) return;
+    if (!enabled || lists.every((options) => options.length === 0)) return;
     const scope = messageScope(section.current);
     if (!scope) return;
     let marked: Element[] = [];
     const apply = () => {
-      const list = repeatedList(scope, options);
-      // Only the list and its "Reply with…" lines: the question or path above them stays.
-      const next = list ? [list, ...repeatedReplyLines(list)] : [];
+      const found = lists.map((options) => repeatedList(scope, options));
+      // Only the lists and their "Reply with…" lines: the question or path above each stays.
+      const next = found.flatMap((list) => (list ? [list, ...repeatedReplyLines(list)] : []));
       if (next.length === marked.length && next.every((element, index) => element === marked[index])) return;
       for (const element of marked) element.removeAttribute(REPEATED_LIST_ATTR);
       for (const element of next) element.setAttribute(REPEATED_LIST_ATTR, "");
       marked = next;
-      setHidden(list !== null);
+      // The panel takes the lists' place only when it repeats every one of them.
+      setHidden(found.every((list) => list !== null));
     };
     apply();
     let frame = 0;
@@ -100,7 +105,7 @@ function useHideRepeatedList(section: RefObject<HTMLElement | null>, options: re
       for (const element of marked) element.removeAttribute(REPEATED_LIST_ATTR);
       setHidden(false);
     };
-  }, [section, options, enabled]);
+  }, [section, lists, enabled]);
   return hidden;
 }
 
@@ -110,7 +115,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   const rpc = useRpc<typeof rpcContract>();
   const hideRepeated = useSettings().values?.hideRepeatedChoices !== false;
   const sectionRef = useRef<HTMLElement>(null);
-  const [move, setMove] = useState<{ mode?: DecisionMode; options: DecisionOption[] }>({ options: [] });
+  const [move, setMove] = useState<{ mode?: DecisionMode; options: DecisionOption[]; groups?: DecisionGroup[] }>({ options: [] });
   // "Pick several": a one-number decision switched to ticking.
   const [several, setSeveral] = useState(false);
   const [picked, setPicked] = useState<number[]>([]);
@@ -151,7 +156,10 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     };
   }, [rpc, threadId, updatedAt]);
   const { options } = move;
-  const listHidden = useHideRepeatedList(sectionRef, options, hideRepeated);
+  const grouped = (move.groups?.length ?? 0) > 1 ? move.groups! : null;
+  const lists = useMemo(() => (grouped ? grouped.map((group) => group.options) : [options]), [grouped, options]);
+  const listHidden = useHideRepeatedList(sectionRef, lists, hideRepeated);
+  if (grouped) return <GroupedChoices key={shown.current} sectionRef={sectionRef} threadId={threadId} groups={grouped} listHidden={listHidden} />;
   if (!options.length) return null;
   // A go-list: tick steps, then Go sends "go" (all) or "go 1,3".
   const go = move.mode === "go";
@@ -335,6 +343,174 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
         <span className="jf-choices-confirmation" role="status">
           Reply {sent} sent
         </span>
+      )}
+    </section>
+  );
+}
+
+// --- several lists in one reply -------------------------------------------------------
+
+/** What a group's picks say: "go", "go 1,3", "2" or "1,3"; null while nothing is picked. */
+export function groupAnswer(group: Pick<DecisionGroup, "mode" | "options">, picked: readonly number[] | "all" | undefined): string | null {
+  if (picked === undefined) return null;
+  if (group.mode === "go") {
+    if (picked === "all" || picked.length === group.options.length) return "go";
+    return picked.length ? `go ${[...picked].sort((a, b) => a - b).join(",")}` : null;
+  }
+  if (picked === "all" || picked.length === 0) return null;
+  return [...picked].sort((a, b) => a - b).join(",");
+}
+
+/** One reply that answers every picked list on its own line: "Path forward: go 1,3" and "Decision needed: 1". */
+export function combinedReply(groups: readonly Pick<DecisionGroup, "mode" | "label" | "options">[], picks: Readonly<Record<number, readonly number[] | "all">>): string {
+  return groups
+    .flatMap((group, index) => {
+      const answer = groupAnswer(group, picks[index]);
+      return answer === null ? [] : [`${group.label || `List ${index + 1}`}: ${answer}`];
+    })
+    .join("\n");
+}
+
+/**
+ * A reply that ends with several lists (a path forward and a decision): each
+ * list is answered on its own, and one Send replies to all the picked ones at
+ * once, so the agent never gets "go" for one list while the other waits.
+ */
+function GroupedChoices({
+  sectionRef,
+  threadId,
+  groups,
+  listHidden,
+}: {
+  sectionRef: RefObject<HTMLElement | null>;
+  threadId: string;
+  groups: readonly DecisionGroup[];
+  listHidden: boolean;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [picks, setPicks] = useState<Record<number, number[] | "all">>({});
+  const [pending, setPending] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const locked = useRef(false);
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  const text = combinedReply(groups, picks);
+  const busy = pending || sent !== null;
+  const pick = (index: number, n: number) =>
+    setPicks((current) => {
+      const group = groups[index]!;
+      const before = current[index];
+      const list = before === undefined || before === "all" ? [] : before;
+      // One number: picking another replaces it, picking it again clears it.
+      const next = group.mode === "choice" ? (list.includes(n) ? [] : [n]) : list.includes(n) ? list.filter((value) => value !== n) : [...list, n];
+      const copy = { ...current };
+      if (next.length) copy[index] = next;
+      else delete copy[index];
+      return copy;
+    });
+  const goAll = (index: number) =>
+    setPicks((current) => {
+      const copy = { ...current };
+      if (copy[index] === "all") delete copy[index];
+      else copy[index] = "all";
+      return copy;
+    });
+  const send = async () => {
+    if (locked.current || !text) return;
+    locked.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      await rpc.call("thread_reply", { threadId, text });
+      if (mounted.current) {
+        setSent(text);
+        setPending(false);
+      }
+    } catch {
+      if (mounted.current) {
+        locked.current = false;
+        setPending(false);
+        setError("Reply could not be sent. Press Send to retry.");
+      }
+    }
+  };
+  return (
+    <section ref={sectionRef} className="jf-choices" aria-label="Reply choices" data-mode="grouped" data-full={listHidden || undefined}>
+      <div className="jf-choices-heading">
+        <Icon name="MessageCircle" className="size-3.5" />
+        <span className="jf-choices-title">Your next move</span>
+        <span className="jf-choices-hint">
+          <span className="jf-choices-hint-text">Answer each, then send once</span>
+        </span>
+      </div>
+      {groups.map((group, index) => {
+        const picked = picks[index];
+        const name = group.label || `List ${index + 1}`;
+        return (
+          <div key={index} className="jf-choices-group" role="group" aria-label={group.title || name} data-mode={group.mode}>
+            <div className="jf-choices-group-heading">
+              <span className="jf-choices-group-title" title={group.title}>
+                {group.title || name}
+              </span>
+              {group.mode === "go" ? (
+                <button type="button" className="jf-choices-toggle" aria-pressed={picked === "all"} disabled={busy} onClick={() => goAll(index)}>
+                  Go with all
+                </button>
+              ) : (
+                <span className="jf-choices-group-hint">{group.mode === "multi" ? "One or more" : "One"}</span>
+              )}
+            </div>
+            <div className="jf-choices-list">
+              {group.options.map((option) => {
+                const selected = picked === "all" || (picked?.includes(option.n) ?? false);
+                return (
+                  <button
+                    key={option.n}
+                    type="button"
+                    role={group.mode === "choice" ? "radio" : "checkbox"}
+                    className="jf-choice"
+                    data-recommended={option.recommended}
+                    data-selected={selected}
+                    aria-checked={selected}
+                    disabled={busy}
+                    aria-label={`${name} ${option.n}: ${option.text}${option.recommended ? " (recommended)" : ""}`}
+                    title={option.text}
+                    onClick={() => pick(index, option.n)}
+                  >
+                    <span className="jf-choice-number" aria-hidden="true">
+                      {selected ? <Icon name="Check" className="size-3" /> : option.n}
+                    </span>
+                    <span className="jf-choice-text">{option.text}</span>
+                    {option.recommended && <span className="jf-choice-meta">Recommended</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      <div className="jf-choices-actions">
+        {sent !== null ? (
+          <span role="status">Reply sent</span>
+        ) : (
+          <>
+            {text ? <span className="jf-choices-preview">{text.split("\n").join(" · ")}</span> : null}
+            <button type="button" className="jf-choices-submit" disabled={pending || !text} aria-busy={pending} onClick={() => void send()}>
+              {pending ? "Sending…" : "Send"}
+            </button>
+          </>
+        )}
+      </div>
+      {error && (
+        <p className="jf-choices-error" role="alert">
+          {error}
+        </p>
       )}
     </section>
   );

@@ -69,7 +69,8 @@ it("shows what lies beyond each edge and scrolls to the pane that waits on you",
   const slot = await hints(host(true));
   // Panes a and b show; c and d are to the right, and d waits on you.
   const right = await slot.findByRole("button", { name: "2 panes to the right, 1 waiting on you" });
-  expect(right.textContent).toContain("1 needs you");
+  // The tab shows how many wait on you; the label says the rest.
+  expect(right.textContent).toBe("›1");
   expect(slot.queryByRole("button", { name: /to the left/ })).toBeNull();
   fireEvent.click(right);
   // Pane d's right edge at the view's right edge.
@@ -78,7 +79,7 @@ it("shows what lies beyond each edge and scrolls to the pane that waits on you",
   scroller.scrollLeft = 1280;
   fireEvent.scroll(scroller);
   const left = await slot.findByRole("button", { name: "2 panes to the left" });
-  expect(left.textContent).toContain("2");
+  expect(left.textContent).toBe("‹2");
   await waitFor(() => expect(slot.queryByRole("button", { name: /to the right/ })).toBeNull());
   slot.lifecycle.unmount();
 });

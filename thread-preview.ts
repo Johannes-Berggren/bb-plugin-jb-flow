@@ -3,7 +3,7 @@
 // and the options the reply buttons offer.
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { countSince } from "./catch-up-model";
-import { nextMove } from "./decisions";
+import { nextMove, nextMoves } from "./decisions";
 import type { rpcContract } from "./rpc-contract";
 
 export function threadPreviewRpc(bb: BbPluginApi): Pick<PluginRpcHandlers<typeof rpcContract>, "thread_preview" | "catch_up_card" | "decision_options"> {
@@ -52,7 +52,9 @@ export function threadPreviewRpc(bb: BbPluginApi): Pick<PluginRpcHandlers<typeof
     },
     decision_options: async ({ threadId }) => {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      return nextMove(output.output ?? "");
+      const message = output.output ?? "";
+      const groups = nextMoves(message);
+      return { ...nextMove(message), ...(groups.length > 1 ? { groups } : {}) };
     },
   };
 }

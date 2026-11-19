@@ -278,6 +278,17 @@ export const rpcContract = defineRpcContract({
     output: z.object({
       mode: z.enum(["go", "choice", "multi"]),
       options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
+      /** One entry per list when the reply ends with several (a path forward and a decision); absent or one entry otherwise. */
+      groups: z
+        .array(
+          z.object({
+            mode: z.enum(["go", "choice", "multi"]),
+            title: z.string(),
+            label: z.string(),
+            options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
+          }),
+        )
+        .optional(),
     }),
   },
   thread_reply: {
