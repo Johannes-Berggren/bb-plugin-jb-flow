@@ -273,3 +273,49 @@
     padding: 4px 8px;
   }
 }
+
+/* --- several lists in one reply --- */
+.jf-choices-group + .jf-choices-group {
+  margin-top: 8px;
+}
+.jf-choices-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 3px 4px;
+  font-size: 11px;
+}
+.jf-choices-group-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--foreground);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jf-choices-group-hint {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.jf-choices-group .jf-choices-list {
+  max-height: min(160px, 24dvh);
+}
+/* Ticked steps read as checkboxes, a single pick as a radio. */
+.jf-choices-group:is([data-mode="go"], [data-mode="multi"]) .jf-choice-number {
+  border-radius: 5px;
+}
+.jf-choices-group .jf-choice[data-selected="true"] .jf-choice-number {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.jf-choices-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

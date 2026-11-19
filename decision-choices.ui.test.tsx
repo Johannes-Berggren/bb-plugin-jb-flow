@@ -395,3 +395,67 @@ it("keeps a callout's question visible, hiding only its list and reply line, eve
   row.remove();
   footer.remove();
 });
+
+const pathForward = {
+  mode: "go" as const,
+  title: "Path forward: make the records match",
+  label: "Path forward",
+  options: [
+    { n: 1, text: "Record the churn", recommended: false },
+    { n: 2, text: "Expire the contract", recommended: false },
+    { n: 3, text: "Move the deal", recommended: false },
+  ],
+};
+const decisionNeeded = {
+  mode: "choice" as const,
+  title: "Decision needed: two customers use it without an agreement",
+  label: "Decision needed",
+  options: [
+    { n: 1, text: "Add a line to the renewal", recommended: true },
+    { n: 2, text: "Leave them open for free", recommended: false },
+  ],
+};
+
+it("answers a path forward and a decision in one reply, one line each", async () => {
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    {
+      rpc: {
+        decision_options: () => ({ mode: "choice", options: decisionNeeded.options, groups: [pathForward, decisionNeeded] }),
+        thread_reply: reply,
+      },
+    },
+  );
+  expect(await slot.findByRole("group", { name: pathForward.title })).toBeTruthy();
+  expect(slot.getByRole("group", { name: decisionNeeded.title })).toBeTruthy();
+  const send = slot.getByRole("button", { name: "Send" });
+  // Nothing picked: nothing to send, and a click on an option sends nothing by itself.
+  expect(send.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(slot.getByRole("checkbox", { name: "Path forward 1: Record the churn" }));
+  fireEvent.click(slot.getByRole("checkbox", { name: "Path forward 3: Move the deal" }));
+  fireEvent.click(slot.getByRole("radio", { name: "Decision needed 2: Leave them open for free" }));
+  // A second pick in a one-number list replaces the first.
+  fireEvent.click(slot.getByRole("radio", { name: "Decision needed 1: Add a line to the renewal (recommended)" }));
+  expect(reply).not.toHaveBeenCalled();
+  expect(slot.container.querySelector(".jf-choices-preview")!.textContent).toBe("Path forward: go 1,3 · Decision needed: 1");
+  fireEvent.click(send);
+  await slot.findByText("Reply sent");
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "Path forward: go 1,3\nDecision needed: 1" }]);
+  slot.lifecycle.unmount();
+});
+
+it("Go with all answers a path forward with plain go, and an unanswered list is left out", async () => {
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ mode: "choice", options: [], groups: [pathForward, decisionNeeded] }), thread_reply: reply } },
+  );
+  fireEvent.click(await slot.findByRole("button", { name: "Go with all" }));
+  fireEvent.click(slot.getByRole("button", { name: "Send" }));
+  await slot.findByText("Reply sent");
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "Path forward: go" }]);
+  slot.lifecycle.unmount();
+});

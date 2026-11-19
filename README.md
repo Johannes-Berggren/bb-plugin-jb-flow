@@ -226,10 +226,10 @@ outlined and the chips of the panes on screen are lit, so a thread that needs
 you is visible even when its pane is scrolled out of view. Click a chip to go
 to its pane.
 
-While the split scrolls, a small marker at each edge says how many panes lie
-beyond it. It turns amber and says "1 needs you" when one of those panes waits
-on you. Clicking it scrolls that pane into view without focusing it, so nothing
-is marked read.
+While the split scrolls, a slim tab on each edge shows how many panes lie
+beyond it. It turns amber and counts the ones waiting on you when any do; hover
+it for the full text. Clicking it scrolls that pane into view without focusing
+it, so nothing is marked read.
 
 - BB opens at most eight panes in a split; this setting doesn't change that.
 - The split fits the window again while a pane is maximized, and returns to
@@ -353,6 +353,13 @@ already ticked, and **Send 1, 3** replies `1,3`. Any other decision can be
 switched to the same ticking with **Pick several** in the header, or by
 ⌘/Ctrl-clicking an option. Go-lists work the same way with **Go**; ticking every
 step sends plain `go`.
+
+A reply can end with more than one list, such as a path forward (answered with
+`go`) and a decision (answered with a number). Then each list gets its own
+titled block: steps to tick or **Go with all**, a single pick, or several. One
+**Send** answers them together, one line per list, named after its bold lead-in:
+`Path forward: go 1,3` and `Decision needed: 1`. A list you leave unanswered is
+left out. Nothing is sent until you press **Send**.
 
 With focus in the list, ↑/↓ and Home/End move between options, and a digit ticks
 that option (or, where a click sends, moves to it so Enter sends).

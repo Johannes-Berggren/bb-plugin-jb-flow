@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nextMove, parseDecisionOptions } from "./decisions.ts";
+import { nextMove, nextMoves, parseDecisionOptions } from "./decisions.ts";
 
 test("parses a trailing decision list with a recommendation", () => {
   const options = parseDecisionOptions(
@@ -139,4 +139,51 @@ test("option text keeps names: underscores inside words, # and > mid-text", () =
   assert.deepEqual(nextMove(`> **Decision needed:** which?\n${options}`).options.map((option) => option.text), expected);
   const report = nextMove(`**Goal:** Tidy secrets\n**Done:** Checked them\n\n### Next steps\n> [!TIP]\n> **Decision needed:** which?\n${options}\n\n_2026-11-14 10:00 CET_`);
   assert.deepEqual(report.options.map((option) => option.text), expected);
+});
+
+test("a message that ends with a path forward and a decision gives one group per list, each answered its own way", () => {
+  const path = [
+    "> [!TIP]",
+    "> **Path forward:** make the records match what was agreed",
+    "> 1. Record the churn in Admin · history becomes true",
+    "> 2. Set the contract to EXPIRED · stops the renewal flag",
+    "> 3. Move the deal to Churned · the pipeline stops showing it",
+    ">",
+    "> Reply **go** for all, or **go 1,3**.",
+  ].join("\n");
+  const decision = [
+    "> [!TIP]",
+    "> **Decision needed:** two customers use it without an agreement",
+    "> 1. Add a line to the renewal · gets paid for real use (recommended)",
+    "> 2. Leave them open for free · keeps them happy",
+    "> 3. Make them read-only now · risks the relationship",
+    ">",
+    "> Reply with the number.",
+  ].join("\n");
+  for (const message of [
+    `Done.\n\n${path}\n\n${decision}\n\n_2026-11-19 14:05 CET_`,
+    `**Goal:** Fix the records\n**Done:** Checked them\n\n### Next steps\n${path}\n\n${decision}\n\n_2026-11-19 14:05 CET_`,
+  ]) {
+    const groups = nextMoves(message);
+    assert.deepEqual(
+      groups.map((group) => [group.mode, group.label, group.options.length]),
+      [
+        ["go", "Path forward", 3],
+        ["choice", "Decision needed", 3],
+      ],
+    );
+    assert.equal(groups[1]!.title, "Decision needed: two customers use it without an agreement");
+    assert.equal(groups[1]!.options[0]!.recommended, true);
+    // The single-list view: the last list, answered with a number, not the first one's "go".
+    assert.deepEqual(nextMove(message), { mode: "choice", options: groups[1]!.options });
+  }
+});
+
+test("a plain list further up isn't a second group", () => {
+  const message = "Findings:\n1. The cache is cold\n2. The index is missing\n\nWhich should I do?\n1. Warm the cache\n2. Add the index";
+  const groups = nextMoves(message);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0]!.options.map((option) => option.text), ["Warm the cache", "Add the index"]);
+  assert.equal(groups[0]!.mode, "choice");
+  assert.deepEqual(nextMoves("All done, the PR is merged."), []);
 });

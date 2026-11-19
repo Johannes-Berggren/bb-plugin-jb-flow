@@ -34,9 +34,9 @@ function Hint({ side, hint }: { side: "left" | "right"; hint: EdgeHint }) {
       title={label}
       onClick={() => scrollTo(hint.target)}
     >
-      {side === "left" ? <span aria-hidden="true">‹</span> : null}
-      <span>{hint.needsYou > 0 ? `${hint.needsYou} need${hint.needsYou === 1 ? "s" : ""} you` : hint.count}</span>
-      {side === "right" ? <span aria-hidden="true">›</span> : null}
+      <span aria-hidden="true">{side === "left" ? "‹" : "›"}</span>
+      {/* Panes waiting on you when any are, else all the panes beyond; the full count is in the label. */}
+      <span aria-hidden="true">{hint.needsYou > 0 ? hint.needsYou : hint.count}</span>
     </button>
   );
 }
