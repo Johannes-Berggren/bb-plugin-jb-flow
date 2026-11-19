@@ -166,6 +166,8 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   // Several numbers: tick options, then Send sends "1,3".
   const multi = !go && (move.mode === "multi" || several);
   const ticking = go || multi;
+  // One step to run: nothing to tick, only Go.
+  const oneStep = go && options.length === 1;
   const mode = go ? "go" : multi ? "multi" : "choice";
   const steps = [...picked].sort((a, b) => a - b);
   // Every step ticked is the same as none: "go".
@@ -231,7 +233,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
         <Icon name="MessageCircle" className="size-3.5" />
         <span className="jf-choices-title">Your next move</span>
         <span className="jf-choices-hint">
-          <span className="jf-choices-hint-text">{go ? "Pick steps, or Go for all" : multi ? "Pick one or more" : "Choose a reply"}</span>
+          <span className="jf-choices-hint-text">{oneStep ? "Go runs it" : go ? "Pick steps, or Go for all" : multi ? "Pick one or more" : "Choose a reply"}</span>
           {!go && move.mode !== "multi" ? (
             <button
               type="button"
@@ -250,6 +252,15 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
         {options.map((option) => {
           const text = String(option.n);
           const label = `${option.text}${option.recommended ? " (recommended)" : ""}`;
+          if (oneStep)
+            return (
+              <div key={option.n} className="jf-choice" data-recommended={option.recommended} title={option.text}>
+                <span className="jf-choice-number" aria-hidden="true">
+                  {option.n}
+                </span>
+                <span className="jf-choice-text">{option.text}</span>
+              </div>
+            );
           if (ticking) {
             const selected = picked.includes(option.n);
             return (

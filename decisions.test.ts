@@ -187,3 +187,15 @@ test("a plain list further up isn't a second group", () => {
   assert.equal(groups[0]!.mode, "choice");
   assert.deepEqual(nextMoves("All done, the PR is merged."), []);
 });
+
+test("a single step to run with go gets a Go, and an imperative 'Set' isn't read as past tense", () => {
+  const message = "> [!TIP]\n> **Path forward:** one more bookkeeping fix\n> 1. Set the downgrade's after-amount to NOK 50,000 · the register stops overstating churn\n>\n> Reply **go** to run it.\n\n_2026-11-19 14:08 CET_";
+  const move = nextMove(message);
+  assert.equal(move.mode, "go");
+  assert.deepEqual(move.options.map((option) => option.n), [1]);
+  assert.equal(nextMoves(message).length, 1);
+  // One option that isn't answered with go is no choice at all.
+  assert.deepEqual(nextMove("Which should I do?\n1. Merge now").options, []);
+  // A summary still isn't a choice.
+  assert.deepEqual(nextMove("Summary of changes:\n1. Set up the cache\n2. Put the index back").options, []);
+});

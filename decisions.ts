@@ -44,7 +44,7 @@ function findDecision(message: string, strict: boolean): Decision {
   return findDecisionIn(message.trim().split("\n"), strict);
 }
 
-function findDecisionIn(all: readonly string[], strict: boolean): Decision {
+function findDecisionIn(all: readonly string[], strict: boolean, minOptions = 2): Decision {
   const offset = Math.max(0, all.length - 30);
   const lines = all.slice(offset);
   // Walk up from the end, skipping trailing chatter (timestamps, "Reply with the number").
@@ -80,12 +80,15 @@ function findDecisionIn(all: readonly string[], strict: boolean): Decision {
   const pastTense = options.every(
     (option) => /^(?!(need|feed|seed|speed|proceed|succeed|exceed)\b)(\w{3,}ed|built|wrote|made|ran|set|kept|put|left|found|took|got|sent|split|cut)\b/i.test(option.text),
   );
-  if ((summaryIntro || pastTense) && !recommended) return none();
+  // "Set", "Put", "Cut" read as past tense too: a line after the list that asks
+  // for an answer ("Reply go", "Reply with the number") settles it.
+  const outro = lines.slice(end + 1).join("\n");
+  const answerAsked = CHOICE_OUTRO.test(outro) || GO_REPLY.test(outro);
+  if ((summaryIntro || pastTense) && !recommended && !answerAsked) return none();
   // A real choice: 2–9 consecutive options numbered from 1.
-  if (options.length < 2 || options.length > 9 || options[0]!.n !== 1) return none();
+  if (options.length < minOptions || options.length > 9 || options[0]!.n !== 1) return none();
   if (options.some((option, index) => option.n !== index + 1)) return none();
   // "Manual fallback: 1. Finance verifies… 2. …" describes steps; no buttons.
-  const outro = lines.slice(end + 1).join("\n");
   // A heading after the list starts a new section: the list isn't what the message ends with.
   if (/^\s*(?:>\s*)*#{1,6}\s/m.test(outro)) return none();
   const asks = CHOICE_INTRO.test(lastSentence(intro)) || CHOICE_OUTRO.test(outro) || MULTI_REPLY.test(`${intro}\n${outro}`);
@@ -144,7 +147,12 @@ export function nextMove(message: string): { mode: DecisionMode; options: Decisi
     };
   }
   const { options, intro, outro } = findDecision(message, true);
-  if (options.length === 0) return { mode: "choice", options };
+  if (options.length === 0) {
+    // One step to run, "Reply go to run it": a single Go, never a one-option choice.
+    const single = findDecisionIn(message.trim().split("\n"), true, 1);
+    if (single.options.length === 1 && GO_REPLY.test(`${single.intro}\n${single.outro}`)) return { mode: "go", options: single.options };
+    return { mode: "choice", options };
+  }
   const tail = message.trim().split("\n").slice(-30).join("\n");
   if (GO_REPLY.test(tail)) return { mode: "go", options };
   // Only the lines around the list: "several" earlier in the message isn't about it.

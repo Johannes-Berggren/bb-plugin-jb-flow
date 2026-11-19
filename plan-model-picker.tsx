@@ -18,42 +18,61 @@ const HOST_CLASS = "jf-plan-model";
 /** The model last chosen here; shown as a one-click button while it's offered. */
 export const LAST_MODEL_KEY = "jb-flow-plan-model";
 
-/** BB's own Approve plan button, when exactly one plan card is on screen. */
-export function findApproveButton(root: ParentNode): HTMLButtonElement | null {
-  const banners = root.querySelectorAll(PLAN_BANNER);
-  if (banners.length !== 1) return null;
-  const buttons = Array.from(banners[0]!.querySelectorAll<HTMLButtonElement>("button"));
+/** BB's own Approve plan button in one plan card. */
+function approveButtonIn(banner: Element): HTMLButtonElement | null {
+  const buttons = Array.from(banner.querySelectorAll<HTMLButtonElement>("button"));
   return buttons.find((button) => button.textContent?.trim() === "Approve plan") ?? null;
 }
 
-/** A host element placed just before the Approve plan button, kept in step with the DOM. */
-function usePlanFooterHost(enabled: boolean): HTMLElement | null {
-  const [host, setHost] = useState<HTMLElement | null>(null);
+/**
+ * Every plan card on screen with its Approve plan button, and the split pane
+ * it sits in. A split can show several, one per pane whose thread has a plan
+ * waiting.
+ */
+export function findPlanCards(root: ParentNode): { approve: HTMLButtonElement; paneId: string | null }[] {
+  return Array.from(root.querySelectorAll(PLAN_BANNER)).flatMap((banner) => {
+    const approve = approveButtonIn(banner);
+    if (!approve) return [];
+    return [{ approve, paneId: banner.closest("[data-split-pane-id]")?.getAttribute("data-split-pane-id") ?? null }];
+  });
+}
+
+type PlanHost = { host: HTMLElement; paneId: string | null };
+
+/** A host element just before each Approve plan button, kept in step with the DOM. */
+function usePlanFooterHosts(enabled: boolean): PlanHost[] {
+  const [hosts, setHosts] = useState<PlanHost[]>([]);
   useEffect(() => {
     if (!enabled) return;
-    let current: HTMLElement | null = null;
+    let current: (PlanHost & { approve: HTMLButtonElement })[] = [];
     const sync = () => {
-      const approve = findApproveButton(document);
-      if (current && approve && current.nextElementSibling === approve) return;
-      current?.remove();
-      current = null;
-      if (approve) {
-        current = document.createElement("span");
-        current.className = `${HOST_CLASS} inline-flex items-center gap-1`;
-        approve.before(current);
-      }
-      setHost(current);
+      const cards = findPlanCards(document);
+      const unchanged =
+        cards.length === current.length &&
+        cards.every((card, index) => {
+          const held = current[index]!;
+          return held.approve === card.approve && held.paneId === card.paneId && held.host.nextElementSibling === card.approve;
+        });
+      if (unchanged) return;
+      for (const held of current) held.host.remove();
+      current = cards.map(({ approve, paneId }) => {
+        const host = document.createElement("span");
+        host.className = `${HOST_CLASS} inline-flex items-center gap-1`;
+        approve.before(host);
+        return { host, paneId, approve };
+      });
+      setHosts(current.map(({ host, paneId }) => ({ host, paneId })));
     };
     sync();
     const observer = new MutationObserver(sync);
     observer.observe(document.body, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
-      current?.remove();
-      setHost(null);
+      for (const held of current) held.host.remove();
+      setHosts([]);
     };
   }, [enabled]);
-  return host;
+  return hosts;
 }
 
 function readLastModel(): string | null {
@@ -77,11 +96,22 @@ export function PlanModelPicker() {
   const enabled = useSettings().values?.planModelChoice === true;
   const { threadId: routeThreadId } = useBbContext();
   const split = useSidebarSplitLayout();
-  const threadId = split?.panes.find((pane) => pane.isFocused)?.threadId ?? routeThreadId;
-  const host = usePlanFooterHost(enabled && threadId !== null);
-  if (!enabled || !threadId || !host) return null;
-  return createPortal(<PlanModelMenu key={threadId} threadId={threadId} />, host);
+  const hosts = usePlanFooterHosts(enabled);
+  if (!enabled) return null;
+  return (
+    <>
+      {hosts.map(({ host, paneId }) => {
+        // Each card approves its own pane's thread, focused or not. Outside a
+        // split, the single pane shows the route's thread.
+        const threadId = split ? (split.panes.find((pane) => pane.paneId === paneId)?.threadId ?? null) : routeThreadId;
+        return threadId ? createPortal(<PlanModelMenu key={threadId} threadId={threadId} />, host, `${paneId ?? "page"}:${threadId}`) : null;
+      })}
+    </>
+  );
 }
+
+/** When to ask again while the server doesn't list the card's plan as waiting yet. */
+const RETRIES_MS = [500, 1500, 4000];
 
 export function PlanModelMenu({ threadId }: { threadId: string }) {
   const rpc = useRpc<typeof rpcContract>();
@@ -92,12 +122,22 @@ export function PlanModelMenu({ threadId }: { threadId: string }) {
 
   useEffect(() => {
     let live = true;
-    rpc.call("plan_models", { threadId }).then(
-      (result) => live && setData(result),
-      () => live && setData(null),
-    );
+    let timer = 0;
+    // The card can show a moment before the server lists its plan as waiting:
+    // look again a few times before giving up.
+    const read = (attempt: number) =>
+      rpc.call("plan_models", { threadId }).then(
+        (result) => {
+          if (!live) return;
+          setData(result);
+          if (!result.pending && attempt < RETRIES_MS.length) timer = window.setTimeout(() => read(attempt + 1), RETRIES_MS[attempt]);
+        },
+        () => live && setData(null),
+      );
+    void read(0);
     return () => {
       live = false;
+      window.clearTimeout(timer);
     };
   }, [rpc, threadId]);
 
