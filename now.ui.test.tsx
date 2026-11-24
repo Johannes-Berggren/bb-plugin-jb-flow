@@ -192,18 +192,18 @@ describe("Now and Focus", () => {
         focused: { asked: NOW, cold: NOW, watched: NOW },
       },
     });
-    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["asked", "cold", "needs-input"]));
+    await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["asked", "needs-input"]));
     const text = (id: string) => slot.container.querySelector(`[data-jb-flow-row="${id}"]`)?.textContent ?? "";
     expect(slot.container.querySelector('[data-jb-flow-row="asked"] [aria-label="In Focus"]')).not.toBeNull();
     expect(slot.container.querySelector('[data-jb-flow-row="needs-input"] [aria-label="In Focus"]')).toBeNull();
     expect(text("asked")).toContain("Waiting for your answer");
-    expect(text("cold")).toContain("no next step · 44h");
     expect(text("needs-input")).toContain("Waiting for your answer");
-    // Moving starts collapsed; its header still counts the thread.
-    expect(heading(slot.container, "Moving")?.closest("section")?.textContent).toContain("1");
+    // Both focused threads remain discoverable under Moving.
+    expect(heading(slot.container, "Moving")?.closest("section")?.textContent).toContain("2");
     expect(slot.container.querySelector('[data-jb-flow-row="watched"]')).toBeNull();
     fireEvent.click(heading(slot.container, "Moving")!);
     await waitFor(() => expect(text("watched")).toContain("CI watch"));
+    expect(text("cold")).toContain("no next step · 44h");
     // A row is in one group only, and everything else keeps its lane.
     expect(slot.container.querySelectorAll('[data-jb-flow-row="asked"]').length).toBe(1);
     expect(slot.container.querySelector('[data-jb-flow-row="lane-row"]')).not.toBeNull();

@@ -15,11 +15,11 @@ const ASKS = new RegExp(
     String.raw`\?\s*$`,
     String.raw`\b(reply|answer|write|type|send)\s+["“*]{0,2}(go|yes)\b`,
     String.raw`\bsay\s+["“*]{1,2}(go|yes)\b`, // quoted: "if they say yes" is about someone else
-    String.raw`\b(want me to|should i|shall i|would you like|do you want|if you('d)? (want|like|prefer))\b`,
+    String.raw`\b(want me to|should i|shall i|would you like|do you want)\b`,
     String.raw`\bif you (place|send|run|give|share|paste|confirm|approve|sign)\b`,
     String.raw`\b(can|could|would) you\b`,
     // Sign-offs ("Let me know if you need anything else", "Please note…") aren't asks.
-    String.raw`\blet me know\b(?!\s+if (you )?(need|have|want anything|there's anything|anything|something))`,
+    String.raw`\blet me know\b(?!\s+if (you )?(need|have|want anything|there's anything|anything|something)|\s+if you'd like\b)`,
     String.raw`\btell me\b`,
     String.raw`\bplease\b(?!\s+(note|be aware|keep in mind|feel free|ignore))`,
     String.raw`\byour (call|decision|input|answer|go-ahead)\b`,
@@ -37,7 +37,7 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 13;
+const AWAITING_VERSION = 14;
 
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
@@ -50,7 +50,7 @@ const NOTHING_ASKED =
 function keywordAsks(text: string): boolean {
   text = straight(text);
   // Conditional fallbacks ("If it still breaks, tell me what you did") aren't
-  // asks; conditions addressed to you ("If you want, I can…") still are.
+  // asks. Keep direct dependencies ("If you approve…") available to the matcher.
   const tail = text
     .trim()
     .slice(-900)

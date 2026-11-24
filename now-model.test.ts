@@ -93,13 +93,13 @@ test("rank: focused and blocked, then focused by longest wait, then the rest old
   assert.deepEqual(ids(now), ["focus-blocked", "focus-old", "focus-new", "other-old", "other-new"]);
 });
 
-test("a focused thread waiting on you comes before a focused thread with no next step, however old", () => {
+test("a focused thread with no next step stays out of Now, however old", () => {
   const { now } = nowQueue(
     [thread("cold", { attentionAt: NOW - 44 * HOUR }), thread("asked", { attentionAt: NOW - HOUR })],
     flow({ awaiting: { asked: NOW - HOUR }, focused: { cold: 1, asked: 1 } }),
     { now: NOW },
   );
-  assert.deepEqual(ids(now), ["asked", "cold"]);
+  assert.deepEqual(ids(now), ["asked"]);
 });
 
 test("a backfilled ask is dated by the thread, not by when it was classified", () => {
@@ -124,8 +124,8 @@ test("focused threads moving without you go to Moving; unfocused ones stay in th
     }),
     { now: NOW },
   );
-  assert.deepEqual(ids(now), ["cold"]);
-  assert.deepEqual(ids(moving).sort(), ["others", "recent", "running", "watched"]);
+  assert.deepEqual(ids(now), []);
+  assert.deepEqual(ids(moving).sort(), ["cold", "others", "recent", "running", "watched"]);
 });
 
 test("a thread is only ever in one group", () => {
@@ -217,7 +217,7 @@ test("a thread due within 48h joins Now if it wants something from you, without 
   assert.deepEqual(ids(now), ["asks"]);
 });
 
-test("within 24h or overdue it joins even when someone else has the next step, but not while an agent or watch is on it", () => {
+test("an imminent or overdue date alone cannot promote idle work or work held by others", () => {
   const soon = NOW + 10 * HOUR;
   const { now, moving } = nowQueue(
     [thread("others"), thread("recent"), thread("running", { busy: true }), thread("watched"), thread("overdue")],
@@ -228,7 +228,7 @@ test("within 24h or overdue it joins even when someone else has the next step, b
     }),
     { now: NOW },
   );
-  assert.deepEqual(ids(now), ["overdue", "others", "recent"]);
+  assert.deepEqual(ids(now), []);
   // Moving is for Focus threads: unfocused ones keep their lane, with a due chip.
   assert.deepEqual(ids(moving), []);
 });
@@ -259,7 +259,7 @@ test("full rank: blocked with a deadline or Focus, then due now, then Focus, the
     }),
     { now: NOW },
   );
-  assert.deepEqual(ids(now), ["blocked-due", "due-now-first", "due-now-later", "focus-asks", "focus-cold", "due-soon", "blocked-far-due", "rest"]);
+  assert.deepEqual(ids(now), ["blocked-due", "due-now-first", "due-now-later", "focus-asks", "due-soon", "blocked-far-due", "rest"]);
 });
 
 test("a snoozed thread stays hidden until its deadline is within 24h", () => {
@@ -312,7 +312,7 @@ test("pressing next repeatedly visits every thread, even ones that stay after re
 test("a tab counts what's waiting on you right now, not everything in Now", () => {
   const state = flow({
     awaiting: { yours: 1 },
-    readyToGo: { go: 1 },
+    readyToGo: { go: 1, late: 1 },
     focused: { blocked: 1, yours: 1, go: 1, cold: 1, late: 1 },
     due: { late: due(NOW - HOUR) },
   });
@@ -321,7 +321,7 @@ test("a tab counts what's waiting on you right now, not everything in Now", () =
     state,
     { now: NOW },
   );
-  assert.equal(now.length, 5);
+  assert.equal(now.length, 4);
   assert.equal(needsYouNow(now, NOW), 3);
 });
 

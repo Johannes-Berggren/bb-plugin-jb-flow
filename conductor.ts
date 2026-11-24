@@ -190,7 +190,9 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   async function stillAsks(threadId: string, kind: string): Promise<boolean> {
     if (kind !== "merged") return false;
     const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-    return asksUser(output.output ?? "");
+    const reply = output.output ?? "";
+    // A follow-up offer can stay out of Now and still be worth keeping open after a merge.
+    return asksUser(reply) || /\bif you(?:['’]d)? (?:want|like|prefer)\b/i.test(reply.slice(-900));
   }
 
   /** One routed event: act on it, or leave it in the inbox for the conductor. */
