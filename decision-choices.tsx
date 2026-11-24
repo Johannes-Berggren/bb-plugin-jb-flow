@@ -5,6 +5,7 @@ import type { rpcContract } from "./server";
 import type { DecisionGroup, DecisionMode, DecisionOption } from "./decisions";
 import { Icon } from "@/components/ui/icon";
 import "./decision-choices.css";
+import { notifyReplyChoiceSent } from "./next-in-now";
 
 export function DecisionChips({
   threadId,
@@ -181,6 +182,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     setError(null);
     try {
       await rpc.call("thread_reply", { threadId, text });
+      notifyReplyChoiceSent(threadId);
       if (mounted.current) {
         setSent(text);
         setPending(null);
@@ -439,6 +441,7 @@ function GroupedChoices({
     setError(null);
     try {
       await rpc.call("thread_reply", { threadId, text });
+      notifyReplyChoiceSent(threadId);
       if (mounted.current) {
         setSent(text);
         setPending(false);
