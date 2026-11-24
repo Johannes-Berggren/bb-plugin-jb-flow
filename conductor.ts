@@ -10,7 +10,6 @@
 //   respawned at the next wake-up, with its standing preferences.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { asksUser } from "./awaiting.ts";
 import { decide, followUpsAfterMerge, mergeIntent, nothingLeft, waitsForReview } from "./autopilot.ts";
 import { nextMove } from "./decisions.ts";
 import { isGoneError } from "./ci-watch.ts";
@@ -19,6 +18,8 @@ import {
   BRIEFING_KINDS,
   CONDUCTOR_ROLE,
   MEMORY_MAX,
+  TRIAGE_GROUP_KEYS,
+  TRIAGE_GROUPS,
   bootPrompt,
   briefingItemSchema,
   compactToday,
@@ -33,12 +34,18 @@ import {
   type Briefing,
   type BriefingItem,
   type ConductorRecord,
+  type TriageGroup,
 } from "./conductor-model.ts";
 import type { ConductorInboxEvent, ConductorSink } from "./conductor-routing.ts";
 import type { ConductorStore } from "./conductor-store.ts";
+import {
+  archiveHold, archiveTrees, currentReport, isSnoozed, openPrs, reportedBlocker, reportsCompletion, threadTitle, triageGroup,
+  workspaceArchiveHold,
+} from "./conductor-triage.ts";
 import { ballState, reasonLabel, serverNowThread, type NowFlow } from "./now-model.ts";
 import type { PrStatus } from "./prs";
-import type { ThreadStatus } from "./thread-status.ts";
+import { parseStatusReport, type ThreadStatus } from "./thread-status.ts";
+import { listThreadPages } from "./thread-list.ts";
 import { workspaceForThread, type WorkspaceState } from "./workspaces.ts";
 
 type ListedThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
@@ -186,13 +193,71 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
   const shortPr = (meta: { repo?: unknown; pr?: unknown }) =>
     typeof meta.repo === "string" && typeof meta.pr === "number" ? `${meta.repo.split("/")[1]}#${meta.pr}` : "the PR";
 
-  /** Whether the thread's last reply still asks the user something; read in full, only for a merge. */
-  async function stillAsks(threadId: string, kind: string): Promise<boolean> {
-    if (kind !== "merged") return false;
-    const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-    const reply = output.output ?? "";
-    // A follow-up offer can stay out of Now and still be worth keeping open after a merge.
-    return asksUser(reply) || /\bif you(?:['’]d)? (?:want|like|prefer)\b/i.test(reply.slice(-900));
+  type MergedPr = Pick<PrStatus, "repo" | "number">;
+  type ArchiveResult = { archived: boolean; hold?: string };
+  let archiving: Promise<unknown> = Promise.resolve();
+
+  async function archiveSnapshot(workspaceId: string, threadId: string, mergedPr?: MergedPr) {
+    // The cascade can pass through archived threads and also reaches hidden forks.
+    const [threads, state, flow, snoozedSection, prs] = await Promise.all([
+      listThreadPages(bb, { includeHidden: true }), deps.workspaces(), deps.flow(), deps.snoozedSection(), deps.prsByThread(),
+    ]);
+    const root = threads.find((thread) => thread.id === threadId && thread.deletedAt === null);
+    if (!root) throw new Error("the thread no longer exists");
+    if (root.archivedAt !== null) return [];
+    const members = archiveTrees(threads)(root);
+    const byId = new Map(threads.map((thread) => [thread.id, thread]));
+    for (const thread of members) {
+      if (byThread.has(thread.id) || workspaceForThread(thread, state, threads) !== workspaceId) {
+        throw new Error("archiving would affect a conductor or a thread outside this workspace");
+      }
+      const remaining = openPrs(prs[thread.id] ?? []).filter((pr) =>
+        thread.id !== root.id || !mergedPr || pr.repo !== mergedPr.repo || pr.number !== mergedPr.number,
+      );
+      const hold = archiveHold(thread, flow, isSnoozed(thread, byId, snoozedSection), remaining);
+      if (hold) throw new Error(`"${threadTitle(thread)}" ${hold}`);
+    }
+    return members;
+  }
+
+  function archiveWorker(workspaceId: string, threadId: string, mergedPr?: MergedPr): Promise<ArchiveResult> {
+    // Serialize archive calls, including a worker's merged events and an overlapping parent action.
+    const run = archiving.then(async (): Promise<ArchiveResult> => {
+      try {
+        const members = await archiveSnapshot(workspaceId, threadId, mergedPr);
+        if (members.length === 0) return { archived: false };
+        for (const thread of members) {
+          const { output } = await bb.sdk.threads.output({ threadId: thread.id });
+          if (!output || !reportsCompletion(parseStatusReport(output, 0), output, mergedPr !== undefined && thread.id === threadId)) {
+            return { archived: false, hold: `"${threadTitle(thread)}" has no confirmed completion in its latest reply` };
+          }
+        }
+
+        const environments = new Map(members.flatMap((thread) => thread.environmentId ? [[thread.environmentId, thread]] as const : []));
+        for (const [environmentId, thread] of environments) {
+          const hold = await workspaceArchiveHold(bb, environmentId);
+          if (hold) return { archived: false, hold: `"${threadTitle(thread)}" cannot be archived because ${hold}` };
+        }
+
+        // Workspace reads can take time. Recheck the members and activity before calling BB.
+        const refreshed = await archiveSnapshot(workspaceId, threadId, mergedPr);
+        const versions = new Map(members.map((thread) => [thread.id, thread]));
+        const changed = refreshed.length !== members.length || refreshed.some((thread) => {
+          const before = versions.get(thread.id);
+          return before?.updatedAt !== thread.updatedAt || before?.environmentId !== thread.environmentId;
+        });
+        if (changed) return { archived: false, hold: "the thread or its subthreads changed while they were being checked" };
+        if (!active(workspaceId)) return { archived: false, hold: "this conductor was stopped" };
+        const result = await deps.archive([threadId]);
+        return result.failed.length || result.archived === 0
+          ? { archived: false, hold: "BB could not archive the thread" }
+          : { archived: true };
+      } catch (error) {
+        return { archived: false, hold: error instanceof Error ? error.message : String(error) };
+      }
+    });
+    archiving = run.catch(() => undefined);
+    return run;
   }
 
   /** One routed event: act on it, or leave it in the inbox for the conductor. */
@@ -211,9 +276,8 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
       afterGreen: meta.afterGreen,
       mergeIntent: mergeIntent(status?.report?.next, status?.report?.doingNow, status?.latest),
       followUps: followUpsAfterMerge(status?.report?.next, status?.report?.doingNow, status?.latest),
-      // A report's Next, or the "Next:" line of a reply that had no full report; and nothing
-      // in the whole reply still asks the user ("Say if you want that reverted").
-      nothingLeft: nothingLeft(status?.report?.next ?? /\bNext:\**\s*(.+)/i.exec(status?.latest ?? "")?.[1]) && !(await stillAsks(threadId, event.kind)),
+      // The archive guard verifies the full reply again before taking action.
+      nothingLeft: nothingLeft(status?.report?.next ?? /\bNext:\**\s*(.+)/i.exec(status?.latest ?? "")?.[1]),
       hold: waitsForReview(status?.report?.next, status?.report?.blocked, status?.latest),
       pr: pr ? { state: pr.state, attention: pr.attention } : null,
       otherOpenPrs: own.filter((candidate) => candidate !== pr && (candidate.state === "open" || candidate.state === "draft")).length,
@@ -258,8 +322,13 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
         return done("auto-merged", `Merged ${shortPr(meta)} once it was green (${decision.reason}).`, await lastTurnTokens(threadId));
       }
       case "archive": {
-        const result = await deps.archive([threadId]);
-        if (result.failed.length > 0) return;
+        const mergedPr = meta.repo && typeof meta.pr === "number" ? { repo: meta.repo, number: meta.pr } : undefined;
+        const result = await archiveWorker(workspaceId, threadId, mergedPr);
+        if (result.hold) return done("archive-held", `Archive held after ${shortPr(meta)} merged: ${result.hold}.`, null);
+        if (!result.archived) {
+          deps.store.ack(workspaceId, [id], now());
+          return;
+        }
         return done("auto-archived", `${shortPr(meta)} merged and nothing else was open, so the thread is archived.`, await lastTurnTokens(threadId));
       }
     }
@@ -554,52 +623,72 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     ]);
     const at = now();
     const rows = [];
-    for (const thread of threads) {
-      if (thread.parentThreadId !== null || byThread.has(thread.id)) continue;
-      if (workspaceForThread(thread, state, threads) !== workspaceId) continue;
-      const nowThread = serverNowThread(thread, snoozedSection !== null && thread.sectionId === snoozedSection);
+    const inWorkspace = threads.filter((thread) => !byThread.has(thread.id) && workspaceForThread(thread, state, threads) === workspaceId);
+    const byId = new Map(threads.map((thread) => [thread.id, thread]));
+    for (const thread of inWorkspace) {
+      const parent = thread.parentThreadId ? byId.get(thread.parentThreadId) : undefined;
+      const parentTitle = parent && workspaceForThread(parent, state, threads) === workspaceId ? threadTitle(parent) : null;
+      const snoozed = isSnoozed(thread, byId, snoozedSection);
+      const nowThread = serverNowThread(thread, snoozed);
       const ball = ballState(nowThread, flow, at);
       const due = flow.due[thread.id]?.at ?? null;
-      const reason = reasonLabel({ thread: nowThread, state: ball, focused: thread.id in flow.focused, since: nowThread.attentionAt, dueAt: due }, flow, at);
       const status = await deps.threadStatus(thread.id).catch(() => null);
-      rows.push({ thread, ball, reason, status, prs: (prs[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft") });
+      const open = openPrs(prs[thread.id] ?? []);
+      const group = triageGroup(ball, thread, snoozed, status, archiveHold(thread, flow, snoozed, open));
+      const reason = group === "waiting" && snoozed ? "snoozed" :
+        group === "archive-candidate" ? "worker reports completion" :
+        thread.queuedWork === "failed" ? "queued reply failed" :
+        reasonLabel({ thread: nowThread, state: ball, focused: thread.id in flow.focused, since: nowThread.attentionAt, dueAt: due }, flow, at);
+      rows.push({ thread, ball, parentTitle, status, prs: open, group, reason });
+    }
+    // A parent remains open if any of its visible subthreads still has work.
+    const rowsById = new Map(rows.map((row) => [row.thread.id, row]));
+    const related = archiveTrees(threads);
+    for (const row of rows) {
+      if (row.group !== "archive-candidate") continue;
+      const pending = related(row.thread).find((child) => child.id !== row.thread.id && rowsById.get(child.id)?.group !== "archive-candidate");
+      if (pending) {
+        row.group = "open";
+        row.reason = "subthread still open";
+      }
     }
     return rows;
   }
 
-  const NEEDS_YOU = new Set(["blocked", "yours", "stalled", "pr", "go"]);
-  /** The workspace's threads for the page's Fleet tab, those that need the user first. */
+  /** Ordered workspace triage shared by the conversation and the Threads tab. */
   async function fleet(workspaceId: string): Promise<FleetRow[]> {
-    const rows = (await fleetRows(workspaceId)).map(({ thread, ball, reason, status, prs }) => ({
+    const rows = (await fleetRows(workspaceId)).map(({ thread, ball, group, parentTitle, reason, status, prs }) => ({
       threadId: thread.id,
-      title: thread.title ?? thread.titleFallback ?? "Untitled",
+      title: threadTitle(thread),
+      parentTitle,
       projectId: thread.projectId,
       state: ball,
+      group,
       reason,
-      needsYou: NEEDS_YOU.has(ball),
+      needsYou: group === "needs-you" || group === "stuck",
       unread: thread.latestAttentionAt !== null && (thread.lastReadAt ?? 0) < thread.latestAttentionAt,
       prs: prs.map((pr) => ({ repo: pr.repo, number: pr.number, attention: pr.attention, url: pr.url })),
-      next: status?.report?.next ?? null,
-      blocked: status?.report?.blocked || null,
+      next: currentReport(status)?.next || null,
+      blocked: reportedBlocker(currentReport(status)),
     }));
-    return rows.sort((a, b) => Number(b.needsYou) - Number(a.needsYou));
+    return rows.sort((a, b) => TRIAGE_GROUP_KEYS.indexOf(a.group) - TRIAGE_GROUP_KEYS.indexOf(b.group));
   }
   tool(
     "fleet_status",
-    "Every thread in this workspace: who holds the next move, unread, its open PRs and the Next/Blocked of its last status report. needs_you_only narrows it to threads waiting on the user or with an actionable PR.",
-    z.object({ needs_you_only: z.boolean().optional() }),
-    async ({ needs_you_only }, workspaceId) => {
-      const rows = (await fleetRows(workspaceId)).filter((row) => !needs_you_only || NEEDS_YOU.has(row.ball));
-      if (rows.length === 0) return needs_you_only ? "Nothing needs the user." : "No threads in this workspace.";
-      return rows
-        .map(({ thread, reason, status, prs }) => {
-          const unread = thread.latestAttentionAt !== null && (thread.lastReadAt ?? 0) < thread.latestAttentionAt ? " · unread" : "";
-          const prText = prs.length ? ` · PRs: ${prs.map((pr) => `${pr.repo}#${pr.number} [${pr.attention}]`).join(", ")}` : "";
-          const report = status?.report;
-          const next = report ? `${report.blocked ? ` · Blocked: ${report.blocked.slice(0, 160)}` : ""}${report.next ? ` · Next: ${report.next.slice(0, 160)}` : ""}` : "";
-          return `${thread.id} · "${thread.title ?? thread.titleFallback ?? "Untitled"}" · ${reason}${unread}${prText}${next}`;
-        })
-        .join("\n");
+    "Read-only workspace triage including visible subthreads, blockers, next steps and open PRs. Filter by group or needs_you_only. Archive candidates are based on thread reports; archiving rechecks the thread tree and disk.",
+    z.object({ needs_you_only: z.boolean().optional(), group: z.enum(TRIAGE_GROUP_KEYS).optional(), offset: z.number().int().nonnegative().optional() }),
+    async ({ needs_you_only, group, offset = 0 }, workspaceId) => {
+      const rows = (await fleet(workspaceId)).filter((row) => (!needs_you_only || row.needsYou) && (!group || row.group === group));
+      if (rows.length === 0) return needs_you_only ? "Nothing needs the user." : "No matching threads in this workspace.";
+      const page = rows.slice(offset, offset + 25).map((row) => {
+        const parent = row.parentTitle ? ` · subthread of ${row.parentTitle.slice(0, 90)}` : "";
+        const prText = row.prs.slice(0, 5).map((pr) => `${pr.repo}#${pr.number} [${pr.attention}]`).join(", ");
+        const blocked = row.blocked ? ` · Blocked: ${row.blocked.slice(0, 160)}` : "";
+        const next = row.next ? ` · Next: ${row.next.slice(0, 160)}` : "";
+        return `${row.threadId} · "${row.title.slice(0, 100)}" · ${TRIAGE_GROUPS[row.group]} · ${row.reason}${parent}${row.unread ? " · unread" : ""}${prText ? ` · PRs: ${prText}` : ""}${blocked}${next}`;
+      });
+      const end = offset + page.length;
+      return [`${page.length} of ${rows.length} matching threads${end < rows.length ? ` (next offset: ${end})` : ""}.`, ...page].join("\n");
     },
   );
 
@@ -690,7 +779,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
 
   tool(
     "thread_action",
-    "Act on a worker thread: snooze (until: 2h, tomorrow, mon, 3d or YYYY-MM-DD; optional note sent to it on wake-up), unsnooze, archive, unarchive, mark_read, mark_unread, focus, unfocus.",
+    "Act on a worker thread: snooze (until: 2h, tomorrow, mon, 3d or YYYY-MM-DD; optional note sent to it on wake-up), unsnooze, archive, unarchive, mark_read, mark_unread, focus, unfocus. Archive only when the user requests it; BB checks the latest thread tree and workspaces.",
     z.object({
       thread_id: threadIdParam,
       action: z.enum(["snooze", "unsnooze", "archive", "unarchive", "mark_read", "mark_unread", "focus", "unfocus"]),
@@ -712,9 +801,9 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
           done = (await deps.unsnooze(thread.id)) ? `Woke ${title}.` : `${title} wasn't snoozed.`;
           break;
         case "archive": {
-          const result = await deps.archive([thread.id]);
-          if (result.failed.length > 0) throw new Error(`Couldn't archive ${title}.`);
-          done = `Archived ${title}.`;
+          const result = await archiveWorker(workspaceId, thread.id);
+          if (result.hold) throw new Error(`Couldn't archive ${title}: ${result.hold}.`);
+          done = result.archived ? `Archived ${title}.` : `${title} is already archived.`;
           break;
         }
         case "unarchive":
@@ -940,6 +1029,8 @@ export type Brief = { workspaceId: string; threadId: string; at: number; item: B
 export type FleetRow = {
   threadId: string;
   title: string;
+  parentTitle: string | null;
+  group: TriageGroup;
   projectId: string;
   state: string;
   reason: string;

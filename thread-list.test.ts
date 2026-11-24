@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { listLiveThreads } from "./thread-list.ts";
 
 type Row = { id: string; archivedAt: number | null };
-type Args = { archived: boolean; limit: number; offset: number; sectionId?: string };
+type Args = { archived?: boolean; limit: number; offset: number; sectionId?: string };
 
 /** A fake threads.list that honours archived, limit, offset and sectionId, as the real route does. */
 function fakeBb(rows: Row[], calls: Args[] = []) {
@@ -13,7 +13,7 @@ function fakeBb(rows: Row[], calls: Args[] = []) {
         async list(args: Args) {
           calls.push(args);
           return rows
-            .filter((row) => (args.archived ? row.archivedAt !== null : row.archivedAt === null))
+            .filter((row) => args.archived === undefined || args.archived === (row.archivedAt !== null))
             .slice(args.offset, args.offset + args.limit);
         },
       },

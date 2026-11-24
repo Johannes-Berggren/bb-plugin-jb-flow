@@ -15,13 +15,20 @@ type FakeThread = {
   projectId: string;
   sectionId: string | null;
   parentThreadId: string | null;
+  lifecycleOwnerThreadId: string | null;
+  sourceThreadId: string | null;
   status: string;
+  runtime: { displayStatus: string };
+  activity: Record<string, number>;
+  environmentId: string | null;
   title: string;
   titleFallback: string | null;
   visibility: "visible" | "hidden";
   lastReadAt: number | null;
   latestAttentionAt: number | null;
   createdAt: number;
+  updatedAt: number;
+  pinnedAt: number | null;
   hasPendingInteraction: boolean;
   queuedWork: string;
   archivedAt: number | null;
@@ -33,13 +40,20 @@ const thread = (id: string, projectId: string, fields: Partial<FakeThread> = {})
   projectId,
   sectionId: null,
   parentThreadId: null,
+  lifecycleOwnerThreadId: null,
+  sourceThreadId: null,
   status: "idle",
+  runtime: { displayStatus: "idle" },
+  activity: {},
+  environmentId: null,
   title: `Thread ${id}`,
   titleFallback: null,
   visibility: "visible",
   lastReadAt: null,
   latestAttentionAt: T0,
   createdAt: T0 - 60 * MINUTE,
+  updatedAt: T0,
+  pinnedAt: null,
   hasPendingInteraction: false,
   queuedWork: "none",
   archivedAt: null,
@@ -56,7 +70,19 @@ const workspaceState: WorkspaceState = {
 };
 
 /** A conductor over a fake bb: two worker threads, one per workspace. */
-async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: { next: string }; personal?: boolean; flow?: Record<string, Record<string, number>>; status?: Record<string, unknown>; output?: string } = {}) {
+async function setup(options: {
+  enabled?: boolean;
+  ghFails?: boolean;
+  report?: { next: string };
+  personal?: boolean;
+  flow?: Record<string, Record<string, number>>;
+  status?: Record<string, unknown>;
+  output?: string;
+  gitDirty?: boolean;
+  workspaceEntries?: string[];
+  onWorkspaceCheck?: (threads: Map<string, FakeThread>) => void;
+  assignments?: Record<string, string>;
+} = {}) {
   let clock = T0;
   const kv = new Map<string, unknown>();
   const tools = new Map<string, { execute: (params: unknown, ctx: { threadId: string }) => Promise<unknown> }>();
@@ -90,6 +116,21 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
     },
     background: { schedule: () => undefined },
     sdk: {
+      environments: {
+        get: async () => ({
+          managed: true, isGitRepo: options.workspaceEntries === undefined, status: "ready",
+          lifecycle: { phase: "active" }, path: "/workspace", hostId: "host_dev",
+        }),
+      },
+      files: {
+        listPaths: async () => ({ paths: options.workspaceEntries ?? [], truncated: false }),
+      },
+      plugins: {
+        callRpc: async () => {
+          options.onWorkspaceCheck?.(threads);
+          return { outcome: "available", workspace: { workingTree: { hasUncommittedChanges: options.gitDirty === true } } };
+        },
+      },
       projects: {
         list: async () => [{ id: "proj_web" }],
         get: async ({ projectId }: { projectId: string }) => {
@@ -103,7 +144,11 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
           if (!found) throw Object.assign(new Error("HTTP 404: not found"), { status: 404 });
           return { ...found };
         },
-        list: async ({ threadIds }: { threadIds?: string[] }) => [...threads.values()].filter((t) => !threadIds || threadIds.includes(t.id)),
+        list: async ({ threadIds, archived, includeHidden }: { threadIds?: string[]; archived?: boolean; includeHidden?: boolean }) =>
+          [...threads.values()].filter((t) =>
+            (!threadIds || threadIds.includes(t.id)) && (archived === undefined || archived === (t.archivedAt !== null)) &&
+            (includeHidden || t.visibility === "visible"),
+          ),
         spawn: async (args: Record<string, unknown>) => {
           spawns.push(args);
           const id = `thr_conductor${++spawnCount}`;
@@ -124,7 +169,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
         },
         markRead: async ({ threadId }: { threadId: string }) => void read.push(threadId),
         markUnread: async () => undefined,
-        output: async () => ({ output: options.output ?? "Done." }),
+        output: async () => ({ output: options.output ?? (options.report ? `**Done:** Updated the export.\n**Next:** ${options.report.next}` : "Done.") }),
         events: { list: async () => [{ data: { tokenUsage: { last: { totalTokens: 1_500_000 } } } }] },
       },
     },
@@ -137,7 +182,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
   const deps: ConductorDeps = {
     store,
     options: () => settings,
-    workspaces: async () => workspaceState,
+    workspaces: async () => ({ ...workspaceState, threadWorkspaces: options.assignments ?? {} }),
     assignWorkspace: async () => undefined,
     listThreads: async () => [...threads.values()].filter((t) => t.visibility === "visible" && t.archivedAt === null) as never,
     flow: async () => ({ awaiting: {}, promised: {}, waitingOthers: {}, readyToGo: {}, watching: {}, threadPrs: {}, focused: {}, due: {}, ...options.flow }),
@@ -156,6 +201,7 @@ async function setup(options: { enabled?: boolean; ghFails?: boolean; report?: {
     unsnooze: async () => true,
     archive: async (ids) => {
       archived.push(...ids);
+      for (const id of ids) threads.get(id)!.archivedAt = T0;
       return { archived: ids.length, failed: [] };
     },
     focus: async (_id, focused) => focused,
@@ -507,10 +553,9 @@ test("restarting gives a conductor a fresh thread; the old one is archived and s
   assert.match(conductor.configureFor({ ...base, thread: { id: second, title: null, parentThreadId: null, sourceThreadId: null } })!.instructions, /Never merge on Fridays/);
 });
 
-test("a merged PR whose worker still asks you something isn't archived", async () => {
+test("a worker report with nothing pending is eligible for automatic archive", async () => {
   const { conductor, archived } = await setup({ report: { next: "Nothing pending on my side." } });
   await conductor.start("ws");
-  // The fake thread's last reply ("Done.") asks nothing: archived.
   await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
   assert.deepEqual(archived, ["thr_a"]);
 });
@@ -523,5 +568,81 @@ test("...and one that still asks you something stays put", async () => {
   await conductor.start("ws");
   await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 is now merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
   assert.deepEqual(archived, []);
-  assert.match(conductor.log("ws")[0]!.text, /merged; left for you to close/);
+  assert.match(conductor.log("ws")[0]!.text, /Archive held .*no confirmed completion/);
+});
+
+test("read-only triage covers subthreads and leaves their active parents out of archive candidates", async () => {
+  const { conductor, threads, call, archived, sent } = await setup({ report: { next: "Nothing pending." } });
+  const { threadId } = await conductor.start("ws");
+  threads.set("thr_parent", thread("thr_parent", "proj_web"));
+  threads.set("thr_child", thread("thr_child", "proj_api", { parentThreadId: "thr_parent", status: "error" }));
+  threads.set("thr_done", thread("thr_done", "proj_web"));
+
+  const rows = await conductor.fleet("ws");
+  assert.equal(rows.find((row) => row.threadId === "thr_child")?.group, "stuck");
+  assert.equal(rows.find((row) => row.threadId === "thr_parent")?.reason, "subthread still open");
+  assert.equal(rows.find((row) => row.threadId === "thr_done")?.group, "archive-candidate");
+  assert.equal(rows.some((row) => row.threadId === "thr_b"), false);
+  const stuck = await call("fleet_status", { group: "stuck" }, threadId);
+  assert.match(String(stuck), /thr_child.*subthread of Thread thr_parent/);
+  assert.doesNotMatch(String(stuck), /thr_done|thr_b/);
+  assert.deepEqual(archived, []);
+  assert.deepEqual(sent, []);
+});
+
+test("the archive check catches hidden forks reachable through an archived child", async () => {
+  const { conductor, threads, call, archived } = await setup({ report: { next: "Nothing pending." } });
+  const { threadId } = await conductor.start("ws");
+  threads.set("thr_parent", thread("thr_parent", "proj_web"));
+  threads.set("thr_old", thread("thr_old", "proj_web", { parentThreadId: "thr_parent", archivedAt: T0 }));
+  threads.set("thr_hidden", thread("thr_hidden", "proj_web", { sourceThreadId: "thr_old", visibility: "hidden", status: "active" }));
+  const result = await call("thread_action", { action: "archive", thread_id: "thr_parent" }, threadId);
+  assert.match(JSON.stringify(result), /thr_hidden.*active or queued work/);
+  assert.deepEqual(archived, []);
+});
+
+test("automatic archive holds a managed Git workspace with uncommitted changes", async () => {
+  const { conductor, threads, archived } = await setup({ report: { next: "Nothing pending." }, gitDirty: true });
+  await conductor.start("ws");
+  threads.get("thr_a")!.environmentId = "env_worktree";
+  await conductor.sink.deliver("thr_a", "ws", [{ kind: "merged", text: "PR web-app#12 merged.", meta: { repo: "acme/web-app", pr: 12 } }]);
+  assert.deepEqual(archived, []);
+  assert.match(conductor.log("ws")[0]!.text, /uncommitted changes/);
+});
+
+test("a requested archive holds a managed non-Git folder with files", async () => {
+  const { conductor, threads, call, archived } = await setup({ report: { next: "Nothing pending." }, workspaceEntries: ["notes.md"] });
+  const { threadId } = await conductor.start("ws");
+  threads.set("thr_done", thread("thr_done", "proj_web", { environmentId: "env_folder" }));
+  const result = await call("thread_action", { action: "archive", thread_id: "thr_done" }, threadId);
+  assert.match(JSON.stringify(result), /managed folder still contains files/);
+  assert.deepEqual(archived, []);
+});
+
+test("archive rechecks the tree after reading the workspace", async () => {
+  const { conductor, threads, call, archived } = await setup({
+    report: { next: "Nothing pending." },
+    onWorkspaceCheck: (all) => all.set("thr_new", thread("thr_new", "proj_web", { lifecycleOwnerThreadId: "thr_done", status: "active" })),
+  });
+  const { threadId } = await conductor.start("ws");
+  threads.set("thr_done", thread("thr_done", "proj_web", { environmentId: "env_worktree" }));
+  const result = await call("thread_action", { action: "archive", thread_id: "thr_done" }, threadId);
+  assert.match(JSON.stringify(result), /thr_new.*active or queued work/);
+  assert.deepEqual(archived, []);
+});
+
+test("confirmed archive rejects a moved child and succeeds when the checked tree is clear", async () => {
+  const { conductor, threads, call, archived } = await setup({
+    report: { next: "Nothing pending." },
+    assignments: { thr_moved: "other" },
+  });
+  const { threadId } = await conductor.start("ws");
+  threads.set("thr_done", thread("thr_done", "proj_web", { environmentId: "env_worktree" }));
+  threads.set("thr_moved", thread("thr_moved", "proj_web", { parentThreadId: "thr_done" }));
+  const params = { action: "archive", thread_id: "thr_done" };
+  assert.match(JSON.stringify(await call("thread_action", params, threadId)), /outside this workspace/);
+  threads.get("thr_moved")!.archivedAt = T0;
+  assert.equal(await call("thread_action", params, threadId), 'Archived "Thread thr_done".');
+  assert.equal(await call("thread_action", params, threadId), '"Thread thr_done" is already archived.');
+  assert.deepEqual(archived, ["thr_done"]);
 });

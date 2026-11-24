@@ -149,6 +149,8 @@ Never poll GitHub in loops. That means no `gh pr checks --watch`, no `gh run wat
 ### When your workspace has a conductor
 
 Some workspaces have a **conductor**: a permanent thread that takes routine PR news for every thread in it.
+
+- In **More tools → Conductor → Conversation**, ask which threads are stuck, who owes the next move, or which are ready to archive. The review is read-only. The **Threads** tab shows the same groups, including visible subthreads. Archiving specific threads checks the latest work and managed workspaces before acting.
 - You're still woken for CI failures and review feedback.
 - CI green, merges and releases go to the conductor. Pass `after_green: "continue"` if you need to hear about green yourself.
 - With `after_green: "merge"` the conductor merges for you; you may not hear about that PR again.

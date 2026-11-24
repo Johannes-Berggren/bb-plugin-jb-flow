@@ -118,6 +118,9 @@ test("instructions stay within bb's limit, cutting the user's text first", () =>
   assert.ok(long.length <= 4096, `length ${long.length}`);
   assert.match(long, /Merge bumps\./);
   assert.match(long, /## The user's instructions\ny+/);
+  const max = conductorInstructions("W".repeat(60), "y".repeat(10_000), "m".repeat(2000));
+  assert.ok(max.length <= 4096);
+  assert.ok(max.includes("m".repeat(2000)));
 });
 
 test("memory can't break out of its code block", () => {
