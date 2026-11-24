@@ -93,7 +93,7 @@ again or Escape to close it.
     pick the project.
 - **Narrow the scope.**
   - Prefixes: `>` for actions, `#` for pull requests (`#123` finds that PR), `@` for
-    workspaces and projects, `/` for files in the open thread's checkout (Enter
+    workspaces, projects, lanes and sections, `/` for files in the open thread's checkout (Enter
     opens one in the thread's panel, like `bb thread open <path>`; ⌘Enter opens it
     in your editor). Backspace on an empty query
     clears the scope.
@@ -102,6 +102,15 @@ again or Escape to close it.
     group from BB's full-text search.
   - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned`, `is:pr`,
     `is:focus` and `is:due` narrow threads, with or without text.
+  - Place filters: `in:billing-api` (a project), `ws:ops` (a workspace) and `lane:priority`
+    (a lane or section) narrow threads to that place. The start of any word in the name
+    is enough (`in:bill`), and while you type one the palette offers the matching names
+    first: Enter or Tab completes it. `project:` and `section:` work too.
+- **Browse a place instead of the sidebar.** Tab (or →) on a project, workspace, lane or
+  section lists all its threads, grouped the way the sidebar groups them: a project by
+  lane, then section, a workspace by project. Enter on a lane or section does the same.
+  Typing searches only that place, messages and archived threads included. *Browse …
+  threads* in the actions opens the open thread's project or workspace.
 - **Act without opening.**
   - Enter opens the selected item. ⌘Enter opens a thread in a split, or a PR's thread.
   - Tab (or →) lists everything you can do to the selected thread, ready to filter:

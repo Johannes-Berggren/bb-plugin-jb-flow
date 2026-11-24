@@ -7,6 +7,7 @@ import type { PrStatus } from "./prs";
 import type { FlowState } from "./server";
 import { needsMe } from "./needs-me.ts";
 import { nowQueue, sidebarNowThread } from "./now-model.ts";
+import { groupByProject } from "./sidebar-groups.ts";
 
 export type Range = [start: number, end: number];
 
@@ -40,23 +41,59 @@ const FILTER_WORDS: Record<string, Filter> = {
   pr: "pr",
   prs: "pr",
 };
-export const FILTER_HINTS = ["is:needs", "is:running", "is:snoozed", "is:unread", "is:pinned", "is:pr", "is:focus", "is:due"] as const;
+export const FILTER_HINTS = ["is:needs", "is:running", "is:snoozed", "is:unread", "is:pinned", "is:pr", "is:focus", "is:due", "in:project", "ws:workspace", "lane:section"] as const;
 
-export type Query = { text: string; tokens: string[]; filters: Filter[] };
+/** Where a thread is: `in:` its project, `ws:` its workspace, `lane:` its lane or section. */
+export type PlaceKey = "in" | "ws" | "lane";
+const PLACE_WORDS: Record<string, PlaceKey> = { in: "in", project: "in", ws: "ws", workspace: "ws", lane: "lane", section: "lane" };
+export type PlaceFilter = { key: PlaceKey; value: string };
 
-/** `is:` words become filters; everything else is free text, matched word by word. */
+export type Query = {
+  text: string;
+  tokens: string[];
+  filters: Filter[];
+  places: PlaceFilter[];
+  /** The place word still being typed (the last word, no space after it yet), for completion. */
+  partial: PlaceFilter | null;
+};
+
+/** `is:` and place words become filters; everything else is free text, matched word by word. */
 export function parseQuery(raw: string): Query {
   const filters: Filter[] = [];
+  const places: PlaceFilter[] = [];
   const words: string[] = [];
-  for (const word of raw.trim().split(/\s+/).filter(Boolean)) {
+  let partial: PlaceFilter | null = null;
+  const all = raw.trim().split(/\s+/).filter(Boolean);
+  all.forEach((word, index) => {
     const filter = /^is:(.+)$/i.exec(word)?.[1];
     const known = filter === undefined ? undefined : FILTER_WORDS[filter.toLowerCase()];
     if (known) {
       if (!filters.includes(known)) filters.push(known);
-    } else words.push(word);
-  }
+      return;
+    }
+    const place = /^([a-z]+):(.*)$/i.exec(word);
+    const key = place ? PLACE_WORDS[place[1]!.toLowerCase()] : undefined;
+    if (key) {
+      const value = place![2]!.toLowerCase();
+      if (value) places.push({ key, value });
+      if (index === all.length - 1 && !/\s$/.test(raw)) partial = { key, value };
+      return;
+    }
+    words.push(word);
+  });
   const text = words.join(" ");
-  return { text, tokens: words.map((word) => word.toLowerCase()), filters };
+  return { text, tokens: words.map((word) => word.toLowerCase()), filters, places, partial };
+}
+
+/** A name as one filter word: "Billing API" is `billing-api`. */
+export function slug(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+/** `in:bill` finds "Billing API" and "acme/billing"; a word start, not any letters. */
+export function placeNameMatches(value: string, name: string): boolean {
+  if (!value || !name) return false;
+  return (matchToken(value, slug(name), true)?.score ?? 0) >= 70;
 }
 
 // --- matching ------------------------------------------------------------------
@@ -232,6 +269,8 @@ export type PaletteInput = {
   threads: readonly PaletteThread[];
   projects: readonly { id: string; name: string; isPersonal: boolean }[];
   sections: readonly { id: string; name: string }[];
+  /** The lanes in the sidebar's order; Active (unfiled) has no section. */
+  lanes?: readonly { sectionId: string | null; title: string }[];
   /** Empty while the Workspaces setting is off. */
   workspaces: readonly { id: string; name: string }[];
   /** Each thread's workspace id, null for none. */
@@ -264,6 +303,9 @@ export type PaletteItem =
   | { kind: "pr"; id: string; threadId: string; pr: PalettePr; ranges: Record<string, Range[]> }
   | { kind: "workspace"; id: string; workspaceId: string | null; name: string; ranges: Record<string, Range[]> }
   | { kind: "project"; id: string; projectId: string; name: string; compose: boolean; ranges: Record<string, Range[]> }
+  | { kind: "section"; id: string; sectionId: string; name: string; lane: boolean; ranges: Record<string, Range[]> }
+  /** Completes the place word being typed: `in:bi` → `in:billing-api`. */
+  | { kind: "complete"; id: string; text: string; label: string; detail: string }
   | { kind: "action"; id: string; actionId: string; title: string; ranges: Record<string, Range[]> }
   | { kind: "file"; id: string; path: string; name: string; ranges: Record<string, Range[]> }
   /** "Show all": the rest of a capped group, in its own scope. */
@@ -271,6 +313,7 @@ export type PaletteItem =
   | { kind: "compose"; id: "compose"; prompt: string };
 
 export type GroupId =
+  | "complete"
   | "now"
   | "needs"
   | "running"
@@ -286,6 +329,7 @@ export type GroupId =
   | "files"
   | "compose";
 export const GROUP_TITLE: Record<GroupId, string> = {
+  complete: "Filter",
   now: "Now",
   needs: "Needs you",
   running: "Running",
@@ -301,7 +345,8 @@ export const GROUP_TITLE: Record<GroupId, string> = {
   files: "Files",
   compose: "New thread",
 };
-export type Section = { id: GroupId; title: string; items: PaletteItem[] };
+/** Browsing a place groups its threads; those groups are `place:<key>`. */
+export type Section = { id: GroupId | `place:${string}`; title: string; items: PaletteItem[] };
 
 /** Worst first, so what most needs attention leads. */
 export const PR_ATTENTION_RANK: Record<string, number> = {
@@ -348,6 +393,25 @@ function passes(thread: PaletteThread, filters: readonly Filter[], flow: Palette
   });
 }
 
+/** The names a thread answers to for one place word. */
+function placeNames(thread: PaletteThread, key: PlaceKey, input: PaletteInput, index: ReturnType<typeof indexes>): string[] {
+  switch (key) {
+    case "in":
+      return [index.projects.get(thread.projectId)?.name ?? ""];
+    case "ws": {
+      const workspace = input.workspaceOf[thread.id] ?? null;
+      return [workspace === null ? "No workspace" : (index.workspaces.get(workspace) ?? "")];
+    }
+    case "lane":
+      if (thread.sectionId === null) return [...(input.lanes ?? []).filter((lane) => lane.sectionId === null).map((lane) => lane.title), "No section"];
+      return [index.sections.get(thread.sectionId) ?? ""];
+  }
+}
+
+function passesPlaces(thread: PaletteThread, places: readonly PlaceFilter[], input: PaletteInput, index: ReturnType<typeof indexes>): boolean {
+  return places.every((place) => placeNames(thread, place.key, input, index).some((name) => placeNameMatches(place.value, name)));
+}
+
 type Scored = { item: PaletteItem; score: number };
 
 function indexes(input: PaletteInput) {
@@ -374,12 +438,12 @@ function threadFields(thread: PaletteThread, input: PaletteInput, index: ReturnT
 }
 
 /**
- * The palette inside a workspace: only its threads, their messages and their
- * PRs. Workspaces, projects and actions stay, so you can still switch.
- * `belongs` decides for a thread this window may not have loaded (an archived
- * one found by full-text search) from its id and project.
+ * The palette inside a workspace or a place: only its threads, their messages
+ * and their PRs. Workspaces, projects and actions stay, so you can still
+ * switch. `belongs` decides for a thread this window may not have loaded (an
+ * archived one found by full-text search) from its id and project.
  */
-export function onlyInWorkspace(input: PaletteInput, belongs: (threadId: string, projectId: string) => boolean): PaletteInput {
+export function onlyWhere(input: PaletteInput, belongs: (threadId: string, projectId: string) => boolean): PaletteInput {
   const threads = input.threads.filter((thread) => belongs(thread.id, thread.projectId));
   const loaded = new Set(input.threads.map((thread) => thread.id));
   const kept = new Set(threads.map((thread) => thread.id));
@@ -396,6 +460,8 @@ export function onlyInWorkspace(input: PaletteInput, belongs: (threadId: string,
     server: input.server?.filter((hit) => keeps(hit.threadId, hit.projectId)) ?? null,
   };
 }
+
+export const onlyInWorkspace = onlyWhere;
 
 /** Ranking nudges on top of the text match: what you use, where you are, what's waiting. */
 function threadBoost(thread: PaletteThread, input: PaletteInput): number {
@@ -532,8 +598,10 @@ const THREADS_FIRST: GroupId[] = ["threads", "messages"];
  */
 export function search(input: PaletteInput, scope: Scope, raw: string): Section[] {
   const query = parseQuery(raw);
-  const { tokens, filters } = query;
+  const { tokens, filters, places: placeFilters } = query;
   const empty = tokens.length === 0;
+  // Filters narrow threads; PRs, places and actions only come with plain text.
+  const unfiltered = filters.length === 0 && placeFilters.length === 0;
   const index = indexes(input);
   const groups = new Map<GroupId, Scored[]>();
   const push = (group: GroupId, scored: Scored) => {
@@ -545,7 +613,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
   if (scope === "all" || scope === "threads") {
     const listed = new Map<string, Scored>();
     for (const thread of input.threads) {
-      if (!visible(thread) || !passes(thread, filters, input.flow)) continue;
+      if (!visible(thread) || !passes(thread, filters, input.flow) || !passesPlaces(thread, placeFilters, input, index)) continue;
       const match = matchFields(tokens, threadFields(thread, input, index));
       if (match === null) continue;
       const scored = { item: threadItem(thread.id, match.ranges), score: match.score + threadBoost(thread, input) };
@@ -561,6 +629,10 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
           return;
         }
         if (known?.isHidden || (filters.length > 0 && (known === undefined || !passes(known, filters, input.flow)))) return;
+        // A thread this window hasn't loaded only knows its project.
+        if (placeFilters.length > 0) {
+          if (known ? !passesPlaces(known, placeFilters, input, index) : !placeFilters.every((place) => place.key === "in" && placeNameMatches(place.value, index.projects.get(hit.projectId)?.name ?? ""))) return;
+        }
         const archived = hit.archived || known?.isArchived === true;
         const score = 30 - order + (known ? threadBoost(known, input) : 0);
         push(archived ? "archived" : "messages", { item: threadItem(hit.threadId, {}, hit.snippet, hit), score });
@@ -568,7 +640,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     }
   }
 
-  if (scope === "prs" || (scope === "all" && !empty && filters.length === 0)) {
+  if (scope === "prs" || (scope === "all" && !empty && unfiltered)) {
     for (const { pr, threadId } of prItems(input, index)) {
       const open = pr.state === "open" || pr.state === "draft";
       if (empty) {
@@ -589,13 +661,18 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     }
   }
 
-  if (scope === "places" || (scope === "all" && !empty && filters.length === 0)) {
+  if (scope === "places" || (scope === "all" && !empty && unfiltered)) {
     const places: { item: PaletteItem; text: string; keyword: string; order: number }[] = [];
     if (input.workspaces.length > 0) {
       for (const workspace of input.workspaces)
         places.push({ item: { kind: "workspace", id: `workspace:${workspace.id}`, workspaceId: workspace.id, name: workspace.name, ranges: {} }, text: workspace.name, keyword: "workspace switch", order: places.length });
       places.push({ item: { kind: "workspace", id: "workspace:all", workspaceId: null, name: "All workspaces", ranges: {} }, text: "All workspaces", keyword: "workspace switch", order: places.length });
       places.push({ item: { kind: "workspace", id: "workspace:unassigned", workspaceId: "unassigned", name: "No workspace", ranges: {} }, text: "No workspace", keyword: "workspace switch", order: places.length });
+    }
+    const lanes = new Set((input.lanes ?? []).flatMap((lane) => (lane.sectionId === null ? [] : [lane.sectionId])));
+    for (const section of input.sections) {
+      const lane = lanes.has(section.id);
+      places.push({ item: { kind: "section", id: `section:${section.id}`, sectionId: section.id, name: section.name, lane, ranges: {} }, text: section.name, keyword: lane ? "lane section browse" : "section browse", order: places.length });
     }
     for (const project of input.projects) {
       places.push({ item: { kind: "project", id: `project:${project.id}`, projectId: project.id, name: project.name, compose: false, ranges: {} }, text: project.name, keyword: "project open", order: places.length });
@@ -632,7 +709,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     });
   }
 
-  if (scope === "actions" || (scope === "all" && !empty && filters.length === 0)) {
+  if (scope === "actions" || (scope === "all" && !empty && unfiltered)) {
     input.actions.forEach((action, order) => {
       const item: PaletteItem = { kind: "action", id: `action:${action.id}`, actionId: action.id, title: action.title, ranges: {} };
       const boost = frecencyBoost(input.frecency[item.id], input.now);
@@ -649,7 +726,32 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     });
   }
 
+  const partial = query.partial;
+  if (partial !== null && (scope === "all" || scope === "threads")) {
+    const names =
+      partial.key === "in"
+        ? input.projects.map((project) => ({ name: project.name, detail: "Project" }))
+        : partial.key === "ws"
+          ? input.workspaces.length > 0
+            ? [...input.workspaces.map((workspace) => ({ name: workspace.name, detail: "Workspace" })), { name: "No workspace", detail: "Workspace" }]
+            : []
+          : input.sections.map((section) => ({
+              name: section.name,
+              detail: (input.lanes ?? []).some((lane) => lane.sectionId === section.id) ? "Lane" : "Section",
+            }));
+    const seen = new Set<string>();
+    names
+      .filter(({ name }) => partial.value === "" || placeNameMatches(partial.value, name))
+      .forEach(({ name, detail }, order) => {
+        const text = `${partial.key}:${slug(name)}`;
+        if (seen.has(text)) return;
+        seen.add(text);
+        push("complete", { item: { kind: "complete", id: `complete:${text}`, text, label: name, detail }, score: 1000 - order });
+      });
+  }
+
   const cap: Record<GroupId, number> = {
+    complete: 6,
     now: 7,
     needs: 5,
     running: 5,
@@ -667,7 +769,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
   };
   const ranked = [...groups.entries()].map(([id, list]) => {
     list.sort((a, b) => b.score - a.score);
-    const limit = scope === "all" ? cap[id] : 50;
+    const limit = scope === "all" || id === "complete" ? cap[id] : 50;
     const items = list.slice(0, limit).map((scored) => scored.item);
     const more = scope === "all" ? MORE[id] : undefined;
     if (more && list.length > limit) {
@@ -676,6 +778,8 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     return { id, best: list[0]!.score, items };
   });
   const pinned = (id: GroupId) => {
+    // A filter being typed: finishing it is the next step.
+    if (id === "complete") return -1;
     const index = THREADS_FIRST.indexOf(id);
     return index === -1 ? THREADS_FIRST.length : index;
   };
@@ -683,6 +787,89 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
   const sections: Section[] = ranked.map(({ id, items }) => ({ id, title: GROUP_TITLE[id], items }));
   if (scope === "all" && query.text.length > 0) {
     sections.push({ id: "compose", title: GROUP_TITLE.compose, items: [{ kind: "compose", id: "compose", prompt: query.text }] });
+  }
+  return sections;
+}
+
+// --- browsing a place ----------------------------------------------------------------
+
+/**
+ * A project, workspace, lane or section, listed as the sidebar lists it. A
+ * workspace id is a workspace, "unassigned" for No workspace, null for all.
+ */
+export type Place = { kind: "project" | "workspace" | "section"; id: string | null; name: string };
+
+/**
+ * Whether a thread is in the place. A thread this window hasn't loaded only
+ * knows its project; palette.tsx passes bb's own workspace test instead.
+ */
+export function placeBelongs(input: PaletteInput, place: Place): (threadId: string, projectId: string) => boolean {
+  const loaded = new Map(input.threads.map((thread) => [thread.id, thread]));
+  return (threadId, projectId) => {
+    const thread = loaded.get(threadId);
+    switch (place.kind) {
+      case "project":
+        return (thread?.projectId ?? projectId) === place.id;
+      case "section":
+        return thread !== undefined && thread.sectionId === place.id;
+      case "workspace":
+        if (place.id === null) return true;
+        return thread !== undefined && (input.workspaceOf[threadId] ?? null) === (place.id === "unassigned" ? null : place.id);
+    }
+  };
+}
+
+const BROWSE_LIMIT = 200;
+
+/**
+ * Every thread in a place. Without a query, grouped like the sidebar: a
+ * project by lane and section, a workspace by project. With one, the place's
+ * threads and messages, ranked as search ranks them.
+ */
+export function browse(
+  input: PaletteInput,
+  place: Place,
+  raw: string,
+  belongs: (threadId: string, projectId: string) => boolean = placeBelongs(input, place),
+): Section[] {
+  const inside = onlyWhere(input, belongs);
+  if (raw.trim() !== "") return search(inside, "threads", raw);
+  const index = indexes(inside);
+  const threads = inside.threads
+    .filter(visible)
+    .map((thread) => ({ thread, score: threadBoost(thread, inside) }))
+    .sort((a, b) => b.score - a.score || b.thread.updatedAt - a.thread.updatedAt)
+    .slice(0, BROWSE_LIMIT)
+    .map(({ thread }) => thread);
+  const items = (list: readonly PaletteThread[]) => list.map((thread) => threadItem(thread.id));
+  if (place.kind === "section") return threads.length ? [{ id: `place:${place.id}`, title: place.name, items: items(threads) }] : [];
+  if (place.kind === "workspace") {
+    return groupByProject(threads).map(({ projectId, threads: members }) => ({
+      id: `place:${projectId}`,
+      title: index.projects.get(projectId)?.name ?? "Project",
+      items: items(members),
+    }));
+  }
+  // A project: lanes in their order (Active is the unfiled one), then other sections, then the unfiled.
+  const order: { key: string | null; title: string }[] = [];
+  const listed = new Set<string | null>();
+  for (const lane of input.lanes ?? []) {
+    if (listed.has(lane.sectionId)) continue;
+    listed.add(lane.sectionId);
+    order.push({ key: lane.sectionId, title: lane.title });
+  }
+  for (const section of input.sections) {
+    if (listed.has(section.id)) continue;
+    listed.add(section.id);
+    order.push({ key: section.id, title: section.name });
+  }
+  if (!listed.has(null)) order.push({ key: null, title: "No section" });
+  const known = new Set(order.map((entry) => entry.key));
+  const sections: Section[] = [];
+  for (const { key, title } of order) {
+    // A section this window doesn't know yet counts as unfiled, so no thread drops out.
+    const members = threads.filter((thread) => (known.has(thread.sectionId) ? thread.sectionId : null) === key);
+    if (members.length) sections.push({ id: `place:${key ?? "none"}`, title, items: items(members) });
   }
   return sections;
 }
