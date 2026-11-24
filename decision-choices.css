@@ -288,11 +288,9 @@
 .jf-choices-group-title {
   min-width: 0;
   flex: 1;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--foreground);
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .jf-choices-group-hint {
   flex-shrink: 0;

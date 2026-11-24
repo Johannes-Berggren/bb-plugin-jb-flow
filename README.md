@@ -365,9 +365,11 @@ left out. Nothing is sent until you press **Send**.
 With focus in the list, ↑/↓ and Home/End move between options, and a digit ticks
 that option (or, where a click sends, moves to it so Enter sends).
 
-While the choices show, the same numbered list in the agent's message is hidden,
-along with its "Reply with the number…" line, and each choice shows its full
-text (turn off with **Hide options the reply buttons repeat**).
+While the choices show, the agent's **Next steps** callout hides if the controls
+fully repeat its questions, options and standard reply instructions. Questions
+and options in the hidden callout appear in full in the controls. Any extra
+context or links stay visible in the message. Turn off **Hide options the reply
+buttons repeat** to show both.
 
 ### Triage sidebar
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).

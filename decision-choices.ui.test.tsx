@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { DecisionChips, REPEATED_LIST_ATTR, repeatedList, repeatedReplyLines } from "./decision-choices";
+import { DecisionChips, REPEATED_LIST_ATTR, repeatedList } from "./decision-choices";
 
 afterEach(cleanup);
 const options = [
@@ -352,11 +352,10 @@ it("hides the list's reply line with it, and keeps other paragraphs", async () =
     .join("")}</ol><p>Reply with the numbers, e.g. <strong>1,2</strong>.</p><p>The rest is up to Sam.</p></blockquote>`;
   document.body.append(row);
   const [question, reply, rest] = Array.from(row.querySelectorAll("p"));
-  expect(repeatedReplyLines(row.querySelector("ol")!)).toEqual([reply]);
   const slot = renderSlot(
     { component: DecisionChips },
     { threadId: "t1", updatedAt: 1, idle: true },
-    { rpc: { decision_options: () => ({ options }) } },
+    { rpc: { decision_options: () => ({ mode: "multi", options }) } },
   );
   await slot.findByRole("region", { name: "Reply choices" });
   await waitFor(() => expect(reply!.hasAttribute(REPEATED_LIST_ATTR)).toBe(true));
@@ -415,6 +414,86 @@ const decisionNeeded = {
     { n: 2, text: "Leave them open for free", recommended: false },
   ],
 };
+
+function nextStepsMessage() {
+  const markup = (group: typeof pathForward | typeof decisionNeeded) => group.options
+    .map(({ text, recommended }) => `<li>${text}${recommended ? " (recommended)" : ""}</li>`).join("");
+  const row = document.createElement("div");
+  row.dataset.timelineRowId = "r1";
+  row.innerHTML = `<div data-markdown-preview>
+    <p><strong>Done:</strong> Checked the records.</p>
+    <h3>Next steps</h3>
+    <blockquote>
+      <p>[!TIP]<br>${decisionNeeded.title}</p>
+      <ol>${markup(decisionNeeded)}</ol>
+      <p>Reply with the number.</p>
+      <p>${pathForward.title}</p>
+      <ol>${markup(pathForward)}</ol>
+      <p>Reply <strong>go</strong> for all, or <strong>go 1,3</strong>.</p>
+    </blockquote>
+    <p><em>2026-11-24 10:08 CET</em></p>
+  </div>`;
+  document.body.append(row);
+  return row;
+}
+
+it("hides a fully repeated Next steps callout while both titled lists show, preserving the timestamp", async () => {
+  const row = nextStepsMessage();
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ mode: "go", options: pathForward.options, groups: [decisionNeeded, pathForward] }) } },
+  );
+  expect(await slot.findByRole("group", { name: decisionNeeded.title })).toBeTruthy();
+  expect(slot.getByRole("group", { name: pathForward.title })).toBeTruthy();
+  expect(slot.getByRole("radio", { name: /Add a line to the renewal \(recommended\)/ })).toBeTruthy();
+  expect(slot.getByRole("checkbox", { name: /Move the deal/ })).toBeTruthy();
+  const [report, heading, callout, timestamp] = Array.from(row.querySelector("[data-markdown-preview]")!.children);
+  await waitFor(() => expect(callout!.hasAttribute(REPEATED_LIST_ATTR)).toBe(true));
+  expect(heading!.hasAttribute(REPEATED_LIST_ATTR)).toBe(true);
+  expect(report!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  expect(timestamp!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  slot.lifecycle.unmount();
+  expect(row.querySelectorAll(`[${REPEATED_LIST_ATTR}]`)).toHaveLength(0);
+  row.remove();
+});
+
+it.each([
+  ["li:nth-child(2)", "Leave them open for free until Friday"],
+  ["ol + p + p + ol li", '<a href="https://example.com/records">Record the churn</a>'],
+  ["ol + p", "Reply with the number. Only proceed after the invoice clears."],
+  ["p:first-child", "[!TIP] Decision needed: two customers use it without an agreement, and one renews today"],
+])("keeps the callout when %s contains material the reply controls omit", async (selector, content) => {
+  const row = nextStepsMessage();
+  const original = row.querySelector(`blockquote ${selector}`)!;
+  original.innerHTML = content;
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ mode: "go", options: pathForward.options, groups: [decisionNeeded, pathForward] }) } },
+  );
+  await slot.findByRole("group", { name: pathForward.title });
+  expect(original.closest(`[${REPEATED_LIST_ATTR}]`)).toBeNull();
+  expect(row.querySelector(`h3[${REPEATED_LIST_ATTR}]`)).toBeNull();
+  slot.lifecycle.unmount();
+  row.remove();
+});
+
+it("shows a single question above its options when the original callout is hidden", async () => {
+  const row = nextStepsMessage();
+  const callout = row.querySelector("blockquote")!;
+  while (callout.children.length > 3) callout.lastElementChild!.remove();
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ mode: "choice", options: decisionNeeded.options, groups: [decisionNeeded] }) } },
+  );
+  const group = await slot.findByRole("group", { name: decisionNeeded.title });
+  expect(group.previousElementSibling?.textContent).toBe(decisionNeeded.title);
+  expect(callout.hasAttribute(REPEATED_LIST_ATTR)).toBe(true);
+  slot.lifecycle.unmount();
+  row.remove();
+});
 
 it("answers a path forward and a decision in one reply, one line each", async () => {
   const reply = vi.fn(async () => ({ ok: true }));

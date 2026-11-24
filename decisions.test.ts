@@ -194,6 +194,7 @@ test("a single step to run with go gets a Go, and an imperative 'Set' isn't read
   assert.equal(move.mode, "go");
   assert.deepEqual(move.options.map((option) => option.n), [1]);
   assert.equal(nextMoves(message).length, 1);
+  assert.equal(nextMoves(message)[0]!.title, "Path forward: one more bookkeeping fix");
   // One option that isn't answered with go is no choice at all.
   assert.deepEqual(nextMove("Which should I do?\n1. Merge now").options, []);
   // A summary still isn't a choice.

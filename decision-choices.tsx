@@ -3,6 +3,7 @@ import type { KeyboardEvent, MouseEvent, RefObject } from "react";
 import { useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { DecisionGroup, DecisionMode, DecisionOption } from "./decisions";
+import { CALLOUT_ATTR } from "./callouts";
 import { Icon } from "@/components/ui/icon";
 import "./decision-choices.css";
 
@@ -20,30 +21,34 @@ export function DecisionChips({
   return threadId && idle ? <Choices key={threadId} threadId={threadId} updatedAt={updatedAt} /> : null;
 }
 
-/** Marks the agent's numbered list that these buttons repeat. CSS hides it. */
+/** Marks message content repeated by the visible reply buttons. CSS hides it. */
 export const REPEATED_LIST_ATTR = "data-jf-choices-repeated";
 
-const comparable = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+const cleanText = (text: string) => text.replace(/\s+/g, " ").trim();
+const textOf = (element: Element) => cleanText(element.textContent ?? "");
+// The controls render plain text. Keep links, media, nested lists and other rich content in the message.
+const simpleText = (element: Element) => !element.querySelector(":not(p, strong, em, code, br)");
 
 /** The ordered list in the latest message whose items are these options, if any. */
 export function repeatedList(scope: Element, options: readonly DecisionOption[]): HTMLOListElement | null {
   if (options.length === 0) return null;
-  const matches = (list: Element) => {
-    const items = Array.from(list.children).filter((child) => child.tagName === "LI");
+  const matches = (list: HTMLOListElement) => {
+    if (list.reversed || list.start !== options[0]!.n) return false;
+    const items = Array.from(list.children);
     if (items.length !== options.length) return false;
     return items.every((item, index) => {
-      const want = comparable(options[index]!.text).slice(0, 32);
-      return want.length > 0 && comparable(item.textContent ?? "").includes(want);
+      if (item.tagName !== "LI" || item.hasAttribute("value") || !simpleText(item)) return false;
+      const option = options[index]!;
+      const text = textOf(item);
+      return text === option.text ||
+        (option.recommended && cleanText(text.replace(/\s*\(recommended\)\s*/i, " ")) === option.text);
     });
   };
   // Newest row first. A compact thread can end in rows that hold no message (a
   // work summary, a turn footer), so look past them instead of only at the last.
-  const rows = Array.from(scope.querySelectorAll("[data-timeline-row-id]")).reverse();
-  for (const row of rows) {
-    const found = Array.from(row.querySelectorAll("ol")).reverse().find(matches);
-    if (found) return found as HTMLOListElement;
-  }
-  return null;
+  const row = Array.from(scope.querySelectorAll("[data-timeline-row-id]")).reverse()
+    .find((element) => element.querySelector("[data-markdown-preview], ol"));
+  return Array.from(row?.querySelectorAll("ol") ?? []).reverse().find(matches) ?? null;
 }
 
 /** The nearest ancestor of the buttons that holds the thread's messages. */
@@ -54,43 +59,78 @@ function messageScope(from: Element | null): Element | null {
   return null;
 }
 
-/** A line after the list that only says how to answer it: "Reply with the number(s)…", "Reply go for all…". */
-const REPLY_LINE =
-  /^\s*(?:reply|answer|respond|write|type|say|send|pick|choose|select|tick)\b[^\n]{0,80}?\b(?:numbers?|number\(s\)|go|options?|one or more|all that apply)\b/i;
+const REPLY_LINE: Record<DecisionMode, RegExp> = {
+  choice: /^Reply with (?:the|a) (?:number|option)\.?$/i,
+  multi: /^Reply with (?:the numbers|one or more numbers)(?:, e\.g\.?,? \d+(?:,\s*\d+)*)?\.?$/i,
+  go: /^Reply go(?: to run it| for all(?:, or go \d+(?:,\s*\d+)*)?)?\.?$/i,
+};
 
-/** The paragraphs right after the list that only tell you how to answer it; the buttons replace them too. */
-export function repeatedReplyLines(list: Element): Element[] {
-  const lines: Element[] = [];
-  for (let next = list.nextElementSibling; next && lines.length < 2; next = next.nextElementSibling) {
-    const text = next.textContent?.trim() ?? "";
-    if (next.tagName !== "P" || text.length > 160 || !REPLY_LINE.test(text)) break;
-    lines.push(next);
-  }
-  return lines;
+/** The standard reply instruction, when the controls offer the same way to answer. */
+function repeatedReplyLine(list: Element, mode: DecisionMode): Element | null {
+  const next = list.nextElementSibling;
+  return next?.tagName === "P" && simpleText(next) && REPLY_LINE[mode].test(textOf(next)) ? next : null;
 }
 
-/** While the buttons show, hide the same list (and its "Reply with…" line) in the message above them. */
+/** The heading and Tip callouts can go when every block is represented in the controls. */
+function repeatedNextSteps(lists: readonly (HTMLOListElement | null)[], groups: readonly DecisionGroup[]): Element[] {
+  if (lists.length !== groups.length || groups.some(({ title }) => !title)) return [];
+  const quotes = [...new Set(lists.map((list) => list?.parentElement))];
+  const heading = quotes[0]?.previousElementSibling;
+  if (!heading?.matches("h2, h3, h4") || !/^Next steps?$/i.test(textOf(heading)) || !simpleText(heading)) return [];
+  const hidden = [heading];
+  let sibling = heading.nextElementSibling;
+  let index = 0;
+  for (const quote of quotes) {
+    if (!quote || quote !== sibling || quote.tagName !== "BLOCKQUOTE") return [];
+    const blocks = Array.from(quote.children);
+    const first = blocks[0];
+    const hasMarker = first?.tagName === "P" && /^\[!TIP\]/i.test(textOf(first));
+    if (!(hasMarker || quote.getAttribute(CALLOUT_ATTR) === "tip")) return [];
+    if (Array.from(quote.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())) return [];
+    if (first?.tagName === "P" && simpleText(first) && /^(?:\[!TIP\])?$/i.test(textOf(first))) blocks.shift();
+    while (blocks.length) {
+      const [title, list] = blocks.splice(0, 2);
+      const group = groups[index];
+      if (!group || !list || list !== lists[index] || title?.tagName !== "P" || !simpleText(title)) return [];
+      const titleText = title === first && hasMarker ? textOf(title).replace(/^\[!TIP\]\s*/i, "") : textOf(title);
+      if (titleText !== group.title) return [];
+      if (blocks[0] === repeatedReplyLine(list, group.mode)) blocks.shift();
+      index += 1;
+    }
+    hidden.push(quote);
+    sibling = quote.nextElementSibling;
+  }
+  // A status report's timestamp sits after the callouts. Leave it and any following sections visible.
+  const endsSection = !sibling || sibling.matches("h1, h2, h3, h4, h5, h6") ||
+    (sibling.tagName === "P" && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} [A-Z]{2,5}$/.test(textOf(sibling)));
+  return index === groups.length && endsSection ? hidden : [];
+}
+
+/** Hide duplicate content only while the controls that replace it are mounted. */
 function useHideRepeatedList(
   section: RefObject<HTMLElement | null>,
-  lists: readonly (readonly DecisionOption[])[],
+  groups: readonly DecisionGroup[],
   enabled: boolean,
 ) {
-  const [hidden, setHidden] = useState(false);
+  const [visibility, setVisibility] = useState<"original" | "lists" | "section">("original");
   useEffect(() => {
-    if (!enabled || lists.every((options) => options.length === 0)) return;
+    if (!enabled || groups.every(({ options }) => options.length === 0)) return;
     const scope = messageScope(section.current);
     if (!scope) return;
     let marked: Element[] = [];
     const apply = () => {
-      const found = lists.map((options) => repeatedList(scope, options));
-      // Only the lists and their "Reply with…" lines: the question or path above each stays.
-      const next = found.flatMap((list) => (list ? [list, ...repeatedReplyLines(list)] : []));
+      const found = groups.map(({ options }) => repeatedList(scope, options));
+      const steps = repeatedNextSteps(found, groups);
+      const next = steps.length ? steps : found.flatMap((list, index) => {
+        if (!list) return [];
+        const reply = repeatedReplyLine(list, groups[index]!.mode);
+        return reply ? [list, reply] : [list];
+      });
       if (next.length === marked.length && next.every((element, index) => element === marked[index])) return;
       for (const element of marked) element.removeAttribute(REPEATED_LIST_ATTR);
       for (const element of next) element.setAttribute(REPEATED_LIST_ATTR, "");
       marked = next;
-      // The panel takes the lists' place only when it repeats every one of them.
-      setHidden(found.every((list) => list !== null));
+      setVisibility(steps.length ? "section" : next.length ? "lists" : "original");
     };
     apply();
     let frame = 0;
@@ -98,15 +138,15 @@ function useHideRepeatedList(
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(apply);
     });
-    observer.observe(scope, { childList: true, subtree: true });
+    observer.observe(scope, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: [CALLOUT_ATTR] });
     return () => {
       observer.disconnect();
       cancelAnimationFrame(frame);
       for (const element of marked) element.removeAttribute(REPEATED_LIST_ATTR);
-      setHidden(false);
+      setVisibility("original");
     };
-  }, [section, lists, enabled]);
-  return hidden;
+  }, [section, groups, enabled]);
+  return visibility;
 }
 
 const recommendedOf = (options: readonly DecisionOption[]) => options.filter((option) => option.recommended).map((option) => option.n);
@@ -157,10 +197,15 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   }, [rpc, threadId, updatedAt]);
   const { options } = move;
   const grouped = (move.groups?.length ?? 0) > 1 ? move.groups! : null;
-  const lists = useMemo(() => (grouped ? grouped.map((group) => group.options) : [options]), [grouped, options]);
-  const listHidden = useHideRepeatedList(sectionRef, lists, hideRepeated);
+  const groups = useMemo(
+    () => move.groups?.length ? move.groups : [{ mode: move.mode ?? "choice", title: "", label: "", options: move.options }],
+    [move],
+  );
+  const visibility = useHideRepeatedList(sectionRef, groups, hideRepeated);
+  const listHidden = visibility !== "original";
   if (grouped) return <GroupedChoices key={shown.current} sectionRef={sectionRef} threadId={threadId} groups={grouped} listHidden={listHidden} />;
   if (!options.length) return null;
+  const title = visibility === "section" ? groups[0]?.title : undefined;
   // A go-list: tick steps, then Go sends "go" (all) or "go 1,3".
   const go = move.mode === "go";
   // Several numbers: tick options, then Send sends "1,3".
@@ -248,7 +293,12 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
           ) : null}
         </span>
       </div>
-      <div className="jf-choices-list" role="group" aria-label={go ? "Steps" : "Options"} onKeyDown={onKeyDown}>
+      {title && (
+        <div className="jf-choices-group-heading">
+          <span className="jf-choices-group-title">{title}</span>
+        </div>
+      )}
+      <div className="jf-choices-list" role="group" aria-label={title ?? (go ? "Steps" : "Options")} onKeyDown={onKeyDown}>
         {options.map((option) => {
           const text = String(option.n);
           const label = `${option.text}${option.recommended ? " (recommended)" : ""}`;
@@ -259,6 +309,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
                   {option.n}
                 </span>
                 <span className="jf-choice-text">{option.text}</span>
+                {option.recommended && <span className="jf-choice-meta">Recommended</span>}
               </div>
             );
           if (ticking) {
