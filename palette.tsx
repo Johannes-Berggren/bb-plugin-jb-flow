@@ -29,9 +29,11 @@ import {
   SCOPE_LABEL,
   SCOPE_PREFIX,
   ago,
+  browse,
   home,
   matchesShortcut,
   parseQuery,
+  placeBelongs,
   recordUse,
   search,
   searchShortcuts,
@@ -41,13 +43,14 @@ import {
   type PaletteAction,
   type PaletteInput,
   type PaletteItem,
+  type Place,
   type Platform,
   type Range,
   type Scope,
   type Section,
   type ServerHit,
   type Shortcut,
-  onlyInWorkspace,
+  onlyWhere,
 } from "./palette-model";
 import { resolveLanes } from "./lanes";
 import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
@@ -200,7 +203,11 @@ type ThreadInfo = {
   archivedAt: number | null;
   status: PluginSidebarThread["status"];
 };
-type Mode = { kind: "thread"; thread: ThreadInfo } | { kind: "list"; title: string; entries: readonly Entry[] };
+type Mode =
+  | { kind: "thread"; thread: ThreadInfo }
+  | { kind: "list"; title: string; entries: readonly Entry[] }
+  /** A project, workspace or section's threads, as the sidebar lists them. */
+  | { kind: "place"; place: Place };
 type Level = { mode: Mode; back: { query: string; scope: Scope; activeId: string | null } };
 
 const info = (thread: PluginSidebarThread): ThreadInfo => ({
@@ -456,7 +463,12 @@ export function Palette({
   const lanes = useMemo(() => resolveLanes(threadSections, flow?.laneSections), [threadSections, flow?.laneSections]);
   const current = context.threadId ? (threadsById.get(context.threadId) ?? null) : null;
   const parsed = parseQuery(query);
-  const server = useServerSearch(parsed.text, level === null && (scope === "all" || scope === "threads"), scope === "threads" ? 50 : 20);
+  const placeMode = level?.mode.kind === "place" ? level.mode.place : null;
+  const server = useServerSearch(
+    parsed.text,
+    placeMode !== null || (level === null && (scope === "all" || scope === "threads")),
+    placeMode !== null || scope === "threads" ? 50 : 20,
+  );
   const checkout = current?.environment?.id ?? null;
   const files = useFileSearch(current?.projectId ?? null, checkout, query, level === null && scope === "files");
   const serverById = useMemo(() => new Map((server ?? []).map((hit) => [hit.threadId, hit])), [server]);
@@ -782,6 +794,29 @@ export function Palette({
         run: () => window.dispatchEvent(new CustomEvent(CATCH_UP_EVENT)),
       });
     }
+    if (composeProject) {
+      const name = projectName(composeProject);
+      entries.push({
+        id: "browse-project",
+        title: `Browse ${name} threads`,
+        keywords: "project list all threads sidebar",
+        icon: <Icon name="Folder" />,
+        open: () => ({ kind: "place", place: { kind: "project", id: composeProject, name } }),
+      });
+    }
+    if (workspacesOn) {
+      const here = current ? (workspaceOf[current.id] ?? "unassigned") : selectedWorkspace;
+      const name = here === "unassigned" ? "No workspace" : here === null ? null : workspaceState.workspaces.find((workspace) => workspace.id === here)?.name;
+      if (here !== null && name) {
+        entries.push({
+          id: "browse-workspace",
+          title: here === "unassigned" ? "Browse threads in No workspace" : `Browse ${name} threads`,
+          keywords: "workspace list all threads sidebar",
+          icon: <Icon name="Layers" />,
+          open: () => ({ kind: "place", place: { kind: "workspace", id: here, name } }),
+        });
+      }
+    }
     entries.push(
       {
         id: "new-thread",
@@ -793,11 +828,11 @@ export function Palette({
     );
     return entries;
     // projectName reads projectsById, a dependency here.
-  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, monitorOn, nowOn, focusLimit, threads, selectedWorkspace, workspaceState]);
+  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, monitorOn, nowOn, focusLimit, threads, selectedWorkspace, workspaceState, workspacesOn, current, workspaceOf]);
 
   // --- what to list ---
   const levelEntries: readonly Entry[] | null =
-    level === null
+    level === null || level.mode.kind === "place"
       ? null
       : level.mode.kind === "thread"
         ? threadEntries(level.mode.thread, modeReplies, modeHostActions, query)
@@ -807,6 +842,7 @@ export function Palette({
     threads,
     projects,
     sections: threadSections,
+    lanes: lanes.map((lane) => ({ sectionId: lane.sectionId, title: lane.title })),
     workspaces,
     workspaceOf,
     selectedWorkspace,
@@ -820,16 +856,23 @@ export function Palette({
     files,
     now,
   };
-  const input = scopeWorkspace === null ? everything : onlyInWorkspace(everything, belongs);
+  const input = scopeWorkspace === null ? everything : onlyWhere(everything, belongs);
   let sections: Section[];
-  if (levelEntries !== null) {
+  if (placeMode !== null) {
+    if (placeMode.kind === "workspace") {
+      // Another workspace than the tab's: start from everything, and ask bb's own workspace test.
+      const inPlace = (threadId: string, projectId: string) =>
+        inWorkspace(threadsById.get(threadId) ?? { id: threadId, projectId, sectionId: null, parentThreadId: null }, placeMode.id, workspaceState, threads);
+      sections = browse(everything, placeMode, query, inPlace);
+    } else sections = browse(input, placeMode, query, placeBelongs(input, placeMode));
+  } else if (levelEntries !== null) {
     const pinned = levelEntries.filter((entry) => entry.pinned);
     const ranked = search({ ...input, actions: levelEntries.filter((entry) => !entry.pinned) }, "actions", query)[0]?.items ?? [];
     const items: PaletteItem[] = [
       ...pinned.map((entry): PaletteItem => ({ kind: "action", id: `action:${entry.id}`, actionId: entry.id, title: entry.title, ranges: {} })),
       ...ranked,
     ];
-    sections = items.length ? [{ id: "actions", title: level?.mode.kind === "thread" ? level.mode.thread.title : (level?.mode.title ?? ""), items }] : [];
+    sections = items.length ? [{ id: "actions", title: level?.mode.kind === "thread" ? level.mode.thread.title : level?.mode.kind === "list" ? level.mode.title : "", items }] : [];
   } else {
     sections = query.trim() === "" && scope === "all" ? home(input) : search(input, scope, query);
   }
@@ -872,6 +915,13 @@ export function Palette({
     return hit ? infoFromHit(hit) : null;
   };
 
+  /** Replaces the place word being typed with the chosen one. */
+  const complete = (text: string) => {
+    setQuery((before) => `${before.replace(/\S*$/, "")}${text} `);
+    setActiveId(null);
+    inputRef.current?.focus();
+  };
+
   /** Tab: a level deeper, for things that have one. */
   const drill = (item: PaletteItem | null): boolean => {
     if (item === null) return false;
@@ -884,6 +934,22 @@ export function Palette({
       const entry = entriesById.get(item.actionId);
       if (!entry?.open) return false;
       enter(entry.open(), entry.query);
+      return true;
+    }
+    if (item.kind === "project" && !item.compose) {
+      enter({ kind: "place", place: { kind: "project", id: item.projectId, name: item.name } });
+      return true;
+    }
+    if (item.kind === "workspace") {
+      enter({ kind: "place", place: { kind: "workspace", id: item.workspaceId, name: item.name } });
+      return true;
+    }
+    if (item.kind === "section") {
+      enter({ kind: "place", place: { kind: "section", id: item.sectionId, name: item.name } });
+      return true;
+    }
+    if (item.kind === "complete") {
+      complete(item.text);
       return true;
     }
     if (item.kind === "compose") {
@@ -950,6 +1016,10 @@ export function Palette({
         });
         return;
       }
+      case "section":
+      case "complete":
+        drill(item);
+        return;
       case "more":
         setScope(item.scope);
         setActiveId(null);
@@ -1052,9 +1122,20 @@ export function Palette({
     }
   };
 
-  const chip = level !== null ? (level.mode.kind === "thread" ? level.mode.thread.title : level.mode.title) : scope !== "all" ? SCOPE_LABEL[scope] : null;
+  const chip =
+    level !== null
+      ? level.mode.kind === "thread"
+        ? level.mode.thread.title
+        : level.mode.kind === "place"
+          ? level.mode.place.name
+          : level.mode.title
+      : scope !== "all"
+        ? SCOPE_LABEL[scope]
+        : null;
   const placeholder =
-    level?.mode.kind === "thread"
+    placeMode !== null
+      ? `Search threads in ${placeMode.name}…`
+      : level?.mode.kind === "thread"
       ? "Snooze tomorrow, move, reply, tag …, archive…"
       : level !== null
         ? "Filter…"
@@ -1122,7 +1203,11 @@ export function Palette({
         <div className={cn("jf-palette-body", wide && "jf-palette-body-split")}>
         <div id={listId} role="listbox" aria-label="Results" className="jf-palette-list">
           {rows.length === 0 ? (
-            <p className="jf-palette-empty">{level !== null
+            <p className="jf-palette-empty">{placeMode !== null
+                ? query.trim() === ""
+                  ? `No threads in ${placeMode.name}`
+                  : "Nothing matches"
+                : level !== null
                 ? "No matching actions"
                 : scope === "prs"
                   ? "No tracked pull requests"
@@ -1205,7 +1290,7 @@ export function Palette({
           </span>
           {level === null && scope === "all" ? (
             <span className="jf-palette-scopes">
-              <kbd>&gt;</kbd> actions <kbd>#</kbd> PRs <kbd>@</kbd> places <kbd>/</kbd> files <span title={FILTER_HINTS.join(" ")}>is:needs …</span>
+              <kbd>&gt;</kbd> actions <kbd>#</kbd> PRs <kbd>@</kbd> places <kbd>/</kbd> files <span title={FILTER_HINTS.join(" ")}>is:needs in: …</span>
             </span>
           ) : null}
         </div>
@@ -1223,6 +1308,14 @@ function rowHint(item: PaletteItem | null, entries: ReadonlyMap<string, Entry>, 
       return `↵ open PR  ${mod}↵ thread`;
     case "compose":
       return "↵ start  ⇥ project";
+    case "project":
+      return item.compose ? "↵ start" : "↵ open  ⇥ threads";
+    case "workspace":
+      return "↵ switch  ⇥ threads";
+    case "section":
+      return "↵ threads";
+    case "complete":
+      return "↵ use filter";
     case "file":
       return `↵ preview  ${mod}↵ editor`;
     case "more":
@@ -1300,6 +1393,10 @@ function Row(props: RowProps) {
       ) : (
         <Simple icon={<Icon name="Folder" />} title={<Highlight text={item.name} ranges={item.ranges.title} />} detail="Project" />
       );
+    case "section":
+      return <Simple icon={<Glyph name="folderMove" />} title={<Highlight text={item.name} ranges={item.ranges.title} />} detail={item.lane ? "Lane" : "Section"} />;
+    case "complete":
+      return <Simple icon={<Icon name="Filter" />} title={<><code className="jf-palette-code">{item.text}</code> {item.label}</>} detail={item.detail} />;
     case "compose":
       return <Simple icon={<Icon name="MessageSquarePlus" />} title={<>New thread: “{item.prompt}”</>} detail={props.composeProject ? `in ${props.composeProject}` : undefined} />;
     case "file": {
@@ -1478,7 +1575,8 @@ function PaletteTips({ mod }: { mod: string }) {
         <dt><kbd>@</kbd></dt><dd>Workspaces and projects</dd>
         <dt><kbd>/</kbd></dt><dd>Files in this thread's checkout</dd>
         <dt><code>is:needs</code></dt><dd>Also <code>is:running</code>, <code>is:snoozed</code>, <code>is:unread</code>, <code>is:pinned</code>, <code>is:pr</code></dd>
-        <dt><kbd>⇥</kbd></dt><dd>A thread's actions: reply, snooze <code>tomorrow</code>, <code>tag urgent</code>, move</dd>
+        <dt><code>in:</code></dt><dd>A project; <code>ws:</code> a workspace, <code>lane:</code> a lane or section</dd>
+        <dt><kbd>⇥</kbd></dt><dd>A thread's actions: reply, snooze <code>tomorrow</code>, <code>tag urgent</code>, move. On a project, workspace or lane: its threads</dd>
         <dt><kbd>{mod}↵</kbd></dt><dd>Open a thread in a split</dd>
       </dl>
     </div>

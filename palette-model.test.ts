@@ -3,8 +3,12 @@ import { test } from "node:test";
 import {
   frecencyBoost,
   home,
+  browse,
   onlyInWorkspace,
   matchToken,
+  placeBelongs,
+  placeNameMatches,
+  slug,
   matchesShortcut,
   parseQuery,
   pushRecent,
@@ -80,7 +84,32 @@ test("parseQuery splits is: filters from words", () => {
     text: "Fix billing is:bogus",
     tokens: ["fix", "billing", "is:bogus"],
     filters: ["running", "needs"],
+    places: [],
+    partial: null,
   });
+});
+
+test("parseQuery reads place words, with aliases, and the one still being typed", () => {
+  const query = parseQuery("fix in:Billing section:prio ws:");
+  assert.equal(query.text, "fix");
+  assert.deepEqual(query.places, [
+    { key: "in", value: "billing" },
+    { key: "lane", value: "prio" },
+  ]);
+  assert.deepEqual(query.partial, { key: "ws", value: "" });
+  assert.equal(parseQuery("project:web ").partial, null);
+  assert.deepEqual(parseQuery("project:web").places, [{ key: "in", value: "web" }]);
+  // Other words with a colon stay text.
+  assert.equal(parseQuery("http://acme.test").text, "http://acme.test");
+});
+
+test("place names match at word starts of their slug", () => {
+  assert.equal(slug("  Billing API "), "billing-api");
+  assert.equal(placeNameMatches("bill", "Billing API"), true);
+  assert.equal(placeNameMatches("api", "Billing API"), true);
+  assert.equal(placeNameMatches("billing-a", "Billing API"), true);
+  assert.equal(placeNameMatches("ill", "Billing API"), false);
+  assert.equal(placeNameMatches("prio", "🔥 Priority"), true);
 });
 
 test("matchToken prefers word starts and keeps ranges on the original text", () => {
@@ -405,4 +434,116 @@ test("a loaded thread moved out of the workspace stays out, even when its projec
   const scoped = onlyInWorkspace(all, (threadId, projectId) => threadId !== "t1" && projectId === "p1");
   assert.deepEqual(scoped.threads, []);
   assert.deepEqual(scoped.server, []);
+});
+
+test("in:, ws: and lane: narrow threads and hide the other groups", () => {
+  const all = input({
+    threads: [
+      thread("t1", "Fix exports", { sectionId: "s1" }),
+      thread("t2", "Fix invoices", { projectId: "p2" }),
+      thread("t3", "Fix login", { projectId: "p2", sectionId: "s1" }),
+    ],
+    sections: [{ id: "s1", name: "Priority" }],
+    lanes: [{ sectionId: "s1", title: "Priority" }, { sectionId: null, title: "Active" }],
+    workspaces: [{ id: "w1", name: "Back office" }],
+    workspaceOf: { t1: null, t2: "w1", t3: "w1" },
+    actions: [{ id: "fix", title: "Fix everything" }],
+  });
+  const threadsOf = (raw: string) => itemIds(group(search(all, "all", raw), "threads"));
+  assert.deepEqual(threadsOf("fix in:bill").sort(), ["thread:t2", "thread:t3"]);
+  assert.deepEqual(threadsOf("fix in:bill lane:prio"), ["thread:t3"]);
+  assert.deepEqual(threadsOf("fix lane:active"), ["thread:t2"]);
+  assert.deepEqual(threadsOf("ws:back-office lane:prio"), ["thread:t3"]);
+  assert.deepEqual(threadsOf("ws:no-workspace"), ["thread:t1"]);
+  // A filter keeps the list to threads, as is: does.
+  assert.deepEqual(ids(search(all, "all", "fix in:web ")).filter((id) => id !== "compose"), ["threads"]);
+});
+
+test("archived message hits pass in: by their project only", () => {
+  const all = input({
+    server: [
+      { threadId: "old1", title: "Fix exports", projectId: "p1", archived: true, updatedAt: NOW, snippet: null },
+      { threadId: "old2", title: "Fix invoices", projectId: "p2", archived: true, updatedAt: NOW, snippet: null },
+    ],
+  });
+  assert.deepEqual(itemIds(group(search(all, "all", "fix in:billing"), "archived")), ["thread:old2"]);
+  assert.equal(group(search(all, "all", "fix lane:prio"), "archived"), undefined);
+});
+
+test("a place word being typed offers to complete it first", () => {
+  const all = input({
+    threads: [thread("t1", "Fix exports")],
+    sections: [{ id: "s1", name: "Priority" }, { id: "s2", name: "Ideas" }],
+    lanes: [{ sectionId: "s1", title: "Priority" }],
+  });
+  const sections = search(all, "all", "fix in:b");
+  assert.equal(sections[0]!.id, "complete");
+  assert.deepEqual(
+    sections[0]!.items.map((item) => (item.kind === "complete" ? [item.text, item.detail] : [])),
+    [["in:billing-api", "Project"]],
+  );
+  const lanes = search(all, "all", "lane:").find((section) => section.id === "complete")!;
+  assert.deepEqual(lanes.items.map((item) => (item.kind === "complete" ? `${item.text} ${item.detail}` : "")), ["lane:priority Lane", "lane:ideas Section"]);
+  // No workspaces, nothing to complete.
+  assert.equal(group(search(all, "all", "ws:"), "complete"), undefined);
+  // Typed and followed by a space: done.
+  assert.equal(group(search(all, "all", "in:billing-api "), "complete"), undefined);
+});
+
+test("sections and lanes are places you can find", () => {
+  const all = input({ sections: [{ id: "s1", name: "Priority" }, { id: "s2", name: "Ideas" }], lanes: [{ sectionId: "s1", title: "Priority" }] });
+  const places = group(search(all, "all", "prio"), "places")!;
+  assert.deepEqual(places.items[0], { kind: "section", id: "section:s1", sectionId: "s1", name: "Priority", lane: true, ranges: { title: [[0, 4]] } });
+  assert.equal(itemIds(group(search(all, "places", ""), "places")).includes("section:s2"), true);
+});
+
+test("browsing a project groups its threads by lane, then section, then unfiled", () => {
+  const all = input({
+    threads: [
+      thread("a", "Unfiled one"),
+      thread("b", "Low one", { sectionId: "low" }),
+      thread("c", "Priority one", { sectionId: "prio" }),
+      thread("d", "Other project", { projectId: "p2", sectionId: "prio" }),
+      thread("e", "In an idea", { sectionId: "ideas" }),
+      thread("f", "Gone section", { sectionId: "deleted" }),
+      thread("g", "Archived", { isArchived: true }),
+    ],
+    sections: [{ id: "ideas", name: "Ideas" }, { id: "prio", name: "Priority" }, { id: "low", name: "Low priority" }],
+    lanes: [{ sectionId: "prio", title: "Priority" }, { sectionId: null, title: "Active" }, { sectionId: "low", title: "Low priority" }],
+  });
+  const place = { kind: "project" as const, id: "p1", name: "web-app" };
+  const sections = browse(all, place, "");
+  assert.deepEqual(
+    sections.map((section) => [section.title, section.items.map((item) => item.id)]),
+    [
+      ["Priority", ["thread:c"]],
+      ["Active", ["thread:a", "thread:f"]],
+      ["Low priority", ["thread:b"]],
+      ["Ideas", ["thread:e"]],
+    ],
+  );
+  // Typing searches only the project.
+  assert.deepEqual(itemIds(group(browse(all, place, "one"), "threads")).sort(), ["thread:a", "thread:b", "thread:c", "thread:f"]);
+});
+
+test("browsing without lanes puts unfiled threads last; a workspace groups by project", () => {
+  const all = input({
+    threads: [thread("a", "Unfiled"), thread("b", "Filed", { sectionId: "s1" }), thread("c", "Billing", { projectId: "p2" })],
+    sections: [{ id: "s1", name: "Ideas" }],
+    workspaces: [{ id: "w1", name: "Everything" }],
+    workspaceOf: { a: "w1", b: "w1", c: "w1" },
+  });
+  assert.deepEqual(browse(all, { kind: "project", id: "p1", name: "web-app" }, "").map((section) => section.title), ["Ideas", "No section"]);
+  const byProject = browse(all, { kind: "workspace", id: "w1", name: "Everything" }, "");
+  assert.deepEqual(byProject.map((section) => section.title).sort(), ["billing-api", "web-app"]);
+  assert.deepEqual(browse(all, { kind: "workspace", id: "unassigned", name: "No workspace" }, ""), []);
+  assert.deepEqual(browse(all, { kind: "section", id: "s1", name: "Ideas" }, "").map((section) => section.items.map((item) => item.id)), [["thread:b"]]);
+});
+
+test("placeBelongs judges unloaded threads by project only", () => {
+  const all = input({ threads: [thread("t1", "One", { sectionId: "s1" })] });
+  assert.equal(placeBelongs(all, { kind: "project", id: "p2", name: "billing-api" })("old", "p2"), true);
+  assert.equal(placeBelongs(all, { kind: "section", id: "s1", name: "Ideas" })("old", "p1"), false);
+  assert.equal(placeBelongs(all, { kind: "section", id: "s1", name: "Ideas" })("t1", "p1"), true);
+  assert.equal(placeBelongs(all, { kind: "workspace", id: null, name: "All" })("old", "p1"), true);
 });

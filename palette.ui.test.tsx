@@ -96,6 +96,7 @@ type MountOptions = {
   rpc?: Record<string, (input: never) => unknown>;
   context?: { threadId?: string | null; projectId?: string | null };
   threads?: PluginSidebarThread[];
+  sections?: { id: string; name: string }[];
   files?: (args: { query?: string; environmentId?: string }) => unknown;
   openFilePreview?: () => boolean;
   threadOpen?: (args: unknown) => Promise<unknown>;
@@ -119,7 +120,7 @@ async function mount(options: MountOptions = {}) {
         next_needs_me: () => ({ opened: null }),
         ...options.rpc,
       } as never,
-      sidebarThreads: { status: "ready", threads: options.threads ?? threads, projects, sections: [] },
+      sidebarThreads: { status: "ready", threads: options.threads ?? threads, projects, sections: (options.sections ?? []) as never },
       context: options.context,
       threadActions: options.threadActions,
       openUrl: () => true,
@@ -288,6 +289,74 @@ describe("palette results", () => {
     await waitFor(() => expect(sessionStorage.getItem("jb-flow-workspace")).toBe("ops"));
     // No thread remembered there yet: a new thread in its first project.
     expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toCompose", options: { projectId: "p2" } });
+  });
+});
+
+describe("palette places", () => {
+  const placeThreads = [
+    thread("a", "Fix billing export", { sectionId: "prio" }),
+    thread("c", "Mail templates"),
+    thread("f", "Rename invoices", { sectionId: "ideas" }),
+    thread("b", "Deploy the worker", { projectId: "p2", sectionId: "prio" }),
+  ];
+  const sections = [
+    { id: "prio", name: "Priority" },
+    { id: "ideas", name: "Ideas" },
+  ];
+
+  it("Tab on a project lists its threads by lane and section; Shift+Tab goes back", async () => {
+    const slot = await mount({ threads: placeThreads, sections });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "@web-app" } });
+    await waitFor(() => expect(options(slot)[0]).toContain("web-app"));
+    expect(options(slot)[0]).toContain("⇥ threads");
+    fireEvent.keyDown(input, { key: "Tab" });
+    await waitFor(() => expect(slot.getByRole("button", { name: /web-app/ })).toBeTruthy());
+    expect((input as HTMLInputElement).placeholder).toBe("Search threads in web-app…");
+    expect(slot.getAllByRole("group").map((group) => group.getAttribute("aria-label"))).toEqual(["Priority", "Active", "Ideas"]);
+    expect(options(slot).join(" ")).not.toContain("Deploy the worker");
+    // Typing searches inside the project.
+    fireEvent.change(input, { target: { value: "inv" } });
+    await waitFor(() => expect(options(slot)).toHaveLength(1));
+    expect(options(slot)[0]).toContain("Rename invoices");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: "f" }));
+  });
+
+  it("Enter on a lane lists its threads, across projects", async () => {
+    const slot = await mount({ threads: placeThreads, sections });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "@prio" } });
+    await waitFor(() => expect(options(slot)[0]).toContain("Priority"));
+    expect(options(slot)[0]).toContain("Lane");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(slot.getByRole("group", { name: "Priority" })).toBeTruthy());
+    expect(options(slot).map((text) => text.split(/web-app|billing-api/)[0])).toEqual(["Fix billing export", "Deploy the worker"]);
+    // Shift+Tab, back to the search.
+    fireEvent.keyDown(input, { key: "Tab", shiftKey: true });
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("prio"));
+  });
+
+  it("completes in: and narrows to the project", async () => {
+    const slot = await mount({ threads: placeThreads, sections });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "in:bil" } });
+    await waitFor(() => expect(slot.getByRole("group", { name: "Filter" })).toBeTruthy());
+    expect(options(slot)[0]).toContain("in:billing-api");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("in:billing-api "));
+    expect(slot.queryByRole("group", { name: "Filter" })).toBeNull();
+    expect(options(slot)).toHaveLength(1);
+    expect(options(slot)[0]).toContain("Deploy the worker");
+  });
+
+  it("browses the open thread's project from an action", async () => {
+    const slot = await mount({ threads: placeThreads, sections, context: { threadId: "c", projectId: "p1" } });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: ">browse" } });
+    await waitFor(() => expect(options(slot)[0]).toContain("Browse web-app threads"));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(slot.getByRole("group", { name: "Ideas" })).toBeTruthy());
   });
 });
 
