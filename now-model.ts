@@ -50,11 +50,11 @@ const STALLED_AFTER_MS = 60 * 60_000;
 export const COLD_AFTER_MS = 4 * 60 * 60_000;
 /** Due this close, a thread joins Now by itself if it wants something from you. */
 const DUE_SOON_MS = 48 * 60 * 60_000;
-/** Due this close, it joins unless an agent or a watch is already on it, so you can chase people in time. */
+/** An actionable deadline this close takes priority and can break through a snooze. */
 export const DUE_NOW_MS = 24 * 60 * 60_000;
 
 /** The states that want something from you. The rest are moving without you. */
-const NOW_STATES: ReadonlySet<BallState> = new Set(["blocked", "yours", "stalled", "pr", "go", "cold"]);
+const NOW_STATES: ReadonlySet<BallState> = new Set(["blocked", "yours", "stalled", "pr", "go"]);
 
 /** PR states you can act on, worst first. */
 const ACTIONABLE_PRS = ["checks_failed", "changes_requested", "conflicts", "ready_to_merge"] as const;
@@ -121,8 +121,7 @@ const dueWithin = (entry: NowEntry, ms: number, now: number) => entry.dueAt !== 
 
 function belongsInNow(entry: NowEntry, now: number): boolean {
   if (wantsYouAnyway(entry)) return true;
-  if (NOW_STATES.has(entry.state) && (entry.focused || dueWithin(entry, DUE_SOON_MS, now))) return true;
-  return dueWithin(entry, DUE_NOW_MS, now) && entry.state !== "running" && entry.state !== "watched";
+  return NOW_STATES.has(entry.state) && (entry.focused || dueWithin(entry, DUE_SOON_MS, now));
 }
 
 /** Lower comes first. */
@@ -130,9 +129,7 @@ function tier(entry: NowEntry, now: number): number {
   const dueSoon = dueWithin(entry, DUE_SOON_MS, now);
   if ((entry.focused || dueSoon) && entry.state === "blocked") return 1;
   if (dueWithin(entry, DUE_NOW_MS, now)) return 2;
-  // An agent waiting on your answer comes before a thread with no next step:
-  // answering unblocks it at once, and a cold thread may simply be finished.
-  if (entry.focused) return entry.state === "cold" ? 3.5 : 3;
+  if (entry.focused) return 3;
   if (dueSoon) return 4;
   return 5;
 }

@@ -175,7 +175,7 @@ export function registerDueTool(bb: BbPluginApi, nowStore: NowStore) {
   bb.agents.registerTool({
     name: "set_thread_due",
     description:
-      "Record a real deadline for the current BB thread, or clear one that no longer applies. The thread then rises in the user's sidebar as the date gets close. A date the user set themselves can't be changed from here.",
+      "Record a real deadline for the current BB thread, or clear one that no longer applies. The date appears on the thread. As it approaches, threads needing user action rise in Now. A date the user set themselves can't be changed from here.",
     instructions:
       "When this work has a real outside deadline (an invoice due date, a contract date, a customer meeting, a date someone else set), call set_thread_due with the date and what falls due. Never invent a date, and don't use it for your own goals or estimates. Call it with when: none once the deadline no longer applies.",
     parameters: z.object({

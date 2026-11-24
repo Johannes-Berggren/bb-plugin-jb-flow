@@ -8,7 +8,6 @@ test("hands-off messages count as your move", () => {
   assert.ok(asksUser("Want me to open the PR?"));
   assert.ok(asksUser("Complete any password prompts. Tell me whether the second command succeeds."));
   assert.ok(asksUser("Please name the exact Slack channel for the alerts."));
-  assert.ok(asksUser("If you want, I can snooze this thread for 3 days."));
   assert.ok(asksUser('Once Chris confirms, say "go" and I\'ll switch the setup.'));
   assert.ok(asksUser("Draft created in the Amesto thread. It remains unsent."));
   assert.ok(asksUser("Merging doesn't ship anything yet.\n\n1. Merge the three PRs now (recommended)\n2. Hold the merge\n3. You review first"));
@@ -25,6 +24,14 @@ test("wrapped-up messages don't", () => {
   assert.ok(!asksUser("Shipped in v0.2.15. If switching shows on v0.2.15 still misbehaves, tell me what you did and what went wrong."));
   assert.ok(!asksUser("Main's CI is blocked until #1113 merges.\n\nWhen #1113 is green, I'll:\n1. Merge it.\n2. Bring #1110 up to date and merge it.\n3. Run the first release train."));
   assert.ok(asksUser("If you place one on dev with a throwaway password, I'll check the admin side."));
+});
+
+test("optional offers alone do not hand the thread back to you", () => {
+  assert.equal(handBack("All done. If you want anything else, the options are a refresh or another review."), "none");
+  assert.equal(handBack("If you want, I can snooze this thread for 3 days."), "none");
+  assert.equal(handBack("Let me know if you’d like another copy."), "none");
+  assert.equal(handBack("If you prefer, I can add more detail. Please confirm the date."), "asks");
+  assert.equal(handBack("If you approve the change, I can proceed."), "asks");
 });
 
 test("follow-up promises are detected, asks win", () => {
