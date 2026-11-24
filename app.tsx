@@ -34,6 +34,7 @@ import { CatchUpHomeEntry, CatchUpOverlay, CatchUpPage, useCatchUpBadge, useCatc
 import { CATCH_UP_EVENT } from "./catch-up-model";
 import { flowState, useFlowState } from "./flow-state";
 import { SnoozeDialog } from "./dialogs";
+import { NextInNowBanner } from "./next-in-now";
 import { TriageThreadList } from "./triage-list";
 import { DigestSection } from "./digest";
 import { LaneSettings, MigrationSettings } from "./settings-panels";
@@ -460,6 +461,10 @@ export default definePluginApp((app) => {
   app.composer.customize({
     id: "decision-chips",
     banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
+  });
+  app.composer.customize({
+    id: "next-in-now",
+    banners: [{ id: "next-in-now", chrome: "bare", component: NextInNowBanner }],
   });
   app.composer.customize({
     id: "live-activity",

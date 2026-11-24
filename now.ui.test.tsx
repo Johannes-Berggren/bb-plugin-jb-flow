@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { useComposer } from "@get-bb/plugin-sdk/app";
+import { NextInNowBanner, notifyReplyChoiceSent } from "./next-in-now";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
 import { selectWorkspace, setWorkspacesEnabled } from "./workspace-client";
@@ -541,5 +543,75 @@ describe("Workspace color on rows", () => {
     await waitFor(() => expect(listed(slot.container, "in-acme")).toBe(true));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(dot(slot.container, "in-acme")).toBeNull();
+  });
+});
+
+describe("Continue through Now", () => {
+  afterEach(() => {
+    cleanup();
+    selectWorkspace(null);
+    setWorkspacesEnabled(false);
+  });
+
+  function Host() {
+    const composer = useComposer();
+    return <><button onClick={() => void composer.submit()}>Send test draft</button><NextInNowBanner /></>;
+  }
+
+  function mountContinuation(enabled = true) {
+    const threads = ["a", "b", "c", "other"].map((id, index) =>
+      thread(id, { isUnread: true, projectId: id === "other" ? "p2" : "p1", latestAttentionAt: NOW + index - HOUR, displayTitle: `Thread ${id}` }));
+    let flow = { ...baseState, awaiting: { a: NOW, b: NOW, c: NOW, other: NOW } } as FlowState;
+    const slot = renderSlot({ component: Host }, {}, {
+      settings: { nowQueue: enabled, workspaces: true },
+      composer: { scope: { kind: "thread", threadId: "b" }, text: "Proceed" },
+      rpc: {
+        state_get: () => flow,
+        workspaces_get: () => ({ workspaces: [{ id: "w", name: "Team", projectIds: ["p1"], sectionIds: [], pluginIds: [], sectionOrder: [] }], threadWorkspaces: {} }),
+      },
+      sidebarThreads: { status: "ready", projects, threads, sections: [] },
+    });
+    return { slot, update: async (awaiting: Record<string, number>) => {
+      flow = { ...flow, awaiting };
+      await slot.behavior.emitRealtime("jb-flow-changed", null);
+    } };
+  }
+
+  it("keeps the conversation after submitting, preserves the answered row’s position and opens the named next thread on request", async () => {
+    setWorkspacesEnabled(true);
+    selectWorkspace("w");
+    const { slot, update } = mountContinuation();
+    expect(slot.queryByRole("region", { name: "Now queue" })).toBeNull();
+    fireEvent.click(slot.getByText("Send test draft"));
+    const next = await slot.findByRole("button", { name: "Next in Now: Thread c" });
+    await update({ a: NOW, c: NOW, other: NOW });
+    await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "state_get").length).toBeGreaterThan(1));
+    expect(slot.inspection.navigateCalls).toEqual([]);
+    next.focus();
+    expect(document.activeElement).toBe(next);
+    fireEvent.click(next);
+    expect(slot.inspection.navigateCalls).toEqual([expect.objectContaining({ method: "toThread", threadId: "c" })]);
+  });
+
+  it("tracks the workspace after a local choice, ignores other panes and resets for a new thread", async () => {
+    setWorkspacesEnabled(true);
+    selectWorkspace("w");
+    const { slot, update } = mountContinuation();
+    act(() => notifyReplyChoiceSent("elsewhere"));
+    expect(slot.queryByRole("region")).toBeNull();
+    act(() => notifyReplyChoiceSent("b"));
+    await slot.findByRole("button", { name: "Next in Now: Thread c" });
+    await update({ other: NOW });
+    await slot.findByText("You’re all caught up.");
+    expect(slot.inspection.navigateCalls).toEqual([]);
+    await slot.behavior.setComposerScope({ kind: "thread", threadId: "c" });
+    expect(slot.queryByRole("region")).toBeNull();
+  });
+
+  it("stays hidden with Now off", async () => {
+    const { slot } = mountContinuation(false);
+    fireEvent.click(slot.getByText("Send test draft"));
+    act(() => notifyReplyChoiceSent("b"));
+    expect(slot.queryByRole("region")).toBeNull();
   });
 });

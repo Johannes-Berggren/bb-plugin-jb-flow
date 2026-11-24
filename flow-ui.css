@@ -447,3 +447,48 @@
 section:has(> [data-bb-plugin-root] > [data-jf-hidden-section]) {
   display: none;
 }
+
+.jf-next-in-now,
+.jf-next-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.jf-next-in-now {
+  padding: 2px 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.jf-next-result {
+  min-width: 0;
+  flex: 1;
+}
+.jf-next-target,
+.jf-next-dismiss {
+  min-height: 28px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.jf-next-target {
+  max-width: 100%;
+  text-align: start;
+}
+.jf-next-target span,
+.jf-next-target svg {
+  flex-shrink: 0;
+}
+.jf-next-target strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+  font-weight: 500;
+}
+.jf-next-in-now button:hover {
+  background: var(--accent);
+}
+.jf-next-in-now button:focus-visible {
+  outline: 2px solid var(--ring);
+}
