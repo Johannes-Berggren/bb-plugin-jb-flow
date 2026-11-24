@@ -124,6 +124,18 @@ again or Escape to close it.
     - copy its ID
     - BB's own and other plugins' thread actions (archive, pin, rename, copy link, …)
   - Escape, Shift+Tab or ← goes back.
+- **Triage with one key, and the palette stays open.** On a selected thread row (the
+  home, search results or a place's threads), the Triage list's row keys work with ⌥
+  (Alt on Windows and Linux):
+  - ⌥E archives it (with Undo; pinned threads are refused)
+  - ⌥S lists snooze times; picking one returns to the list
+  - ⌥F adds it to or removes it from Focus (with **Now and Focus** on)
+  - ⌥U marks it read or unread
+  - ⌥1–5 moves it to that lane
+  - When the row leaves the list, the next one is selected, so you can work down it
+    without the sidebar. A line above the footer lists the keys, and a thread's
+    actions show them. On a Mac, an ⌥ key that types a character (⌥2 is `@` on Nordic
+    keyboards) still types it; Tab on the thread gets you the same action.
 
 Rows show the same status icon as the Triage list, plus project, workspace, PR state,
 tags, snooze and branch. On wide windows a pane beside the results previews the

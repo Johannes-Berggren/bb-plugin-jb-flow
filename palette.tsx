@@ -39,6 +39,7 @@ import {
   searchShortcuts,
   serverHits,
   shortcutLabel,
+  triageKey,
   type Frecency,
   type PaletteAction,
   type PaletteInput,
@@ -191,6 +192,8 @@ type Entry = {
   open?: () => Mode;
   /** The query a sub-list starts with. */
   query?: string;
+  /** The ⌥ key that does this from a thread row, shown beside it. */
+  keys?: string;
 };
 type ThreadInfo = {
   id: string;
@@ -208,7 +211,12 @@ type Mode =
   | { kind: "list"; title: string; entries: readonly Entry[] }
   /** A project, workspace or section's threads, as the sidebar lists them. */
   | { kind: "place"; place: Place };
-type Level = { mode: Mode; back: { query: string; scope: Scope; activeId: string | null } };
+type Level = {
+  mode: Mode;
+  back: { query: string; scope: Scope; activeId: string | null };
+  /** Opened by a row key: running an entry returns to the list, on this row, instead of closing. */
+  stay?: { select: string | null };
+};
 
 const info = (thread: PluginSidebarThread): ThreadInfo => ({
   id: thread.id,
@@ -392,6 +400,7 @@ export function Palette({
   // Room for a preview of the selected thread beside the results.
   const wide = useMediaQuery("(min-width: 1100px)");
   const mod = platform === "mac" ? "⌘" : "Ctrl+";
+  const altKey = (key: string) => shortcutLabel({ key, alt: true }, platform);
 
   const [restored] = useState(() => {
     const kept = reopen !== null && Date.now() - reopen.at < REOPEN_MS ? reopen : null;
@@ -510,6 +519,19 @@ export function Palette({
     [onClose],
   );
 
+  /** Runs something and keeps the palette open: a row key's action. */
+  const act = (work: () => unknown, success?: string | (() => void)) => {
+    Promise.resolve()
+      .then(work)
+      .then(
+        () => {
+          if (typeof success === "string") toast.success(success);
+          else success?.();
+        },
+        (cause: unknown) => toast.error(errorText(cause)),
+      );
+  };
+
   const projectName = (projectId: string) => projectsById.get(projectId)?.name ?? "this project";
   // No project in view: leave the choice to bb's new-thread screen rather than guess.
   const composeProject = context.projectId ?? current?.projectId ?? null;
@@ -585,6 +607,7 @@ export function Palette({
         title: inFocus ? "Remove from Focus" : "Add to Focus",
         keywords: "star priority important now",
         icon: <Glyph name="star" />,
+        keys: altKey("f"),
         run: () =>
           !inFocus && count >= focusLimit
             ? void toast.error(`Focus is full (${count} of ${focusLimit}). Press f on a row in the sidebar to choose one to drop.`)
@@ -663,6 +686,7 @@ export function Palette({
         title: `Move to ${lane.title}`,
         keywords: "lane section move",
         icon: <Glyph name="folderMove" />,
+        keys: altKey(lane.key),
         run: () => sdk.threads.update({ threadId: id, sectionId: lane.sectionId }),
       });
     }
@@ -709,6 +733,7 @@ export function Palette({
         detail: action.detail,
         icon: <Icon name={action.icon} />,
         destructive: action.variant === "destructive",
+        keys: entry.key === "bb--core/archive" ? altKey("e") : undefined,
       };
       const choices = action.choices;
       if (choices) {
@@ -891,8 +916,8 @@ export function Palette({
   }, [activeIndex, listId]);
 
   // --- moving between levels ---
-  const enter = (mode: Mode, startQuery = "") => {
-    setLevels((all) => [...all, { mode, back: { query, scope, activeId: active?.id ?? null } }]);
+  const enter = (mode: Mode, startQuery = "", stay?: Level["stay"]) => {
+    setLevels((all) => [...all, { mode, back: { query, scope, activeId: active?.id ?? null }, stay }]);
     setQuery(startQuery);
     setScope("all");
     setActiveId(null);
@@ -1031,7 +1056,16 @@ export function Palette({
           enter(entry.open(), entry.query);
           return;
         }
-        if (entry.run) done(entry.run);
+        if (!entry.run) return;
+        if (level?.stay && /^(snooze|unsnooze)/.test(entry.id)) {
+          // Opened by a row key: back to the list, on the row that takes this one's place.
+          act(entry.run);
+          const select = level.stay.select;
+          back();
+          setActiveId(select);
+          return;
+        }
+        done(entry.run);
       }
     }
   };
@@ -1045,12 +1079,88 @@ export function Palette({
     setActiveId(null);
   };
 
+  // Row keys work on thread rows in lists of threads, not in a thread's own actions.
+  const triageOn = level === null || placeMode !== null;
+  const laneKeys = lanes.map((lane) => lane.key);
+
+  /** ⌥E, ⌥S, ⌥F, ⌥U and ⌥1–5 on the selected thread: the Triage list's row keys, and the palette stays open. */
+  const triage = (event: ReactKeyboardEvent<HTMLElement>): boolean => {
+    if (!triageOn || active?.kind !== "thread") return false;
+    const key = triageKey(event, laneKeys, nowOn, platform);
+    if (key === null) return false;
+    // Also keeps a dead key (⌥E, ⌥U on a Mac) out of the search field.
+    event.preventDefault();
+    event.stopPropagation();
+    const id = active.threadId;
+    const sidebar = threadsById.get(id);
+    const hit = serverById.get(id);
+    const title = sidebar?.displayTitle ?? hit?.title ?? "Thread";
+    // The row this one leaves behind: the next, or the one before when it was last.
+    const neighbour = rows[activeIndex + 1]?.id ?? rows[activeIndex - 1]?.id ?? null;
+    const archived = sidebar ? sidebar.isArchived : hit?.archived === true;
+    switch (key.kind) {
+      case "archive":
+        if (archived) {
+          toast("Already archived");
+          return true;
+        }
+        if (sidebar?.isPinned) {
+          toast("Pinned threads aren't archived with a single key. Unpin it first, or archive from its actions.");
+          return true;
+        }
+        setActiveId(neighbour);
+        act(
+          () => sdk.threads.archive({ threadId: id }),
+          () =>
+            void toast.success(`Archived “${title}”`, {
+              action: { label: "Undo", onClick: () => void sdk.threads.unarchive({ threadId: id }).catch((cause: unknown) => toast.error(errorText(cause))) },
+            }),
+        );
+        return true;
+      case "snooze": {
+        const thread = threadFor(id);
+        if (thread === null) return true;
+        enter({ kind: "thread", thread }, "snooze ", { select: neighbour });
+        return true;
+      }
+      case "focus": {
+        const inFocus = flow?.focused[id] !== undefined;
+        const count = Object.keys(flow?.focused ?? {}).length;
+        if (!inFocus && count >= focusLimit) {
+          toast.error(`Focus is full (${count} of ${focusLimit}). Press f on a row in the sidebar to choose one to drop.`);
+          return true;
+        }
+        act(() => rpc.call("focus_set", { threadId: id, focused: !inFocus }), inFocus ? `Removed “${title}” from Focus` : `Added “${title}” to Focus`);
+        return true;
+      }
+      case "unread": {
+        if (!sidebar) return true;
+        const read = sidebar.isUnread;
+        act(() => (read ? sdk.threads.markRead({ threadId: id }) : sdk.threads.markUnread({ threadId: id })), read ? "Marked as read" : "Marked as unread");
+        return true;
+      }
+      case "lane": {
+        const lane = lanes.find((candidate) => candidate.key === key.key);
+        if (!lane || !sidebar || sidebar.isArchived) return true;
+        if (lane.sectionId === sidebar.sectionId) {
+          toast(`Already in ${lane.title}`);
+          return true;
+        }
+        // Moving out of the section being browsed takes the row out of the list.
+        if (placeMode?.kind === "section" && placeMode.id === sidebar.sectionId) setActiveId(neighbour);
+        act(() => sdk.threads.update({ threadId: id, sectionId: lane.sectionId }), `Moved to ${lane.title}`);
+        return true;
+      }
+    }
+  };
+
   // On the whole palette, not just the search field: arrows and Enter work
   // wherever focus is inside it, and typing anywhere goes to the search field.
   const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.nativeEvent.isComposing) return;
     const field = inputRef.current;
     if (field === null) return;
+    if (triage(event)) return;
     const inField = event.target === field;
     if (!inField) {
       // Leave buttons and links their own Enter and Space.
@@ -1279,11 +1389,20 @@ export function Palette({
                 now={now}
               />
             ) : (
-              <PaletteTips mod={mod} />
+              <PaletteTips mod={mod} alt={platform === "mac" ? "⌥" : "Alt+"} />
             )}
           </aside>
         ) : null}
         </div>
+        {triageOn ? (
+          <div className={cn("jf-palette-footer jf-palette-footer-keys", active?.kind !== "thread" && "jf-palette-footer-idle")} aria-hidden="true">
+            <span>
+              <kbd>{altKey("e")}</kbd> archive <kbd>{altKey("s")}</kbd> snooze
+              {nowOn ? <> <kbd>{altKey("f")}</kbd> focus</> : null} <kbd>{altKey("u")}</kbd> {active?.kind === "thread" && threadsById.get(active.threadId)?.isUnread ? "read" : "unread"}
+              {laneKeys.length > 0 ? <> <kbd>{altKey(laneKeys.length > 1 ? `${laneKeys[0]}–${laneKeys.at(-1)}` : laneKeys[0]!)}</kbd> lane</> : null}
+            </span>
+          </div>
+        ) : null}
         <div className="jf-palette-footer" aria-hidden="true">
           <span>
             <kbd>↑↓</kbd> choose <kbd>↵</kbd> open <kbd>{mod}↵</kbd> split <kbd>⇥</kbd> actions <kbd>esc</kbd> {level ? "back" : "close"}
@@ -1424,6 +1543,7 @@ function Row(props: RowProps) {
           icon={entry?.icon ?? <Icon name="Zap" />}
           title={<Highlight text={item.title} ranges={item.ranges.title} />}
           detail={entry?.detail}
+          keys={entry?.keys}
           destructive={entry?.destructive}
         />
       );
@@ -1431,7 +1551,7 @@ function Row(props: RowProps) {
   }
 }
 
-function Simple({ icon, title, detail, destructive }: { icon: ReactNode; title: ReactNode; detail?: string; destructive?: boolean }) {
+function Simple({ icon, title, detail, keys, destructive }: { icon: ReactNode; title: ReactNode; detail?: string; keys?: string; destructive?: boolean }) {
   return (
     <>
       <span className={cn("jf-palette-icon", destructive && "text-destructive")}>{icon}</span>
@@ -1439,6 +1559,7 @@ function Simple({ icon, title, detail, destructive }: { icon: ReactNode; title: 
         <span className={cn("jf-palette-title", destructive && "text-destructive")}>{title}</span>
       </span>
       {detail ? <span className="jf-palette-detail">{detail}</span> : null}
+      {keys ? <kbd className="jf-palette-keys" title="From a thread row in the palette">{keys}</kbd> : null}
     </>
   );
 }
@@ -1565,7 +1686,7 @@ function PalettePreview({
 }
 
 /** Shown in the preview pane when the selection isn't a thread. */
-function PaletteTips({ mod }: { mod: string }) {
+function PaletteTips({ mod, alt }: { mod: string; alt: string }) {
   return (
     <div className="jf-palette-tips">
       <p className="jf-palette-tips-heading">Tips</p>
@@ -1578,6 +1699,7 @@ function PaletteTips({ mod }: { mod: string }) {
         <dt><code>in:</code></dt><dd>A project; <code>ws:</code> a workspace, <code>lane:</code> a lane or section</dd>
         <dt><kbd>⇥</kbd></dt><dd>A thread's actions: reply, snooze <code>tomorrow</code>, <code>tag urgent</code>, move. On a project, workspace or lane: its threads</dd>
         <dt><kbd>{mod}↵</kbd></dt><dd>Open a thread in a split</dd>
+        <dt><kbd>{alt}E</kbd></dt><dd>On a thread: archive; <kbd>{alt}S</kbd> snooze, <kbd>{alt}F</kbd> Focus, <kbd>{alt}U</kbd> unread, <kbd>{alt}1</kbd>… a lane. The palette stays open</dd>
       </dl>
     </div>
   );

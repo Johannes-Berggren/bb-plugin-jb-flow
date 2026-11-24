@@ -100,6 +100,8 @@ type MountOptions = {
   files?: (args: { query?: string; environmentId?: string }) => unknown;
   openFilePreview?: () => boolean;
   threadOpen?: (args: unknown) => Promise<unknown>;
+  /** More of the thread SDK: archive, markRead, update, … */
+  threadsSdk?: Record<string, (args: never) => unknown>;
 };
 
 async function mount(options: MountOptions = {}) {
@@ -133,6 +135,7 @@ async function mount(options: MountOptions = {}) {
         threads: {
           search: (async (args: { query: string }) => options.search?.(args) ?? { active: { results: [], total: 0 }, archived: { results: [], total: 0 } }) as never,
           open: (options.threadOpen ?? (async () => ({ delivered: 1 }))) as never,
+          ...(options.threadsSdk ?? {}),
         },
         projects: {
           files: (async (args: { query?: string; environmentId?: string }) => options.files?.(args) ?? { files: [], truncated: false }) as never,
@@ -357,6 +360,89 @@ describe("palette places", () => {
     await waitFor(() => expect(options(slot)[0]).toContain("Browse web-app threads"));
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(slot.getByRole("group", { name: "Ideas" })).toBeTruthy());
+  });
+});
+
+describe("palette row keys", () => {
+  const sdkCalls = () => {
+    const calls: [string, unknown][] = [];
+    const record = (name: string) => async (args: unknown) => {
+      calls.push([name, args]);
+      return {};
+    };
+    return { calls, threadsSdk: { archive: record("archive"), unarchive: record("unarchive"), markRead: record("markRead"), markUnread: record("markUnread"), update: record("update") } };
+  };
+  const selected = (slot: Awaited<ReturnType<typeof mount>>) => slot.getAllByRole("option").find((row) => row.getAttribute("aria-selected") === "true")?.textContent ?? "";
+  const alt = (input: HTMLElement, code: string, key = "Dead") => fireEvent.keyDown(input, { key, code, altKey: true });
+
+  it("⌥E archives the selected thread, keeps the palette open and selects the next row", async () => {
+    const { calls, threadsSdk } = sdkCalls();
+    const slot = await mount({ threadsSdk });
+    const input = await openPalette(slot);
+    expect(selected(slot)).toContain("Fix billing export");
+    expect(document.querySelector(".jf-palette-footer-keys")?.textContent).toContain("⌥E archive");
+    const second = options(slot)[1]!;
+    expect(alt(input, "KeyE")).toBe(false);
+    await waitFor(() => expect(calls).toEqual([["archive", { threadId: "a" }]]));
+    expect(slot.getByRole("combobox")).toBeTruthy();
+    expect(selected(slot)).toContain(second);
+    expect(slot.inspection.navigateCalls).toEqual([]);
+  });
+
+  it("won't archive a pinned thread with a key", async () => {
+    const { calls, threadsSdk } = sdkCalls();
+    const slot = await mount({ threadsSdk, threads: [thread("p", "Pinned work", { isPinned: true, hasPendingInteraction: true }), ...threads] });
+    const input = await openPalette(slot);
+    await waitFor(() => expect(selected(slot)).toContain("Pinned work"));
+    alt(input, "KeyE");
+    await act(async () => {});
+    expect(calls).toEqual([]);
+    expect(selected(slot)).toContain("Pinned work");
+  });
+
+  it("⌥S lists snooze times; picking one snoozes and returns to the list on the next row", async () => {
+    const snooze = vi.fn((input: { threadId: string; until?: number }) => ({ until: input.until ?? NOW, note: null, fromSectionId: null, snoozedAt: NOW }));
+    const slot = await mount({ rpc: { snooze } as never });
+    const input = await openPalette(slot);
+    const second = options(slot)[1]!;
+    alt(input, "KeyS", "ß");
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("snooze "));
+    expect(slot.getByRole("button", { name: /Fix billing export/ })).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(snooze).toHaveBeenCalledWith(expect.objectContaining({ threadId: "a" })));
+    await waitFor(() => expect(slot.queryByRole("button", { name: /Fix billing export/ })).toBeNull());
+    expect(slot.getByRole("combobox")).toBeTruthy();
+    expect(selected(slot)).toContain(second);
+  });
+
+  it("⌥U toggles read and ⌥1 moves to the Priority lane", async () => {
+    const { calls, threadsSdk } = sdkCalls();
+    const slot = await mount({ threadsSdk, sections: [{ id: "prio", name: "Priority" }] });
+    const input = await openPalette(slot);
+    alt(input, "KeyU");
+    alt(input, "Digit1", "¡");
+    await waitFor(() =>
+      expect(calls).toEqual([
+        ["markUnread", { threadId: "a" }],
+        ["update", { threadId: "a", sectionId: "prio" }],
+      ]),
+    );
+    // A thread's own actions show the key.
+    fireEvent.keyDown(input, { key: "Tab" });
+    await waitFor(() => expect(options(slot).find((text) => text.startsWith("Move to Priority"))).toContain("⌥1"));
+    // There, ⌥ keys do nothing.
+    alt(input, "KeyE");
+    await act(async () => {});
+    expect(calls.map(([name]) => name)).not.toContain("archive");
+  });
+
+  it("an ⌥ key that types a character still types it", async () => {
+    const { calls, threadsSdk } = sdkCalls();
+    const slot = await mount({ threadsSdk, sections: [{ id: "prio", name: "Priority" }] });
+    const input = await openPalette(slot);
+    expect(alt(input, "Digit2", "@")).toBe(true);
+    await act(async () => {});
+    expect(calls).toEqual([]);
   });
 });
 

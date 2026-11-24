@@ -257,6 +257,29 @@
 .jf-palette-footer kbd:first-child {
   margin-left: 0;
 }
+.jf-palette-footer-keys {
+  justify-content: flex-start;
+  padding-bottom: 0;
+  transition: opacity 120ms ease-out;
+}
+.jf-palette-footer-keys + .jf-palette-footer {
+  border-top: 0;
+}
+/* Kept in place, so the palette doesn't change height as the selection moves. */
+.jf-palette-footer-idle {
+  opacity: 0;
+}
+.jf-palette-keys {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+}
 .jf-palette-scopes {
   overflow: hidden;
   text-overflow: ellipsis;
