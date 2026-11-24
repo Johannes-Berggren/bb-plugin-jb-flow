@@ -460,6 +460,9 @@ it("hides a fully repeated Next steps callout while both titled lists show, pres
 
 it.each([
   ["li:nth-child(2)", "Leave them open for free until Friday"],
+  ["li:nth-child(2)", "<code>Leave them open  for free</code>"],
+  ["li:first-child", "Add a line (recommended) to the renewal"],
+  ["li:first-child", "<code>Add a line to the renewal (recommended)</code>"],
   ["ol + p + p + ol li", '<a href="https://example.com/records">Record the churn</a>'],
   ["ol + p", "Reply with the number. Only proceed after the invoice clears."],
   ["p:first-child", "[!TIP] Decision needed: two customers use it without an agreement, and one renews today"],

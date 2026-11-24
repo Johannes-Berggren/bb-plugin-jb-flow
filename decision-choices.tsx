@@ -26,8 +26,12 @@ export const REPEATED_LIST_ATTR = "data-jf-choices-repeated";
 
 const cleanText = (text: string) => text.replace(/\s+/g, " ").trim();
 const textOf = (element: Element) => cleanText(element.textContent ?? "");
-// The controls render plain text. Keep links, media, nested lists and other rich content in the message.
-const simpleText = (element: Element) => !element.querySelector(":not(p, strong, em, code, br)");
+// Keep rich content and any code that the controls' plain-text conversion can change.
+const simpleText = (element: Element) =>
+  !element.querySelector(":not(p, strong, em, code, br)") &&
+  Array.from(element.querySelectorAll("code")).every((code) =>
+    code.textContent === textOf(code) && !/\(recommended\)/i.test(code.textContent),
+  );
 
 /** The ordered list in the latest message whose items are these options, if any. */
 export function repeatedList(scope: Element, options: readonly DecisionOption[]): HTMLOListElement | null {
@@ -41,7 +45,7 @@ export function repeatedList(scope: Element, options: readonly DecisionOption[])
       const option = options[index]!;
       const text = textOf(item);
       return text === option.text ||
-        (option.recommended && cleanText(text.replace(/\s*\(recommended\)\s*/i, " ")) === option.text);
+        (option.recommended && text.replace(/\s*\(recommended\)$/i, "") === option.text);
     });
   };
   // Newest row first. A compact thread can end in rows that hold no message (a
