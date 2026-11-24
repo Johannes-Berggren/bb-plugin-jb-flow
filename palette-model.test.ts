@@ -17,6 +17,7 @@ import {
   searchShortcuts,
   serverHits,
   shortcutLabel,
+  triageKey,
   type PaletteInput,
   type PalettePr,
   type PaletteThread,
@@ -546,4 +547,32 @@ test("placeBelongs judges unloaded threads by project only", () => {
   assert.equal(placeBelongs(all, { kind: "section", id: "s1", name: "Ideas" })("old", "p1"), false);
   assert.equal(placeBelongs(all, { kind: "section", id: "s1", name: "Ideas" })("t1", "p1"), true);
   assert.equal(placeBelongs(all, { kind: "workspace", id: null, name: "All" })("old", "p1"), true);
+});
+
+test("triageKey reads ⌥ and the physical key, and leaves typing alone", () => {
+  const key = (code: string, changes: Partial<{ key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }> = {}) => ({
+    key: "Dead",
+    code,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: true,
+    shiftKey: false,
+    ...changes,
+  });
+  const lanes = ["1", "2", "3"];
+  assert.deepEqual(triageKey(key("KeyE"), lanes, true, "mac"), { kind: "archive" });
+  assert.deepEqual(triageKey(key("KeyS", { key: "ß" }), lanes, true, "mac"), { kind: "snooze" });
+  assert.deepEqual(triageKey(key("KeyU"), lanes, true, "mac"), { kind: "unread" });
+  assert.deepEqual(triageKey(key("KeyF", { key: "ƒ" }), lanes, true, "mac"), { kind: "focus" });
+  assert.equal(triageKey(key("KeyF", { key: "ƒ" }), lanes, false, "mac"), null);
+  assert.deepEqual(triageKey(key("Digit3", { key: "£" }), lanes, true, "mac"), { kind: "lane", key: "3" });
+  assert.equal(triageKey(key("Digit5", { key: "∞" }), lanes, true, "mac"), null);
+  // Plain letters, ⌘/Ctrl, Shift and AltGr (Ctrl+Alt) aren't row keys.
+  assert.equal(triageKey(key("KeyE", { altKey: false, key: "e" }), lanes, true, "mac"), null);
+  assert.equal(triageKey(key("KeyE", { metaKey: true }), lanes, true, "mac"), null);
+  assert.equal(triageKey(key("KeyE", { shiftKey: true }), lanes, true, "mac"), null);
+  assert.equal(triageKey(key("KeyE", { ctrlKey: true, key: "€" }), lanes, true, "windows"), null);
+  // ⌥2 types @ on a Nordic Mac keyboard: it stays typing. Alt+2 on Windows says "2" and is a row key.
+  assert.equal(triageKey(key("Digit2", { key: "@" }), lanes, true, "mac"), null);
+  assert.deepEqual(triageKey(key("Digit2", { key: "2" }), lanes, true, "windows"), { kind: "lane", key: "2" });
 });

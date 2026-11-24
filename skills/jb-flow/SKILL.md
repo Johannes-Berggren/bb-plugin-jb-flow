@@ -47,6 +47,7 @@ it was rebound. In the palette:
 - `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned`, `is:pr`, `is:focus` and `is:due` filter threads; `in:<project>`, `ws:<workspace>` and `lane:<lane or section>` filter by place.
 - Tab on a project, workspace, lane or section lists all its threads, grouped like the sidebar.
 - Tab on a thread lists its actions, including snooze, reply and move.
+- On a selected thread row, ⌥E archives, ⌥S snoozes, ⌥F toggles Focus, ⌥U toggles read and ⌥1–5 moves it to a lane, and the palette stays open (Alt on Windows and Linux).
 
 When a user asks how to search messages or act on threads quickly, point them here.
 BB's own search stays in the quick palette under *Search threads…*.

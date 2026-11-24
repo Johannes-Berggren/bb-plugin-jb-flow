@@ -967,6 +967,33 @@ export function matchesShortcut(event: KeyLike, shortcut: Shortcut, platform: Pl
   return false;
 }
 
+/** A one-key action on the selected thread row, as the Triage list's row keys, with ⌥. */
+export type TriageKey = { kind: "archive" } | { kind: "snooze" } | { kind: "focus" } | { kind: "unread" } | { kind: "lane"; key: string };
+
+/**
+ * ⌥E archive, ⌥S snooze, ⌥F Focus, ⌥U read or unread, ⌥ and a lane's number
+ * to move there. By physical key: on a Mac ⌥E and ⌥U are dead keys, so
+ * `key` says "Dead". ⌘, Ctrl (and AltGr, which is Ctrl+Alt) and Shift leave
+ * the key alone, and plain letters stay typing. On a Mac, an ⌥ key that types
+ * a plain character (⌥2 is @ on Nordic and ⌥L on German keyboards) types it.
+ */
+export function triageKey(event: KeyLike, laneKeys: readonly string[], focus: boolean, platform: Platform): TriageKey | null {
+  if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return null;
+  if (platform === "mac" && /^[\x21-\x7e]$/.test(event.key)) return null;
+  switch (event.code) {
+    case "KeyE":
+      return { kind: "archive" };
+    case "KeyS":
+      return { kind: "snooze" };
+    case "KeyF":
+      return focus ? { kind: "focus" } : null;
+    case "KeyU":
+      return { kind: "unread" };
+  }
+  const digit = /^Digit([1-9])$/.exec(event.code)?.[1];
+  return digit !== undefined && laneKeys.includes(digit) ? { kind: "lane", key: digit } : null;
+}
+
 export function shortcutLabel(shortcut: Shortcut, platform: Platform): string {
   const key = shortcut.key.length === 1 ? shortcut.key.toUpperCase() : shortcut.key.replace(/^Arrow/, "");
   if (platform === "mac") {
