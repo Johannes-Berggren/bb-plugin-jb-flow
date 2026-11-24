@@ -97,11 +97,9 @@
 /* Style the displayed BB title only. The rename field, mention pills and
    neighboring header controls keep their native metrics and interactions. */
 .jb-flow-shell [data-testid="app-page-header-content-row"] p > .bb-thread-title > .whitespace-pre {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.0625rem, 3.3cqi, 1.5rem);
-  font-weight: 400;
-  line-height: 1.15;
-  letter-spacing: -0.028em;
+  font-size: clamp(0.875rem, 2cqi, 0.9375rem);
+  font-weight: 500;
+  line-height: 1.3;
 }
 .jb-flow-shell [data-testid="app-page-header-content-row"]:has(p > .bb-thread-title) {
   background-image: linear-gradient(100deg,

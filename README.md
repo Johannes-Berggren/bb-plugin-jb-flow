@@ -258,7 +258,7 @@ JB Flow palette:
 across the standard BB interface: inset sidebar selections, refined section
 headings and rail controls, layered page surfaces, elevated composers, panel tabs,
 menus, dialogs, and the command palette. The selected workspace tab and Triage row
-share a color accent. Open thread titles use a serif face sized to the pane, with
+share a color accent. Open thread titles use BB’s interface typeface, with
 a subtle workspace tint across the header when pane highlighting is enabled.
 Callouts in chat messages (`> [!TIP]`,
 `[!NOTE]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), which BB shows as literal
