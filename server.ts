@@ -204,7 +204,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Hide options the reply buttons repeat",
       description:
-        "When the reply buttons above the composer list the agent's numbered options, hide the same list in the agent's message. Off shows both.",
+        "Hide repeated options and any Next steps callout fully covered by the reply buttons. Off shows both.",
       default: true,
     },
     copyCode: {

@@ -169,5 +169,7 @@ export function nextMoves(message: string): DecisionGroup[] {
   if (groups.length > 1) return groups;
   const move = nextMove(message);
   if (move.options.length === 0) return [];
-  return [{ ...move, title: groups[0]?.title ?? "", label: groups[0]?.label ?? "" }];
+  const single = move.options.length === 1 ? findDecisionIn(message.trim().split("\n"), true, 1) : null;
+  const title = groups[0]?.title ?? (single?.options.length === 1 ? plain(single.intro).slice(0, 300) : "");
+  return [{ ...move, title, label: groups[0]?.label ?? "" }];
 }

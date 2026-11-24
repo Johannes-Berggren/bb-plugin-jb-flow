@@ -54,7 +54,7 @@ export function threadPreviewRpc(bb: BbPluginApi): Pick<PluginRpcHandlers<typeof
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
       const message = output.output ?? "";
       const groups = nextMoves(message);
-      return { ...nextMove(message), ...(groups.length > 1 ? { groups } : {}) };
+      return { ...nextMove(message), ...(groups.length ? { groups } : {}) };
     },
   };
 }
