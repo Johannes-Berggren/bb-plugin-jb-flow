@@ -49,7 +49,7 @@ const LONE_HEADER = 'body:not(:has(#split-workspace-main-panel)) [data-split-pan
 
 /** With a single thread open, a line in its workspace's color along the top of the page header. */
 export function loneThreadRule(color: WorkspaceColor | undefined): string {
-  return color ? `${LONE_HEADER}{box-shadow:inset 0 2px 0 var(--jf-ws-${color})}` : "";
+  return color ? `${LONE_HEADER}{--jf-pane-color:var(--jf-ws-${color});box-shadow:inset 0 2px 0 var(--jf-pane-color)}` : "";
 }
 
 /** Frames the active pane while a split is open, and gives every pane its workspace's color. */

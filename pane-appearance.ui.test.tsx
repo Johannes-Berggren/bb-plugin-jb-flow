@@ -139,5 +139,6 @@ it("tops a lone thread's header with its workspace's color", async () => {
 it("writes the lone-thread rule only for a color, and only outside a split", () => {
   expect(loneThreadRule(undefined)).toBe("");
   expect(loneThreadRule("teal")).toContain("body:not(:has(#split-workspace-main-panel))");
-  expect(loneThreadRule("teal")).toContain("box-shadow:inset 0 2px 0 var(--jf-ws-teal)");
+  expect(loneThreadRule("teal")).toContain("--jf-pane-color:var(--jf-ws-teal)");
+  expect(loneThreadRule("teal")).toContain("box-shadow:inset 0 2px 0 var(--jf-pane-color)");
 });

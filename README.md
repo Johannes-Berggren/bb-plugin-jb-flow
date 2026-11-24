@@ -257,7 +257,10 @@ JB Flow palette:
 **Polish the entire BB interface** (Settings → JB Flow, on by default) applies
 across the standard BB interface: inset sidebar selections, refined section
 headings and rail controls, layered page surfaces, elevated composers, panel tabs,
-menus, dialogs, and the command palette. Callouts in chat messages (`> [!TIP]`,
+menus, dialogs, and the command palette. The selected workspace tab and Triage row
+share a color accent. Open thread titles use a serif face sized to the pane, with
+a subtle workspace tint across the header when pane highlighting is enabled.
+Callouts in chat messages (`> [!TIP]`,
 `[!NOTE]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), which BB shows as literal
 text, become tinted boxes with a label. It works with any palette; Graphite adds
 coordinated sidebar, card, popover, and recessed colors in light and dark mode.

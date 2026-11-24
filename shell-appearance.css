@@ -49,20 +49,23 @@
 .jb-flow-shell [data-jb-flow-row]:hover {
   background: var(--sidebar-accent);
 }
-.jb-flow-shell [data-jb-flow-row][aria-current="page"] {
-  background: color-mix(in oklch, var(--primary) 12%, var(--sidebar));
-  box-shadow: inset 0 0 0 1px
-    color-mix(in oklch, var(--primary) 22%, transparent);
+.jb-flow-shell .jf-workspace-tabs [role="tab"][aria-selected="true"] {
+  background: linear-gradient(to top,
+    color-mix(in oklch, var(--jf-ws-color, var(--primary)) 11%, transparent),
+    transparent);
 }
-.jb-flow-shell [data-jb-flow-row][aria-current="page"]::before {
-  content: "";
-  position: absolute;
-  left: 7px;
-  top: 30%;
-  bottom: 30%;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--primary);
+.jb-flow-shell [data-jb-flow-row][aria-current="page"] {
+  --jf-selection: var(--jf-ws-color, var(--primary));
+  background: color-mix(in oklch, var(--jf-selection) 12%, var(--sidebar));
+  box-shadow: inset 3px 0 var(--jf-selection);
+}
+.jb-flow-shell [data-jb-flow-row][aria-current="page"] [data-jb-flow-row-title] {
+  color: var(--foreground);
+}
+.jb-flow-shell [data-jb-flow-row]:focus-visible,
+.jb-flow-shell .jf-workspace-tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 .jb-flow-shell [data-jb-flow-section-header] {
   padding-top: 22px;
@@ -90,6 +93,20 @@
 .jb-flow-shell [data-app-content-shell] .bg-surface-scrim {
   border-color: var(--jb-shell-line);
   box-shadow: 0 1px 0 var(--jb-shell-line);
+}
+/* Style the displayed BB title only. The rename field, mention pills and
+   neighboring header controls keep their native metrics and interactions. */
+.jb-flow-shell [data-testid="app-page-header-content-row"] p > .bb-thread-title > .whitespace-pre {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.0625rem, 3.3cqi, 1.5rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.028em;
+}
+.jb-flow-shell [data-testid="app-page-header-content-row"]:has(p > .bb-thread-title) {
+  background-image: linear-gradient(100deg,
+    color-mix(in oklch, var(--jf-pane-color, transparent) 8%, transparent),
+    transparent 62%);
 }
 .jb-flow-shell [data-pane-header-focus-tab] {
   border-radius: 8px;

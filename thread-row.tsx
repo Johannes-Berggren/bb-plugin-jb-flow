@@ -238,6 +238,7 @@ export function ThreadRow({
             drag.start(thread, event);
           }}
           data-jb-flow-row={thread.id}
+          data-jf-color={workspaceTag?.color}
           data-sidebar-thread-shortcut-target=""
           aria-current={active ? "page" : undefined}
           aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
@@ -286,7 +287,7 @@ export function ThreadRow({
           ) : null}
           <StatusIcon status={status} />
           {workspaceTag ? (
-            <i role="img" className="jf-workspace-color-dot" data-jf-color={workspaceTag.color} aria-label={`Workspace: ${workspaceTag.name}`} title={workspaceTag.name} />
+            <i role="img" className="jf-workspace-color-dot" aria-label={`Workspace: ${workspaceTag.name}`} title={workspaceTag.name} />
           ) : null}
           {focused ? (
             <span role="img" aria-label="In Focus" title="In Focus" className="shrink-0">
