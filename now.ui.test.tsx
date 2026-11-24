@@ -254,6 +254,17 @@ describe("Now and Focus", () => {
     expect(reason("answered")).toBeNull();
   });
 
+  it("names failing checks in an ordinary lane and keeps the PR shortcut", async () => {
+    const slot = await mount({
+      threads: [thread("review", { isUnread: false })],
+      state: { threadPrs: { review: [{ number: 15, repo: "acme/app", state: "open", attention: "checks_failed", title: "Update tests",
+        url: "https://example.test/pr/15", base: "main", head: "tests", stackedOn: null, checkedAt: NOW }] } },
+    });
+    const row = () => slot.container.querySelector<HTMLElement>('[data-jb-flow-row="review"]');
+    await waitFor(() => expect(row()?.querySelector("[data-jb-flow-reason]")?.textContent).toBe("Checks failed"));
+    expect(within(row()!).getByRole("button", { name: "#15" })).toBeDefined();
+  });
+
   it("a focused ask you've read stays in Now", async () => {
     const slot = await mount({
       threads: [thread("read", { isUnread: false, lastReadAt: NOW, updatedAt: NOW, latestAttentionAt: NOW - 18 * HOUR })],

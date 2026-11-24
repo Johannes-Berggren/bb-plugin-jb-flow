@@ -107,7 +107,7 @@ export function ThreadRow({
   /** Missing when Now and Focus is turned off. */
   onToggleFocus: (() => void) | undefined;
   /** On a Now or Moving row: who holds the thread, and for how long. */
-  reason: { text: string; urgent: boolean; detail?: string } | undefined;
+  reason: { text: string; urgent: boolean; detail?: string; showPr?: boolean } | undefined;
   /** This thread's deadline, if it has one. */
   due: FlowState["due"][string] | undefined;
   /** Missing when Now and Focus is turned off. */
@@ -151,8 +151,8 @@ export function ThreadRow({
   const prs = threadPrs(createdPrs, pullRequest);
   const run = busy ? runInfo(running, now) : null;
   const status = rowStatus(thread, busy, watching, prs, run);
-  const worst = worstPr(prs);
   const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
+  const worst = worstPr(openPrs.length ? openPrs : prs);
   const rpc = useRpc<typeof rpcContract>();
   // A pending interaction can block even a thread that still reports a running turn.
   const blocked = thread.hasPendingInteraction || thread.indicator === "waiting-for-input" || thread.status === "error" || thread.indicator === "unread-error";
@@ -324,7 +324,7 @@ export function ThreadRow({
               {formatDue(due.at, new Date(now))}
             </span>
           ) : null}
-          {worst && !reason ? (
+          {worst && (!reason || reason.showPr) ? (
             <button
               type="button"
               tabIndex={-1}

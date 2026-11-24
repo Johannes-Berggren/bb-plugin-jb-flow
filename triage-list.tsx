@@ -453,6 +453,7 @@ export function TriageThreadList({
     return {
       text: brief ? headlineOf(brief.item, 60) : label,
       detail,
+      showPr: entry.state === "pr" && !fromSubthread,
       urgent: entry.state === "blocked" || (entry.dueAt !== null && entry.dueAt - now <= DUE_NOW_MS) ||
         (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
     };
@@ -851,7 +852,7 @@ export function TriageThreadList({
       <div className="jf-triage-heading">
         <button type="button" className="jf-filter-toggle" aria-expanded={filtersOpen} aria-controls={filterPanelId}
           onClick={() => toggle("filters")}>
-          <Icon name="ListFilter" fallback="List" className="size-3.5" />
+          <Icon name="Filter" className="size-3.5" />
           <span>{activeFilters || "Filters"}</span>
           <Icon name={filtersOpen ? "ChevronUp" : "ChevronDown"} className="size-3" />
         </button>
@@ -878,8 +879,7 @@ export function TriageThreadList({
             open={smart?.startsWith("machine:") ? true : undefined}>
             <summary><Icon name="Terminal" className="size-3.5" /><span>Machines</span><Icon name="ChevronDown" className="size-3" /></summary>
             <div className="jf-triage-filters">
-          {(machines?.hosts.length ?? 0) > 1
-            ? machines!.hosts
+              {machines?.hosts
                 .filter((host) => (machineCounts.get(host.id) ?? 0) > 0 || smart === `machine:${host.id}`)
                 .map((host) => {
                   const id = `machine:${host.id}` as const;
@@ -895,8 +895,7 @@ export function TriageThreadList({
                       count={machineCounts.get(host.id) ?? 0}
                     />
                   );
-                })
-            : null}
+                })}
             </div>
           </details>
         )}
