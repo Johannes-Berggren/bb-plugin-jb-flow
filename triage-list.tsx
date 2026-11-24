@@ -834,6 +834,7 @@ export function TriageThreadList({
     <DragContext.Provider value={drag}>
     <nav
       aria-label="Triage"
+      data-jf-color={workspacesOn ? workspace?.color : undefined}
       ref={listRef}
       onWheel={swipeOn ? onSwipe : undefined}
       className="jf-triage flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"

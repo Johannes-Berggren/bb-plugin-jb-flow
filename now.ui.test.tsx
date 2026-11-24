@@ -487,7 +487,7 @@ describe("Workspace color on rows", () => {
     const slot = await mount({ threads: threads(), settings: { workspaces: true, nowQueue: false }, rpc: { workspaces_get: () => colored } });
     await waitFor(() => expect(dot(slot.container, "in-acme")).not.toBeNull());
     const mark = dot(slot.container, "in-acme")!;
-    expect(mark.getAttribute("data-jf-color")).toBe("teal");
+    expect(mark.closest("[data-jb-flow-row]")?.getAttribute("data-jf-color")).toBe("teal");
     expect(mark.getAttribute("aria-label")).toBe("Workspace: Acme");
     // A workspace without a color, and a thread in no workspace, have no dot.
     expect(listed(slot.container, "in-globex")).toBe(true);
@@ -497,6 +497,7 @@ describe("Workspace color on rows", () => {
     // Every row there is Acme's: the dot would say nothing.
     selectWorkspace("acme");
     await waitFor(() => expect(listed(slot.container, "in-globex")).toBe(false));
+    expect(slot.getByRole("navigation", { name: "Triage" }).getAttribute("data-jf-color")).toBe("teal");
     expect(listed(slot.container, "in-acme")).toBe(true);
     expect(dot(slot.container, "in-acme")).toBeNull();
   });
