@@ -189,7 +189,7 @@ describe("Subthreads", () => {
   it("with Now on, a subthread that needs you brings its parent into Now, and says why on its own row", async () => {
     const slot = await mount([thread("parent", 1), thread("child", 2, { parentThreadId: "parent", ...needsInput }), thread("other", 3)], { nowQueue: true });
     await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["parent", "child"]));
-    expect(row(slot.container, "child").querySelector("[data-jb-flow-reason]")?.textContent).toContain("needs input");
+    expect(row(slot.container, "child").querySelector("[data-jb-flow-reason]")?.textContent).toContain("Waiting for your answer");
     expect(row(slot.container, "parent").querySelector("[data-jb-flow-reason]")).toBeNull();
     expect(rows(slot.container).filter((id) => id === "parent")).toHaveLength(1);
   });

@@ -65,6 +65,15 @@ const PR_LABEL: Record<(typeof ACTIONABLE_PRS)[number], string> = {
   ready_to_merge: "ready to merge",
 };
 
+/** An action a person can take on an open PR, in sidebar copy. */
+export function sidebarPrReason(attention: string | undefined): string | undefined {
+  const key = ACTIONABLE_PRS.find((value) => value === attention);
+  if (!key) return undefined;
+  if (key === "conflicts") return "Resolve merge conflicts";
+  const label = PR_LABEL[key];
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export const DEFAULT_FOCUS_LIMIT = 7;
 /** The limit from its setting, whatever was typed there. */
 export const focusLimitOf = (setting: unknown) => Math.max(1, Number(setting) || DEFAULT_FOCUS_LIMIT);
@@ -72,7 +81,7 @@ export const focusLimitOf = (setting: unknown) => Math.max(1, Number(setting) ||
 const openPrs = (thread: NowThread, flow: NowFlow) =>
   (flow.threadPrs[thread.id] ?? []).filter((pr) => pr.state === "open" || pr.state === "draft");
 
-const actionablePr = (thread: NowThread, flow: NowFlow) => {
+export const actionablePr = (thread: NowThread, flow: NowFlow) => {
   const attentions = openPrs(thread, flow).map((pr) => pr.attention);
   return ACTIONABLE_PRS.find((attention) => attentions.includes(attention));
 };
@@ -92,7 +101,7 @@ export function ballState(thread: NowThread, flow: NowFlow, now: number): BallSt
   return quiet < COLD_AFTER_MS ? "recent" : "cold";
 }
 
-function entryFor(thread: NowThread, flow: NowFlow, now: number): NowEntry {
+export function entryFor(thread: NowThread, flow: NowFlow, now: number): NowEntry {
   const state = ballState(thread, flow, now);
   const asked = flow.awaiting[thread.id];
   return {

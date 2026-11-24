@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { useWorkspaces, useSelectedWorkspace, switchWorkspace } from "./workspace-client";
 import { useWorkspaceSwipe, sidebarBlock, slideIn, tabDirection } from "./workspace-ui";
 import { inWorkspace, workspaceForThread } from "./workspaces";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { experimental_useSidebarThreads as useSidebarThreads, useBbNavigate, useSdk, useSettings } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread, PluginThreadListProps } from "@get-bb/plugin-sdk/app";
@@ -13,8 +13,9 @@ import { allSettled, threadPrs, useNow } from "./ui-extras";
 import { groupByProject, groupBySection, quietFor, sortRows } from "./sidebar-groups";
 import { childrenByParent, descendants, foldKey, pruneFolds, rootIds, subthreadRows, topLevel, treesOf, withMatches, withRows } from "./subthreads";
 import { resolveLanes, sectionNames } from "./lanes";
+import { formatDue } from "./when";
 import { needsMe, replyQueued } from "./needs-me";
-import { DUE_NOW_MS, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
+import { DUE_NOW_MS, actionablePr, sidebarPrReason, entryFor, focusLimitOf, nowQueue, reasonLabel, sidebarNowThread, type NowEntry } from "./now-model";
 import { useConductorBriefs } from "./conductor-client";
 import { headlineOf } from "./conductor-model";
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
@@ -177,15 +178,13 @@ export function TriageThreadList({
     [tags, threads],
   );
 
+  const filterPanelId = useId();
   const [smart, setSmart] = useState<Filter | null>(null);
   useEffect(() => { setTagFilter(null); setSmart(null); setExpanded({}); }, [selectedWorkspace]);
   const machines = state?.machines;
   const rowMachine = (thread: PluginSidebarThread) => {
     const hostId = threadHost(thread, machines);
-    const host = machines?.hosts.find((candidate) => candidate.id === hostId);
-    // Tag rows only when there is more than one machine and we know which one is local.
-    const remote = (machines?.hosts.length ?? 0) > 1 && machines?.localHostId != null && host?.id !== machines.localHostId;
-    return host ? { name: host.name, remote } : null;
+    return machines?.hosts.find((host) => host.id === hostId)?.name ?? null;
   };
   const [sectionDialog, setSectionDialog] = useState<{ mode: "create" | "rename"; id?: string; name: string; threadId?: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
@@ -432,23 +431,32 @@ export function TriageThreadList({
   // A thread the conductor briefed says what's needed instead of who holds it.
   const briefs = useConductorBriefs();
   // `fromSubthread`: the entry is a folded-away subthread's, shown on the row that holds it.
-  const rowReason = (entry: NowEntry | undefined, fromSubthread = false) => {
-    const brief = entry ? briefs.get(entry.thread.id) : undefined;
-    const via = fromSubthread ? "\nIn a folded subthread" : "";
-    return entry && state
-      ? {
-          text: brief ? headlineOf(brief.item, 60) : reasonLabel(entry, state, now),
-          detail: brief
-            ? `${headlineOf(brief.item, 200)}${brief.item.recommendation ? `\n→ ${brief.item.recommendation}` : ""}\n${reasonLabel(entry, state, now)}${via}`
-            : fromSubthread
-              ? `${reasonLabel(entry, state, now)}${via}`
-              : undefined,
-          urgent:
-            entry.state === "blocked" ||
-            (entry.dueAt !== null && entry.dueAt - now <= DUE_NOW_MS) ||
-            (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
-        }
-      : undefined;
+  const rowReason = (thread: PluginSidebarThread, queued: NowEntry | undefined, fromSubthread: boolean) => {
+    if (!state) return undefined;
+    const ranked = queued ?? entryFor(sidebarNowThread(thread, false), state, now);
+    const entry = nowEnabled ? ranked : { ...ranked, dueAt: null };
+    let label: string;
+    switch (entry.state) {
+      case "blocked": label = entry.thread.blocked === "input" ? "Waiting for your answer" : "Run failed"; break;
+      case "yours": label = "Waiting for your answer"; break;
+      case "go": label = "Waiting for your go-ahead"; break;
+      case "stalled": label = "Agent hasn’t reported back"; break;
+      case "pr": label = sidebarPrReason(actionablePr(entry.thread, state))!; break;
+      default:
+        if (!queued) return undefined;
+        label = reasonLabel({ ...entry, dueAt: null }, state, now);
+    }
+    if (entry.dueAt !== null) label = `${formatDue(entry.dueAt, new Date(now))} · ${label}`;
+    const brief = briefs.get(entry.thread.id);
+    const detail = [brief && headlineOf(brief.item, 200), brief?.item.recommendation && `→ ${brief.item.recommendation}`,
+      reasonLabel(entry, state, now), fromSubthread && "In a folded subthread"].filter(Boolean).join("\n");
+    return {
+      text: brief ? headlineOf(brief.item, 60) : label,
+      detail,
+      showPr: entry.state === "pr" && !fromSubthread,
+      urgent: entry.state === "blocked" || (entry.dueAt !== null && entry.dueAt - now <= DUE_NOW_MS) ||
+        (["yours", "cold", "stalled", "go"].includes(entry.state) && now - entry.since > OVERDUE_WAIT_MS),
+    };
   };
 
   const [focusFull, setFocusFull] = useState<string | null>(null);
@@ -746,13 +754,15 @@ export function TriageThreadList({
   }, [threads, liveRows, trees, rootOf, queue, nowRows, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, createdOrder, workspace, projectById, workspaceState, allThreads, projects, navigate]);
 
   const defaults = useMemo(
-    () =>
-      Object.fromEntries(
-        groups.map((group) => [group.id, group.defaultCollapsed ?? false]),
-      ),
+    () => ({ ...Object.fromEntries(groups.map((group) => [group.id, group.defaultCollapsed ?? false])), filters: true }),
     [groups],
   );
   const { isCollapsed, toggle, pruneFoldsOf } = useCollapsed(defaults);
+  const filtersOpen = !isCollapsed("filters");
+  const smartLabel = smart?.startsWith("machine:")
+    ? machineLabel(machines?.hosts.find((host) => host.id === smart.slice(8))?.name ?? "Machine")
+    : SMART.find((entry) => entry.id === smart)?.label;
+  const activeFilters = [smartLabel, tagFilter && `#${tagFilter}`].filter(Boolean).join(" · ");
   // Folds of threads that are gone (deleted, or archived out of bb's list) are dropped.
   useEffect(() => {
     if (status !== "ready") return;
@@ -818,7 +828,7 @@ export function TriageThreadList({
       onToggleFocus={nowEnabled ? () => toggleFocus(thread.id) : undefined}
       due={nowEnabled ? state?.due[thread.id] : undefined}
       onSetDue={nowEnabled ? () => setDueTarget(thread.id) : undefined}
-      reason={rowReason(group.id === "now" || group.id === "moving" ? (nowEntries.get(thread.id) ?? borrowed) : undefined, borrowed !== undefined && !nowEntries.has(thread.id))}
+      reason={group.id === "snoozed" ? undefined : rowReason(thread, group.id === "now" || group.id === "moving" ? (nowEntries.get(thread.id) ?? borrowed) : undefined, borrowed !== undefined && !nowEntries.has(thread.id))}
     />
   );
 
@@ -839,70 +849,77 @@ export function TriageThreadList({
       onWheel={swipeOn ? onSwipe : undefined}
       className="jf-triage flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-4"
     >
-      <div className="jf-triage-heading"><span>Threads</span>
-        {smart !== null && <button type="button" onClick={() => setSmart(null)}>Clear filter</button>}
+      <div className="jf-triage-heading">
+        <button type="button" className="jf-filter-toggle" aria-expanded={filtersOpen} aria-controls={filterPanelId}
+          onClick={() => toggle("filters")}>
+          <Icon name="Filter" className="size-3.5" />
+          <span>{activeFilters || "Filters"}</span>
+          <Icon name={filtersOpen ? "ChevronUp" : "ChevronDown"} className="size-3" />
+        </button>
+        {activeFilters && <button type="button" aria-label="Clear filters" onClick={() => { setSmart(null); setTagFilter(null); }}>Clear</button>}
         <span className="jf-triage-keyboard" title={`Keys on a focused row: 1–5 move to lane · s snooze · t tag${nowEnabled ? " · f Focus · d due date" : ""} · e archive · u unread · ←/→ fold subthreads, ← to the parent · j/k move`}><Icon name="Info" className="size-3" /></span>
       </div>
-      <div className="jf-triage-filters">
-        {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
-          <FilterChip
-            key={entry.id}
-            hint={entry.hint}
-            active={smart === entry.id}
-            onClick={() => setSmart((current) => (current === entry.id ? null : entry.id))}
-            glyph={entry.glyph}
-            tone={entry.tone}
-            label={entry.label}
-            count={smartCounts[entry.id]}
-          />
-        ))}
-      </div>
-      {(machines?.hosts.length ?? 0) > 1 && (
-        <details className="jf-machine-filters" key={smart?.startsWith("machine:") ? "selected-machine" : "machines"}
-          open={smart?.startsWith("machine:") ? true : undefined}>
-          <summary><Icon name="Terminal" className="size-3.5" /><span>Machines</span><Icon name="ChevronDown" className="size-3" /></summary>
-          <div className="jf-triage-filters">
-        {(machines?.hosts.length ?? 0) > 1
-          ? machines!.hosts
-              .filter((host) => (machineCounts.get(host.id) ?? 0) > 0 || smart === `machine:${host.id}`)
-              .map((host) => {
-                const id = `machine:${host.id}` as const;
-                return (
-                  <FilterChip
-                    key={id}
-                    hint={`Threads running on ${machineLabel(host.name)}${host.connected ? "" : " (offline)"}`}
-                    active={smart === id}
-                    onClick={() => setSmart((current) => (current === id ? null : id))}
-                    glyph="terminal"
-                    tone={host.connected ? "text-slate-400" : "text-slate-400/40"}
-                    label={machineLabel(host.name)}
-                    count={machineCounts.get(host.id) ?? 0}
-                  />
-                );
-              })
-          : null}
-          </div>
-        </details>
-      )}
-      {knownTags.length > 0 ? (
-        <div className="flex flex-wrap gap-1 px-2 pt-1">
-          {knownTags.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              onClick={() => setTagFilter((current) => (current === tag ? null : tag))}
-              className={cn(
-                "rounded-full border px-2 text-[10px] leading-4",
-                tagFilter === tag
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border text-muted-foreground hover:text-foreground",
-              )}
-            >
-              #{tag}
-            </button>
+      <div id={filterPanelId} hidden={!filtersOpen}>
+        <div className="jf-triage-filters">
+          {SMART.filter((entry) => entry.id === "needs" || smartCounts[entry.id] > 0 || smart === entry.id).map((entry) => (
+            <FilterChip
+              key={entry.id}
+              hint={entry.hint}
+              active={smart === entry.id}
+              onClick={() => setSmart((current) => (current === entry.id ? null : entry.id))}
+              glyph={entry.glyph}
+              tone={entry.tone}
+              label={entry.label}
+              count={smartCounts[entry.id]}
+            />
           ))}
         </div>
-      ) : null}
+        {(machines?.hosts.length ?? 0) > 1 && (
+          <details className="jf-machine-filters" key={smart?.startsWith("machine:") ? "selected-machine" : "machines"}
+            open={smart?.startsWith("machine:") ? true : undefined}>
+            <summary><Icon name="Terminal" className="size-3.5" /><span>Machines</span><Icon name="ChevronDown" className="size-3" /></summary>
+            <div className="jf-triage-filters">
+              {machines?.hosts
+                .filter((host) => (machineCounts.get(host.id) ?? 0) > 0 || smart === `machine:${host.id}`)
+                .map((host) => {
+                  const id = `machine:${host.id}` as const;
+                  return (
+                    <FilterChip
+                      key={id}
+                      hint={`Threads running on ${machineLabel(host.name)}${host.connected ? "" : " (offline)"}`}
+                      active={smart === id}
+                      onClick={() => setSmart((current) => (current === id ? null : id))}
+                      glyph="terminal"
+                      tone={host.connected ? "text-slate-400" : "text-slate-400/40"}
+                      label={machineLabel(host.name)}
+                      count={machineCounts.get(host.id) ?? 0}
+                    />
+                  );
+                })}
+            </div>
+          </details>
+        )}
+        {knownTags.length > 0 ? (
+          <div className="flex flex-wrap gap-1 px-2 pt-1">
+            {knownTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                aria-pressed={tagFilter === tag}
+                onClick={() => setTagFilter((current) => (current === tag ? null : tag))}
+                className={cn(
+                  "rounded-full border px-2 text-[10px] leading-4",
+                  tagFilter === tag
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border text-muted-foreground hover:text-foreground",
+                )}
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
       {/* Before the groups: a new install has no sections, so no "Your sections" divider to hang it on. */}
       <MissingLanesHint sections={sections} pinned={state?.laneSections ?? {}} />
       {groups.map((group) => {
