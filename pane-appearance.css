@@ -30,3 +30,8 @@
   background: color-mix(in oklch, var(--jf-pane-color, var(--primary)) 18%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--jf-pane-color, var(--primary)) 34%, transparent);
 }
+/* With shell polish, the thread header carries the focus tint edge to edge. */
+.jb-flow-shell.jb-flow-active-pane #split-workspace-main-panel [data-split-pane-id][data-focused="true"] [data-pane-header-focus-tab]:has(> p) {
+  background: transparent;
+  box-shadow: none;
+}

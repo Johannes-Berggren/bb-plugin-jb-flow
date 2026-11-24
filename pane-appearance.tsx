@@ -44,8 +44,8 @@ export function paneColorRules(panes: readonly Pane[], colorOf: (threadId: strin
     .join("\n");
 }
 
-/** BB's header row above a page; a single open thread is drawn as one pane, outside any split. */
-const LONE_HEADER = 'body:not(:has(#split-workspace-main-panel)) [data-split-pane-id] [data-testid="app-page-header-content-row"]';
+/** A single open thread is drawn as one pane, outside any split. */
+const LONE_HEADER = 'body:not(:has(#split-workspace-main-panel)) [data-split-pane-id] header:has(> [data-testid="app-page-header-content-row"] [data-thread-header-pane-actions])';
 
 /** With a single thread open, a line in its workspace's color along the top of the page header. */
 export function loneThreadRule(color: WorkspaceColor | undefined): string {
