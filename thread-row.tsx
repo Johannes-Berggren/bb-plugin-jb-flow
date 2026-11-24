@@ -11,25 +11,18 @@ import { useSidebarThreadActions } from "./thread-actions";
 import { PR_TONE, StatusIcon, ThreadHoverPreview, attentionLabel, duration, rowStatus, runInfo, threadPrs, worstPr } from "./ui-extras";
 import { formatDue, formatWhen } from "./when";
 import { type Lane } from "./lanes";
-import { DUE_NOW_MS } from "./now-model";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { DUE_NOW_MS, sidebarPrReason } from "./now-model";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Glyph } from "@/components/ui/glyph";
 import type { GlyphName } from "@/components/ui/glyph";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { ProjectChip } from "./flow-state";
 import { DragContext } from "./drag";
+import { replyQueued } from "./needs-me";
 import { arrowAction } from "./subthreads";
 
 /** "Alex’s Mac Studio" → "Mac Studio". */
 export const machineLabel = (name: string) => name.replace(/^[^’']+[’']s\s+/, "");
-/** Row-sized: "MacBook Pro" → "MBP", "Mac Studio" → "Studio". */
-const machineShort = (name: string) => {
-  const label = machineLabel(name);
-  if (/^MacBook Pro/i.test(label)) return "MBP";
-  return label.replace(/^(MacBook|Mac)\s+/i, "");
-};
-
 /** The row after this one (or before, at the end), to keep focus on after this row moves away. */
 function neighbourRowId(row: HTMLElement): string | null {
   const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-jb-flow-row]"));
@@ -124,8 +117,7 @@ export function ThreadRow({
   workspaceTag?: { name: string; color: WorkspaceColor } | undefined;
   onWorkspace: (workspaceId: string | null, automatic: boolean) => void;
   project: PluginSidebarProject | undefined;
-  /** The machine it runs on; `remote` when it's not the machine BB runs on (tagged on the row). */
-  machine: { name: string; remote: boolean } | null;
+  machine: string | null;
   active: boolean;
   tags: readonly string[];
   snoozeUntil: number | undefined;
@@ -162,8 +154,12 @@ export function ThreadRow({
   const worst = worstPr(prs);
   const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
   const rpc = useRpc<typeof rpcContract>();
-  // A running thread already shows its run time.
-  const reasonChip = run ? undefined : reason;
+  // A pending interaction can block even a thread that still reports a running turn.
+  const blocked = thread.hasPendingInteraction || thread.indicator === "waiting-for-input" || thread.status === "error" || thread.indicator === "unread-error";
+  const branchReason = pullRequest && ["open", "draft"].includes(pullRequest.state) && !busy && thread.status !== "stopping" &&
+    !replyQueued(thread) && snoozeUntil === undefined ? sidebarPrReason(pullRequest.attention) : undefined;
+  const reasonChip = run && !blocked ? undefined : reason ??
+    (branchReason ? { text: branchReason, urgent: false, detail: pullRequest?.title } : undefined);
 
   const onKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -221,7 +217,7 @@ export function ThreadRow({
         <ThreadHoverPreview
           thread={thread}
           projectName={project?.name ?? null}
-          machineName={machine ? machineLabel(machine.name) : null}
+          machineName={machine ? machineLabel(machine) : null}
           sectionName={[...lanes.map((lane) => ({ id: lane.sectionId, name: lane.title })), ...otherSections].find((section) => section.id === thread.sectionId)?.name ?? null}
           status={status}
           tags={tags}
@@ -294,27 +290,17 @@ export function ThreadRow({
               <Glyph name="star" className="size-3 text-amber-500" />
             </span>
           ) : null}
-          {/* The title keeps a readable width; chips beside it truncate instead. */}
-          <span
-            data-jb-flow-row-title=""
-            className={cn(
-              "min-w-[5.5rem] flex-1 truncate",
-              thread.isUnread && "font-semibold",
+          <span className="jf-row-copy">
+            <span data-jb-flow-row-title="" className={cn("block truncate", thread.isUnread && "font-semibold")}>
+              <ThreadTitle threadId={thread.id} />
+            </span>
+            {reasonChip && (
+              <span data-jb-flow-reason="" title={reasonChip.detail ?? reasonChip.text}
+                className={cn("jf-row-reason block truncate", reasonChip.urgent && "jf-row-reason-urgent")}>
+                {reasonChip.text}
+              </span>
             )}
-          >
-            <ThreadTitle threadId={thread.id} />
           </span>
-          {/* A Now row's reason chip says more; its tags stay in the hover card. */}
-          {reasonChip
-            ? null
-            : tags.slice(0, 2).map((tag) => (
-                <span
-                  key={tag}
-                  className="min-w-0 max-w-[5rem] truncate text-[10px] text-muted-foreground"
-                >
-                  #{tag}
-                </span>
-              ))}
           {subthreads?.folded ? (
             <span
               data-jb-flow-subthread-count=""
@@ -328,13 +314,7 @@ export function ThreadRow({
               {subthreads.count}
             </span>
           ) : null}
-          <ProjectChip project={project} />
-          {machine?.remote ? (
-            <span className="shrink-0 text-[10px] text-muted-foreground" title={`Runs on ${machineLabel(machine.name)}`}>
-              {machineShort(machine.name)}
-            </span>
-          ) : null}
-          {run ? (
+          {run && !reasonChip ? (
             <span className={cn("shrink-0 text-[10px] tabular-nums", run.stuck ? "font-medium text-amber-600" : "text-sky-600")}>
               {run.stuck ? `stuck ${duration(run.silent)}` : duration(run.elapsed)}
             </span>
@@ -344,16 +324,7 @@ export function ThreadRow({
               {formatDue(due.at, new Date(now))}
             </span>
           ) : null}
-          {reasonChip ? (
-            <span
-              data-jb-flow-reason=""
-              title={reasonChip.detail ?? reasonChip.text}
-              className={cn("min-w-0 truncate whitespace-nowrap text-[10px] tabular-nums", reasonChip.urgent ? "font-medium text-amber-600" : "text-muted-foreground")}
-            >
-              {reasonChip.text}
-            </span>
-          ) : null}
-          {worst && !reasonChip ? (
+          {worst && !reason ? (
             <button
               type="button"
               tabIndex={-1}
@@ -398,6 +369,19 @@ export function ThreadRow({
         >
           <Icon name="Columns2" className="size-4" /> Open in split view
         </ContextMenuItem>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger><Icon name="Info" className="size-4" /> Thread details</ContextMenuSubTrigger>
+          <ContextMenuSubContent className="max-w-72">
+            <ContextMenuLabel>{reasonChip?.detail ?? status.label}</ContextMenuLabel>
+            {project && <ContextMenuLabel>{project.name}</ContextMenuLabel>}
+            {machine && <ContextMenuLabel>{machineLabel(machine)}</ContextMenuLabel>}
+            {thread.environment?.branchName && <ContextMenuLabel>{thread.environment.branchName}</ContextMenuLabel>}
+            {tags.length > 0 && <ContextMenuLabel>{tags.map((tag) => `#${tag}`).join(" · ")}</ContextMenuLabel>}
+            {prs.map((pr) => <ContextMenuItem key={pr.url} onSelect={() => window.open(pr.url, "_blank", "noopener")}>
+              #{pr.number} · {pr.title}
+            </ContextMenuItem>)}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
         {busy ? (
           <ContextMenuItem onSelect={() => void rpc.call("thread_stop", { threadId: thread.id })}>
             <Icon name="Square" className="size-4" /> Stop run{run?.stuck ? ` (silent ${duration(run.silent)})` : ""}

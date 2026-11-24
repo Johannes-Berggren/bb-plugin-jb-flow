@@ -194,9 +194,9 @@ describe("Now and Focus", () => {
     const text = (id: string) => slot.container.querySelector(`[data-jb-flow-row="${id}"]`)?.textContent ?? "";
     expect(slot.container.querySelector('[data-jb-flow-row="asked"] [aria-label="In Focus"]')).not.toBeNull();
     expect(slot.container.querySelector('[data-jb-flow-row="needs-input"] [aria-label="In Focus"]')).toBeNull();
-    expect(text("asked")).toContain("you · 18h");
+    expect(text("asked")).toContain("Waiting for your answer");
     expect(text("cold")).toContain("no next step · 44h");
-    expect(text("needs-input")).toContain("needs input · 1h");
+    expect(text("needs-input")).toContain("Waiting for your answer");
     // Moving starts collapsed; its header still counts the thread.
     expect(heading(slot.container, "Moving")?.closest("section")?.textContent).toContain("1");
     expect(slot.container.querySelector('[data-jb-flow-row="watched"]')).toBeNull();
@@ -229,6 +229,29 @@ describe("Now and Focus", () => {
     const reason = (id: string) => slot.container.querySelector<HTMLElement>(`[data-jb-flow-row="${id}"] [data-jb-flow-reason]`);
     await waitFor(() => expect(reason("asked")?.textContent).toBe("Pick a chart library"));
     expect(reason("asked")?.title).toBe("Pick a chart library\n→ Option 2\nyou · 18h");
+  });
+
+  it("keeps the active filter visible when collapsed and clears it from the toolbar", async () => {
+    const slot = await mount({ threads: [thread("waiting", { hasPendingInteraction: true }), thread("other")] });
+    const toggle = await slot.findByRole("button", { name: "Filters" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    fireEvent.click(slot.getByRole("button", { name: /Needs me.*1/ }));
+    fireEvent.click(toggle);
+    expect(toggle.textContent).toContain("Needs me");
+    expect(slot.queryByRole("button", { name: /Needs me.*1/ })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Clear filters" }));
+    expect(toggle.textContent).toBe("Filters");
+  });
+
+  it("explains a read ask in its lane and suppresses the ask when a reply is queued", async () => {
+    const slot = await mount({
+      threads: [thread("asked", { isUnread: false }), thread("answered", { queuedWork: "waiting" })],
+      state: { awaiting: { asked: NOW, answered: NOW } },
+    });
+    const reason = (id: string) => slot.container.querySelector(`[data-jb-flow-row="${id}"] [data-jb-flow-reason]`);
+    await waitFor(() => expect(reason("asked")?.textContent).toBe("Waiting for your answer"));
+    expect(reason("answered")).toBeNull();
   });
 
   it("a focused ask you've read stays in Now", async () => {
@@ -305,7 +328,7 @@ describe("Now and Focus", () => {
       },
     });
     await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["due", "focused"]));
-    expect(slot.container.querySelector('[data-jb-flow-row="due"]')?.textContent).toMatch(/due (today|tomorrow) · you 27h/);
+    expect(slot.container.querySelector('[data-jb-flow-row="due"]')?.textContent).toMatch(/due (today|tomorrow) · Waiting for your answer/);
   });
 
   it("a date far off shows on the row in its lane", async () => {
@@ -441,7 +464,7 @@ describe("Now and Focus", () => {
     expect(tab.getAttribute("aria-description")).toBe("1 thread · 1 needs attention");
   });
 
-  it("a Now row keeps its title readable: its chip truncates and its tags move to the hover card", async () => {
+  it("actionable rows give the title and reason separate lines and keep tags in the details", async () => {
     const slot = await mount({
       threads: [thread("asked", { latestAttentionAt: NOW - 18 * HOUR }), thread("lane")],
       state: {
@@ -453,13 +476,13 @@ describe("Now and Focus", () => {
     });
     await waitFor(() => expect(rowsUnder(slot.container, "Now")).toEqual(["asked"]));
     const row = slot.container.querySelector('[data-jb-flow-row="asked"]')!;
-    expect(row.querySelector("[data-jb-flow-row-title]")?.className).toContain("min-w-[5.5rem]");
+    expect(row.querySelector("[data-jb-flow-row-title]")?.nextElementSibling).toBe(row.querySelector("[data-jb-flow-reason]"));
     const chip = row.querySelector("[data-jb-flow-reason]")!;
     expect(chip.className).toContain("truncate");
     expect(chip.className).not.toContain("shrink-0");
-    expect(chip.getAttribute("title")).toBe(chip.textContent);
+    expect(chip.getAttribute("title")).toContain("you 18h");
     expect(row.textContent).not.toContain("#payments");
-    expect(slot.container.querySelector('[data-jb-flow-row="lane"]')?.textContent).toContain("#perf");
+    expect(slot.container.querySelector('[data-jb-flow-row="lane"]')?.textContent).not.toContain("#perf");
   });
 });
 
