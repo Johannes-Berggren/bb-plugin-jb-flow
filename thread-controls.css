@@ -45,6 +45,10 @@
   white-space: nowrap;
 }
 
+.jf-thread-control-short-label {
+  display: none;
+}
+
 .jf-thread-control-toggle > svg,
 .jf-thread-control-count {
   flex: none;
@@ -60,6 +64,30 @@
 
 .jf-thread-control-caret {
   color: var(--muted-foreground);
+}
+
+.jf-thread-control-toggle[data-preview] > .jf-thread-control-label {
+  flex: none;
+  font-weight: 600;
+}
+
+.jf-thread-control-preview {
+  min-inline-size: 0;
+  max-inline-size: min(40ch, 40cqi);
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jf-thread-control-badge {
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .jf-thread-control-entry,
@@ -127,6 +155,43 @@
   color: var(--muted-foreground);
 }
 
+.jf-thread-control-side-action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-inline-size: 26px;
+  block-size: 28px;
+  padding-inline: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.jf-thread-control-side-action:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.jf-thread-control-side-action:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.jf-thread-control-side-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@container (max-width: 500px) {
+  .jf-thread-control-side-action-label {
+    display: none;
+  }
+}
+
 .jf-thread-control-panel {
   grid-row: 2;
   grid-column: 1 / -1;
@@ -164,6 +229,18 @@
   .jf-thread-control-caret {
     display: none;
   }
+
+  .jf-thread-control-toggle[data-control="status"][data-preview] > svg {
+    display: none;
+  }
+
+  .jf-thread-controls:has(.jf-thread-control-preview) [data-control="choices"] .jf-thread-control-label {
+    display: none;
+  }
+
+  .jf-thread-controls:has(.jf-thread-control-preview) [data-control="choices"] .jf-thread-control-short-label {
+    display: inline;
+  }
 }
 
 @container (min-width: 375px) {
@@ -172,6 +249,10 @@
   }
 
   .jf-thread-control-entry[data-quick-actions] > .jf-thread-control-toggle > :not(.jf-thread-control-caret) {
+    display: none;
+  }
+
+  .jf-thread-controls:has(.jf-thread-control-preview) .jf-thread-control-entry[data-quick-actions] .jf-thread-control-short-label {
     display: none;
   }
 
