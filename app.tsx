@@ -17,7 +17,9 @@ import { DEV_AUTORUN, DEV_SERVERS_TAB, PRS_TAB, REPO_COMMANDS_TAB } from "./pane
 import type { JsonValue } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
-import { DecisionChips, UnreleasedSection, YourMoveSection, ThreadStatusStrip, PullRequestsPanel, runInfo, threadPrs } from "./ui-extras";
+import { UnreleasedSection, YourMoveSection, ThreadStatusStrip, PullRequestsPanel, PR_TONE, runInfo, threadPrs, worstPr } from "./ui-extras";
+import { DecisionChips } from "./decision-choices";
+import { ThreadControl, ThreadControls } from "./thread-controls";
 import { formatWhen } from "./when";
 import { focusLimitOf } from "./now-model";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
@@ -50,15 +52,17 @@ type SegmentInput = { threadId: string; environment: { id: string } | null };
 function ThreadStatusSegment({ threadId, environment }: SegmentInput) {
   const { state } = useFlowState();
   const pullRequest = useBranchPr(environment?.id);
-  return <ThreadStatusStrip threadId={threadId} state={state} branchPr={pullRequest} />;
+  const showPrs = useSettings().values?.compactThreadControls !== true;
+  return <ThreadStatusStrip threadId={threadId} state={state} branchPr={pullRequest} showPrs={showPrs} />;
 }
 
 /** The strip takes room in the context row only while it has a run, a watch or a PR to show. */
 function useThreadStatusVisible({ threadId, environment }: SegmentInput): boolean {
   const { state } = useFlowState();
   const pullRequest = useBranchPr(environment?.id);
-  if (state === null) return false;
-  return runInfo(state.running[threadId], Date.now()) !== null || !!state.watching[threadId] || threadPrs(state.threadPrs[threadId], pullRequest).length > 0;
+  const showPrs = useSettings().values?.compactThreadControls !== true;
+  return state !== null && (runInfo(state.running[threadId], Date.now()) !== null || !!state.watching[threadId] ||
+    (showPrs && threadPrs(state.threadPrs[threadId], pullRequest).length > 0));
 }
 
 function PullRequestsTab({ threadId, environment, params }: { threadId: string; environment: { id: string } | null; params: JsonValue | null }) {
@@ -67,13 +71,43 @@ function PullRequestsTab({ threadId, environment, params }: { threadId: string; 
   return <PullRequestsPanel threadId={threadId} params={params} state={state} branchPr={pullRequest} />;
 }
 
-function DecisionChipsBanner() {
+function ThreadControlsBanner() {
   const composer = useComposer();
   const threadId = composer.scope.kind === "thread" ? composer.scope.threadId : null;
   const { threads } = useSidebarThreads();
   const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
-  if (composer.isRunning || !composer.isEmpty) return null;
-  return <DecisionChips threadId={threadId} updatedAt={thread?.updatedAt ?? null} idle={thread?.status === "idle"} />;
+  const { state } = useFlowState();
+  const compact = useSettings().values?.compactThreadControls === true;
+  const branchPr = useBranchPr(compact ? thread?.environment?.id : null);
+  if (!threadId) return null;
+
+  const choices = (
+    <DecisionChips
+      threadId={threadId}
+      updatedAt={thread?.updatedAt ?? null}
+      idle={thread?.status === "idle" && !composer.isRunning && composer.isEmpty}
+    />
+  );
+  const status = <LiveActivityBanner runningSince={state?.running ?? {}} trackedPrs={state?.threadPrs ?? {}} watches={state?.watching ?? {}} />;
+  if (!compact) return <>{choices}<NextInNowBanner />{status}</>;
+
+  const prs = threadPrs(state?.threadPrs[threadId], branchPr);
+  const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
+  const worst = worstPr(openPrs.length ? openPrs : prs);
+  return (
+    <>
+      <ThreadControls key={threadId}>
+        {choices}
+        {status}
+        {worst && (
+          <ThreadControl name="prs" label={`${prs.length} PR${prs.length === 1 ? "" : "s"}`} icon="GitPullRequest" tone={PR_TONE[worst.attention]}>
+            <PullRequestsPanel threadId={threadId} state={state} branchPr={branchPr} inline />
+          </ThreadControl>
+        )}
+      </ThreadControls>
+      <NextInNowBanner />
+    </>
+  );
 }
 
 /** The ⌘K palette: mounted once per window, rendered only while open. */
@@ -457,21 +491,9 @@ export default definePluginApp((app) => {
     description: "Per-project buttons for the thread side panel.",
     component: RepoCommandsSettings,
   });
-  // Banners render in registration order: the reply choices sit above the monitor.
   app.composer.customize({
-    id: "decision-chips",
-    banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
-  });
-  app.composer.customize({
-    id: "next-in-now",
-    banners: [{ id: "next-in-now", chrome: "bare", component: NextInNowBanner }],
-  });
-  app.composer.customize({
-    id: "live-activity",
-    banners: [{ id: "live-activity", chrome: "bare", component: () => {
-      const { state } = useFlowState();
-      return <LiveActivityBanner runningSince={state?.running ?? {}} trackedPrs={state?.threadPrs ?? {}} watches={state?.watching ?? {}} />;
-    } }],
+    id: "thread-controls",
+    banners: [{ id: "thread-controls", chrome: "bare", component: ThreadControlsBanner }],
   });
   app.slots.homepageSection({
     id: "unreleased",

@@ -185,7 +185,7 @@ Settings → Keyboard), from ⌘K, or from the *Catch up · N unread* line on th
   what happened since you last read it (turns, prompts from you, automated prompts
   such as CI results and snooze reminders, PRs merged since) and its open PRs, with
   merged and closed ones folded away. Below it is the thread itself, live, with its
-  composer (the thread monitor starts collapsed here, to leave room for the thread): read the conversation, answer a prompt or permission, pick from *Your
+  composer where you can read the conversation, answer a prompt or permission, pick from *Your
   next move*, or write a reply, as in the thread view. Showing a card doesn't mark
   the thread read; writing in its composer does, as anywhere in bb.
 - **Keys:**
@@ -320,17 +320,27 @@ composer after a successful card render; they return if the request fails or
 shell styling is switched off. Git summary controls stay native, with larger
 styling. Reduced-motion preferences disable decorative animation.
 
+### Compact thread controls
+
+**Your next move**, **Status**, and the PR count share one row above the
+composer. Panels start closed and open one at a time. Each panel scrolls within
+its own height limit. Close a panel by pressing its button again or pressing
+Escape inside it. Closing **Your next move** restores its content in the
+transcript and keeps your selections. From the PR panel, **Open in side panel**
+opens the full Pull requests tab. Turn **Compact thread controls** off to use
+separate controls above the composer.
+
 ### Persistent thread monitor
 
-On by default (**Thread monitor** in the plugin settings). The activity card stays visible when the agent is idle,
-as a quiet summary of the agent's last status report: **Done**, **Next**, **Blocked** and **Goal**, with milestone
+On by default (**Thread monitor** in the plugin settings). The **Status** panel
+shows the last report when the agent is idle, including **Done**, **Next**, **Blocked** and **Goal**, with milestone
 bars and context use under **Details** in the footer. When the report is out of date (the agent replied since, it's
 over 6 hours old, or there is none), a call-out at the top of the report says why and offers a large **Update status**
 button, and the old report is dimmed (Blocked stays readable). When it's current, the caption says "up to date" and a
 small refresh icon in the header does the same.
 
 If the report ends with numbered **Next steps** (the built-in prompt asks for a recommended path forward in a callout),
-they appear in **Your next move** above the monitor (see Decision buttons), and a **Doing now** line shows what the
+they appear in **Your next move** (see Decision buttons), and a **Doing now** line shows what the
 agent is already doing. **Auto-prompt** in its footer (with a count, or "off") opens a menu of everything that will message the thread on
 its own: continuing after a usage limit resets, and each CI/review watch and release wait (see Watchers). Untick one
 to stop it.
@@ -480,7 +490,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - Threads whose PRs are all merged or closed go into a **ready to archive** group, with **Archive all**. Threads waiting on a release or CI, or in Priority, are left out.
 
 ### Decisions and "Your move"
-- **Decision buttons:** when an agent's last message ends with numbered options, they appear under **Your next move** above the composer and the thread monitor. The recommended one is highlighted. A decision sends the option's number in one click; **Pick several** (or ⌘-click) ticks several and sends `1,3`. A decision that asks for several numbers opens ticked to the recommended ones. A list of steps to run with go (a status report's **Next steps**, or a list ending "Reply go for all, or go 1,3") lets you tick steps, then **Go** sends `go`, or `go 1,3` with steps ticked.
+- **Decision buttons:** when an agent's last message ends with numbered options, open **Your next move** above the composer to answer. The recommended one is highlighted. A decision sends the option's number in one click; **Pick several** (or ⌘-click) ticks several and sends `1,3`. A decision that asks for several numbers opens ticked to the recommended ones. A list of steps to run with go (a status report's **Next steps**, or a list ending "Reply go for all, or go 1,3") lets you tick steps, then **Go** sends `go`, or `go 1,3` with steps ticked.
 - **Leftover worktrees:** bb removes a thread's worktree when it's archived, but extra checkouts an agent adds next to it (cross-repo work) and failed teardowns stay on disk. A weekly scan (Mondays 08:00) lists them under the stale digest with their PR state, uncommitted changes and node_modules, plus a button that deletes the merged, clean ones. Also `bb jb-flow leftovers`.
 - **Ready to go:** a status report that only offers steps with **Reply go** means nothing is stuck on you, so these threads aren't in Needs me or Your move. A **Ready to go** filter above the list collects them, and they stay out of Done.
 - **Your move:** a home-page section lists threads whose agent handed the next step to you, oldest first. With Catch up on, a *Catch up · N unread* line above it opens the deck. Threads waiting 3+ days are flagged, and each has Snooze 3d and Archive. Also `bb jb-flow your-move`.
@@ -491,7 +501,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 - **Row icon:** needs input / failed / running / stuck / watched / PR state.
 - **Running threads:** show elapsed time. After 15 minutes without output they're flagged "stuck", and you can stop them from the row menu or the status strip's chip.
 - **Hover preview:** hovering a row shows the last reply, the PR stack, what's being watched, and the run time.
-- **Status strip:** in the row above the composer, shows run time or stuck, the watch, and the PR summary, only while there's one of them to show. Clicking the PR summary opens the Pull requests tab.
+- **Status strip:** shows run time or stuck and active watches above the composer. With compact thread controls off, the strip also shows a PR summary that opens the Pull requests tab.
 - **Command palette:**
 
   | Shortcut | Command |
@@ -584,7 +594,8 @@ Under **Settings → JB Flow**:
 - **Scroll split panes sideways**: a split with more panes than fit scrolls sideways instead of squeezing them (on by default).
 - **Minimum pane width**: the width each pane of a scrolling split gets, in pixels (640).
 - **Pane strip in the workspace bar**: one chip per open split pane with its color, title and state; click to go to it (on by default).
-- **Thread monitor**: the idle activity card with the last status report (on by default).
+- **Thread monitor**: the activity card with live activity and the last status report (on by default).
+- **Compact thread controls**: reply choices, status and PRs share one row above the composer (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **Thread counts on workspace tabs**: each tab's thread total beside its name (on by default). Off leaves only the count of threads waiting on you.
 - **Swipe between workspaces**: a two-finger sideways swipe on the sidebar moves to the next or previous workspace tab, and the sidebar slides as the workspace changes (off by default).

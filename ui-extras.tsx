@@ -409,16 +409,18 @@ export function ThreadStatusStrip({
   threadId,
   state,
   branchPr,
+  showPrs = true,
 }: {
   threadId: string;
   state: FlowState | null;
   branchPr: Parameters<typeof threadPrs>[1];
+  showPrs?: boolean;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const panel = useAppPanel();
   const now = useNow();
   if (state === null) return null;
-  const prs = threadPrs(state.threadPrs[threadId], branchPr);
+  const prs = showPrs ? threadPrs(state.threadPrs[threadId], branchPr) : [];
   const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
   const worst = worstPr(open.length ? open : prs);
   const run = runInfo(state.running[threadId], now);
@@ -470,13 +472,16 @@ export function PullRequestsPanel({
   threadId,
   state,
   branchPr,
+  inline = false,
 }: {
   threadId: string;
   params?: JsonValue | null;
   state: FlowState | null;
   branchPr: Parameters<typeof threadPrs>[1];
+  inline?: boolean;
 }) {
   const rpc = useRpc<typeof rpcContract>();
+  const panel = useAppPanel();
   const [url, setUrl] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -502,7 +507,12 @@ export function PullRequestsPanel({
             ? "No pull requests yet. Linked PRs will appear here automatically."
             : `${prs.length} PR${prs.length === 1 ? "" : "s"} · ${open.length} open`}
         </span>
-        <div className="ml-auto flex gap-1.5">
+        <div className="ml-auto flex flex-wrap gap-1.5">
+          {inline && (
+            <Button size="sm" variant="ghost" onClick={() => panel.openTab({ tab: PRS_TAB, title: "Pull requests" })}>
+              Open in side panel
+            </Button>
+          )}
           <Button size="sm" variant="ghost" disabled={pending} onClick={() => act(async () => (await rpc.call("pr_refresh", null), "Refreshed."))}>
             Refresh
           </Button>
@@ -547,12 +557,6 @@ export function PullRequestsPanel({
     </div>
   );
 }
-
-// --- decision chips (composer banner) ---------------------------------------------------
-// When the agent's last message ends with numbered options, offer them as
-// one-click replies above the composer. Sends just the number.
-
-export { DecisionChips } from "./decision-choices";
 
 // --- loading placeholders ------------------------------------------------------------------
 

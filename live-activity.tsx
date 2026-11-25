@@ -20,6 +20,7 @@ import type { ThreadStatus } from "./thread-status";
 import { statusPrompt } from "./status-prompt";
 import { statusAge } from "./status-age";
 import { useConductorThreadIds } from "./conductor-client";
+import { ThreadControl, useThreadControl } from "./thread-controls";
 
 type Sdk = ReturnType<typeof useSdk>;
 // timeline() has two overloads: a full read, and a delta read after a tag. This is the full read's result.
@@ -552,6 +553,7 @@ export function ActivityCard({
   onClearGoal?: () => Promise<void>;
 }) {
   const shared = useMonitorCollapse();
+  const compact = useThreadControl("status") !== null;
   // Inside Catch up the card starts collapsed so the thread gets the room; opening it
   // there is for this card only and leaves the device preference alone.
   const cardRef = useRef<HTMLElement>(null);
@@ -560,7 +562,7 @@ export function ActivityCard({
   useLayoutEffect(() => {
     setInCatchUp(cardRef.current?.closest(".jf-catchup-chat") != null);
   }, []);
-  const collapsed = inCatchUp ? catchUpCollapsed : shared.collapsed;
+  const collapsed = !compact && (inCatchUp ? catchUpCollapsed : shared.collapsed);
   const toggleCollapsed = inCatchUp ? () => setCatchUpCollapsed((value) => !value) : shared.toggle;
   const bodyId = useId();
   const [expanded, setExpanded] = useState(false);
@@ -636,7 +638,10 @@ export function ActivityCard({
             : goal
               ? "Ready to continue"
               : "Agent idle"));
-  return (
+  const label = !connected ? "Reconnecting"
+    : active ? (phase === "working" ? "Agent working" : title)
+      : outdated ? "Status out of date" : "Status";
+  const content = (
     <section
       ref={cardRef}
       className="jf-live-card"
@@ -700,20 +705,22 @@ export function ActivityCard({
             <Icon name="RefreshCw" className="size-3.5" />
           </button>
         )}
-        <button
-          type="button"
-          className="jf-live-toggle jf-monitor-collapse"
-          aria-label={collapsed ? "Expand monitor" : "Collapse monitor"}
-          title={collapsed ? "Expand monitor" : "Collapse monitor"}
-          aria-expanded={!collapsed}
-          aria-controls={bodyId}
-          onClick={toggleCollapsed}
-        >
-          <Icon
-            name={collapsed ? "ChevronDown" : "ChevronUp"}
-            className="size-4"
-          />
-        </button>
+        {!compact && (
+          <button
+            type="button"
+            className="jf-live-toggle jf-monitor-collapse"
+            aria-label={collapsed ? "Expand monitor" : "Collapse monitor"}
+            title={collapsed ? "Expand monitor" : "Collapse monitor"}
+            aria-expanded={!collapsed}
+            aria-controls={bodyId}
+            onClick={toggleCollapsed}
+          >
+            <Icon
+              name={collapsed ? "ChevronDown" : "ChevronUp"}
+              className="size-4"
+            />
+          </button>
+        )}
       </div>
       <div id={bodyId} hidden={collapsed} className="jf-monitor-body">
         {goal && !((!active || expanded) && monitor?.report) && (
@@ -1064,6 +1071,7 @@ export function ActivityCard({
       </div>
     </section>
   );
+  return <ThreadControl name="status" label={label} icon="Activity">{content}</ThreadControl>;
 }
 
 type Wakeups = {

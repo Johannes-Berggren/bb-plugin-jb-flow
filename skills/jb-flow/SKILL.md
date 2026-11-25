@@ -167,7 +167,7 @@ Every PR a thread opens with `gh pr create` is linked to it automatically, in an
 
 ## Decision buttons
 
-When your message ends with a numbered list of options (one line each), the user sees them as one-click reply buttons above the composer, and an option marked "(recommended)" is highlighted. The reply is just the number.
+When your message ends with a numbered list of options (one line each), the user can open **Your next move** above the composer for one-click replies, and an option marked "(recommended)" is highlighted. The reply is just the number.
 
 When several options can go together, end the list with "Reply with one or more numbers, e.g. **1,3**." The user ticks options (the recommended ones start ticked) and presses Send. The reply is the picked numbers, comma-separated, like `1,3`. The user can also tick several on any other decision, so a reply like `1,3` can come back to a one-number question too.
 

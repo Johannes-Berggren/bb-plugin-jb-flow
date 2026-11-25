@@ -159,6 +159,12 @@ export default async function plugin(bb: BbPluginApi) {
         "Keep the activity card visible when a thread is idle, with the agent's last status report (Just did, Next step, Goal), progress bars and an Update status button.",
       default: true,
     },
+    compactThreadControls: {
+      type: "boolean",
+      label: "Compact thread controls",
+      description: "Keep reply choices, status and pull requests in one row above the composer. Open one panel at a time.",
+      default: true,
+    },
     statusPrompt: {
       type: "string",
       label: "Status report prompt",
