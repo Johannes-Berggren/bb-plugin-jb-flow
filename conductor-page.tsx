@@ -1,7 +1,7 @@
 // The Conductor page: one workspace's conductor, native to JB Flow. Its
 // Conversation, the workspace's Threads and the conductor's Activity, as tabs.
 import "./conductor-page.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ThreadChat,
@@ -19,6 +19,7 @@ import {
 import type { ConductorFleetRow, ConductorPage as PageState, ConductorStatus, rpcContract } from "./server";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { TRIAGE_GROUP_KEYS, TRIAGE_GROUPS } from "./conductor-model";
 import { errorText } from "./flow-state";
 import { useSelectedWorkspace, useWorkspaces } from "./workspace-client";
 import { formatWhen } from "./when";
@@ -75,16 +76,20 @@ function useConductorPage(workspaceId: string | null) {
   return { page, error, reload: load };
 }
 
-function useFleet(workspaceId: string | null) {
+function useFleet(workspaceId: string) {
   const rpc = useRpc<typeof rpcContract>();
-  const [rows, setRows] = useState<ConductorFleetRow[] | null>(null);
+  const [result, setResult] = useState<{ rows: ConductorFleetRow[] | null; error: string | null }>({ rows: null, error: null });
+  const request = useRef(0);
   const load = useCallback(() => {
-    if (workspaceId === null) return;
-    rpc.call("conductor_fleet", { workspaceId }).then(setRows, () => setRows([]));
+    const id = ++request.current;
+    rpc.call("conductor_fleet", { workspaceId }).then(
+      (rows) => { if (id === request.current) setResult({ rows, error: null }); },
+      (cause: unknown) => { if (id === request.current) setResult({ rows: null, error: errorText(cause) }); },
+    );
   }, [rpc, workspaceId]);
   useEffect(load, [load]);
   useRealtime("jb-flow-changed", load);
-  return rows;
+  return result;
 }
 
 /** The workspace the page shows: its own path first, then the selected workspace tab. */
@@ -118,7 +123,7 @@ export function ConductorPage({ subPath }: PluginNavPanelProps) {
       </div>
     );
   }
-  return <ConductorWorkspace workspaceId={workspaceId} status={conductor} />;
+  return <ConductorWorkspace key={workspaceId} workspaceId={workspaceId} status={conductor} />;
 }
 
 function EmptyNote({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -198,7 +203,7 @@ function ConductorOverview({ conductors, workspaceId }: { conductors: ConductorS
 
 function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; status: ConductorStatus }) {
   const { page, error, reload } = useConductorPage(workspaceId);
-  const fleet = useFleet(workspaceId);
+  const { rows: fleet, error: fleetError } = useFleet(workspaceId);
   const rpc = useRpc<typeof rpcContract>();
   const [tab, setTab] = useState<Tab>("conversation");
   const [waking, setWaking] = useState(false);
@@ -275,7 +280,7 @@ function ConductorWorkspace({ workspaceId, status }: { workspaceId: string; stat
 
       <div className="jf-cd-body" data-tab={tab}>
         {tab === "conversation" && threadId && <ThreadChat threadId={threadId} variant="full" layout="contained" />}
-        {tab === "threads" && <Fleet rows={fleet} />}
+        {tab === "threads" && (fleetError ? <p role="alert" className="jf-cd-error">{fleetError}</p> : <Fleet rows={fleet} />)}
         {tab === "activity" && <Activity page={page} />}
       </div>
     </div>
@@ -294,10 +299,7 @@ function Fleet({ rows }: { rows: ConductorFleetRow[] | null }) {
   const openThread = useOpenThread();
   if (rows === null) return <p className="jf-cd-muted jf-cd-loading">Loading…</p>;
   if (rows.length === 0) return <EmptyNote icon="ListView" title="No threads in this workspace" />;
-  const groups: Array<[string, ConductorFleetRow[]]> = [
-    ["Needs you", rows.filter((row) => row.needsYou)],
-    ["Everything else", rows.filter((row) => !row.needsYou)],
-  ];
+  const groups = TRIAGE_GROUP_KEYS.map((group) => [TRIAGE_GROUPS[group], rows.filter((row) => row.group === group)] as const);
   return (
     <div className="jf-cd-fleet">
       {groups
@@ -315,6 +317,7 @@ function Fleet({ rows }: { rows: ConductorFleetRow[] | null }) {
                     <button type="button" className="jf-cd-fleet-title" data-unread={row.unread || undefined} onClick={() => openThread(row.threadId)}>
                       {row.title}
                     </button>
+                    {row.parentTitle && <span className="jf-cd-muted">Subthread of {row.parentTitle}</span>}
                     {(row.blocked || row.next) && <span className="jf-cd-fleet-next">{row.blocked ? `Blocked: ${row.blocked}` : `Next: ${row.next}`}</span>}
                   </div>
                   <div className="jf-cd-fleet-side">
@@ -338,6 +341,7 @@ function Fleet({ rows }: { rows: ConductorFleetRow[] | null }) {
 const LOG: Record<string, { label: string; icon: string }> = {
   merged: { label: "Merged", icon: "GitMerge" },
   "merge-refused": { label: "Merge refused", icon: "AlertTriangle" },
+  "archive-held": { label: "Archive held", icon: "AlertTriangle" },
   rerun: { label: "Reran", icon: "Repeat" },
   forwarded: { label: "Forwarded", icon: "Sent" },
   archive: { label: "Archived", icon: "Archive" },

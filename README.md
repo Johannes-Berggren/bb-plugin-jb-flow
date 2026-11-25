@@ -533,7 +533,7 @@ A conductor is a permanent agent thread that looks after one workspace. Its work
 - **Batched wake-ups.** The conductor agent is woken only for judgement calls. Once the oldest one has waited *Conductor: minutes to collect news* (default 10) and the conductor is idle, it gets one message with everything since. The first wake-up of each day compacts its conversation first, so a permanent thread stays small.
 - **Autopilot: routine PR work, done without an agent.** The plugin itself acts on the routed news:
   - **Merges.** CI green on a PR whose worker said it merges once checks pass (`after_green: "merge"`, or its status report says so): it merges with the repo's default method, only the commit that went green, never bypassing protection. A refusal goes to the conductor.
-  - **Archives.** A merged PR that was the thread's last open one, meant to merge, archives the thread. With more PRs open, the worker hears about it and carries on.
+  - **Archives.** A worker that reports completion after its last PR can be archived automatically. JB Flow checks the thread and the workers BB would archive with it for unfinished work, and checks managed workspaces for uncommitted changes or files in non-Git folders. An archive hold is recorded in Activity.
   - **Notes.** Green the worker didn't ask about is only noted; nobody is woken.
   - **Forwards.** What a worker must act on (a closed PR, a watch that ran out, a release) is passed on to it.
   - **Done for you.** On the home page, *Done for you* lists what autopilot did today and how many wake-ups that spared, costed at each thread's last turn. Archives can be undone.
@@ -541,8 +541,8 @@ A conductor is a permanent agent thread that looks after one workspace. Its work
 - **Permanent.** The thread is hidden from the thread list. Archiving it brings it straight back, and a deleted one is started again at the next wake-up. Preferences you state ("always merge dependency bumps") are kept with its `conductor_memory` tool and included in its instructions.
 - **Only its own workspace.** Its tools (`conductor_inbox`, `fleet_status`, `thread_brief`, `merge_pr`, `rerun_failed`, `forward_to_thread`, `thread_action`, `post_briefing`, `conductor_memory`) are given to conductor threads only. They act only on threads and PRs of its workspace.
 - **The Conductor page.** Each conductor has its own page, reached from the conductors listed in *Done for you* or under *More tools* (JB Flow's sidebar doesn't list it, since the conductor comes to you). It has three tabs:
-  - **Conversation.** Its live conversation, so you can tell it what to do, e.g. `2 go, 4 snooze 3d`: it sends each reply, snoozes or archives, and marks those threads read.
-  - **Threads.** Every thread in the workspace, those that need you first, with PRs and Next/Blocked. A thread opens beside the page.
+  - **Conversation.** Ask “Which threads are stuck, and which can I archive?” for a read-only review with links and next steps. Ask it to archive specific candidates when ready. It checks their latest replies, the threads BB archives with them, and their managed workspaces before acting.
+  - **Threads.** Workspace triage groups visible threads and subthreads by what needs attention, what is waiting or running, and which workers report completion. A thread opens beside the page.
   - **Activity.** What the conductor did: merges, reruns, forwards, archives and wake-ups.
 - **Starting one.** Turn on **Conductor** in the settings, then start one under **Settings → Conductors**, on the Conductor page, or with `bb jb-flow conductor start <workspace-id>`.
   - It lives in the workspace's first project unless you choose another.

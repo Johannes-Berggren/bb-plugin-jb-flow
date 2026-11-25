@@ -10,7 +10,7 @@ import { prStatusSchema } from "./prs";
 import { unreleasedSchema } from "./unreleased";
 import { machinesSchema } from "./machines";
 import { devRunSchema, repoCommandSchema, repoScriptSchema } from "./repo-commands";
-import { briefingItemSchema } from "./conductor-model";
+import { briefingItemSchema, TRIAGE_GROUP_KEYS } from "./conductor-model";
 
 const snoozeSchema = z.object({
   until: z.number(),
@@ -96,8 +96,10 @@ export type ConductorPage = z.infer<typeof conductorPageSchema>;
 const fleetRowSchema = z.object({
   threadId: z.string(),
   title: z.string(),
+  parentTitle: z.string().nullable(),
   projectId: z.string(),
   state: z.string(),
+  group: z.enum(TRIAGE_GROUP_KEYS),
   reason: z.string(),
   needsYou: z.boolean(),
   unread: z.boolean(),

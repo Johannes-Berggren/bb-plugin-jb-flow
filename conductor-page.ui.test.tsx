@@ -140,14 +140,19 @@ describe("Conductor page", () => {
     const slot = await mountPanel({
       rpc: {
         conductor_fleet: () => [
-          { threadId: "thr_a", title: "Fix billing export", projectId: "p1", state: "yours", reason: "you · 2h", needsYou: true, unread: true, prs: [], next: "Deploy", blocked: null },
+          { threadId: "thr_a", title: "Fix billing export", parentTitle: null, projectId: "p1", state: "yours", group: "needs-you", reason: "you · 2h", needsYou: true, unread: true, prs: [], next: "Deploy", blocked: null },
+          { threadId: "thr_b", title: "Verify invoices", parentTitle: "Fix billing export", projectId: "p1", state: "blocked", group: "stuck", reason: "failed", needsYou: true, unread: false, prs: [], next: null, blocked: "Test job stopped" },
+          { threadId: "thr_c", title: "Update docs", parentTitle: null, projectId: "p1", state: "cold", group: "archive-candidate", reason: "worker reports completion", needsYou: false, unread: false, prs: [], next: "Nothing pending.", blocked: null },
         ],
       },
     });
-    await waitFor(() => expect(slot.getByRole("tab", { name: /Threads/ }).textContent).toBe("Threads1"));
+    await waitFor(() => expect(slot.getByRole("tab", { name: /Threads/ }).textContent).toBe("Threads2"));
     fireEvent.click(slot.getByRole("tab", { name: /Threads/ }));
     await waitFor(() => expect(slot.container.textContent).toContain("Needs you"));
     expect(slot.container.textContent).toContain("Next: Deploy");
+    expect(slot.container.textContent).toContain("Subthread of Fix billing export");
+    expect(slot.container.textContent).toContain("Blocked: Test job stopped");
+    expect(slot.container.textContent).toContain("Archive candidates");
     fireEvent.click(slot.getByRole("button", { name: "Fix billing export" }));
     expect(slot.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_a", options: { split: true } });
     fireEvent.click(slot.getByRole("tab", { name: "Activity" }));
