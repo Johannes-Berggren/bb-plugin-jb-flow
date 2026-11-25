@@ -500,7 +500,7 @@ export async function createConductor(bb: BbPluginApi, deps: ConductorDeps) {
     const batchMs = Math.max(0, deps.options().batchMinutes) * 60_000;
     if (!force && !wakeDue(events[0]?.createdAt ?? null, now(), batchMs)) return "waiting";
     const threadId = await ensure(workspaceId);
-    const [row] = await bb.sdk.threads.list({ threadIds: [threadId], includeHidden: true });
+    const [row] = await bb.sdk.threads.list({ threadIds: [threadId], includeHidden: true, limit: 1 });
     if (row && (BUSY.has(row.status) || row.hasPendingInteraction || row.queuedWork !== "none")) return "busy";
     if (events.length === 0) return "nothing";
     const record = records[workspaceId]!;

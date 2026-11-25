@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { listLiveThreads } from "./thread-list.ts";
+import { listEnvironmentPages, listLiveThreads } from "./thread-list.ts";
 
 type Row = { id: string; archivedAt: number | null };
 type Args = { archived?: boolean; limit: number; offset: number; sectionId?: string };
@@ -66,4 +68,45 @@ test("filters reach every page", async () => {
   await listLiveThreads(fakeBb(live(600), calls), { sectionId: "sec_1" });
   assert.deepEqual(calls.map((call) => call.sectionId), ["sec_1", "sec_1"]);
   assert.ok(calls.every((call) => call.archived === false));
+});
+
+type Env = { id: string };
+type EnvArgs = { limit: number; offset: number };
+
+test("environments are read page by page, never above 500 a page", async () => {
+  const rows: Env[] = Array.from({ length: 1203 }, (_, index) => ({ id: `env-${index}` }));
+  const calls: EnvArgs[] = [];
+  const bb = {
+    sdk: {
+      environments: {
+        async list(args: EnvArgs) {
+          calls.push(args);
+          if (args.limit > 500) throw new Error("400: limit above 500");
+          return rows.slice(args.offset, args.offset + args.limit);
+        },
+      },
+    },
+  };
+  assert.equal((await listEnvironmentPages(bb)).length, 1203);
+  assert.deepEqual(calls, [
+    { limit: 500, offset: 0 },
+    { limit: 500, offset: 500 },
+    { limit: 500, offset: 1000 },
+  ]);
+});
+
+test("every threads.list and environments.list call outside the pagers passes a limit of 500 or less", () => {
+  // bb caps these routes: no limit means at most 200 rows, and a limit above 500 is a 400.
+  const files = execFileSync("git", ["ls-files", "*.ts", "*.tsx"], { encoding: "utf8" })
+    .split("\n")
+    .filter((file) => file && !/\.test\.tsx?$/.test(file) && file !== "thread-list.ts");
+  const problems: string[] = [];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/\b(?:threads|environments)\.list\(([^)]*)\)/g)) {
+      const limit = /\blimit:\s*(\d+)/.exec(match[1] ?? "");
+      if (!limit || Number(limit[1]) > 500) problems.push(`${file}: ${match[0]}`);
+    }
+  }
+  assert.deepEqual(problems, []);
 });

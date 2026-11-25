@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { listLiveThreads } from "./thread-list";
+import { listEnvironmentPages, listLiveThreads } from "./thread-list";
 
 export const machinesSchema = z.object({
   /** Machines that run at least one live thread. */
@@ -38,10 +38,12 @@ export function createMachines(bb: BbPluginApi) {
     return (inflight ??= load().finally(() => (inflight = null)));
   }
   async function load(): Promise<Machines> {
+    // Each read starts inside a promise: a call that throws synchronously
+    // would otherwise abandon the reads already started, as unhandled rejections.
     const [threads, environments, hosts] = await Promise.all([
       listLiveThreads(bb),
-      bb.sdk.environments.list(),
-      bb.sdk.hosts.list(),
+      listEnvironmentPages(bb),
+      Promise.resolve().then(() => bb.sdk.hosts.list()),
     ]);
     const envHost = new Map(environments.map((environment) => [environment.id, environment.hostId]));
     const threadHosts: Record<string, string> = {};
