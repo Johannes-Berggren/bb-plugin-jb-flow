@@ -44,10 +44,11 @@ export function ThreadControls({ children }: { children: ReactNode }) {
 }
 
 export function ThreadControl({
-  name, label, count, icon, children, tone, title, quickActions, preview, badge, sideAction,
+  name, label, shortLabel, count, icon, children, tone, title, quickActions, preview, badge, sideAction,
 }: {
   name: Control;
   label: string;
+  shortLabel?: string;
   count?: number;
   icon: IconProps["name"];
   children: ReactNode;
@@ -90,7 +91,7 @@ export function ThreadControl({
       >
         <Icon name={icon} className="size-3.5" />
         <span className="jf-thread-control-label">{label}</span>
-        {name === "choices" && <span className="jf-thread-control-short-label" aria-hidden="true">Choices</span>}
+        {name === "choices" && <span className="jf-thread-control-short-label" aria-hidden="true">{shortLabel ?? "Choices"}</span>}
         {preview && <span className="jf-thread-control-preview">{preview}</span>}
         {count !== undefined && <span className="jf-thread-control-count">{count}</span>}
         {badge && <span className="jf-thread-control-badge">{badge}</span>}
@@ -99,7 +100,7 @@ export function ThreadControl({
   );
   return (
     <>
-      {quickActions || sideAction ? (
+      {quickActions || sideAction !== undefined ? (
         <div className="jf-thread-control-entry" data-quick-actions={!!quickActions && !open || undefined}>
           {!open && quickActions && <div className="jf-thread-choice-actions jf-thread-choice-inline">{quickActions}</div>}
           {toggle}

@@ -212,12 +212,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   const visibility = useHideRepeatedList(sectionRef, groups, hideRepeated && open !== false);
   const listHidden = visibility !== "original";
   if (grouped) {
-    const count = grouped.reduce((total, group) => total + group.options.length, 0);
-    return (
-      <ThreadControl name="choices" label="Your next move" count={count} icon="MessageCircle" title={`Your next move · ${count} options`}>
-        <GroupedChoices key={shown.current} sectionRef={sectionRef} threadId={threadId} groups={grouped} listHidden={listHidden} />
-      </ThreadControl>
-    );
+    return <GroupedChoices key={shown.current} sectionRef={sectionRef} threadId={threadId} groups={grouped} listHidden={listHidden} />;
   }
   if (!options.length) return null;
   const title = visibility === "section" ? groups[0]?.title : undefined;
@@ -276,13 +271,14 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     : steps.length ? `Send ${steps.join(", ")}` : "Send";
   const compactSubmitLabel = go ? "Go" : "Send";
   const submit = (quick = false) => sent !== null ? (
-    <span className={quick ? "jf-thread-choice-sent" : undefined} role="status" title={quick ? `Sent “${sent}”` : undefined}>
+    <span className={quick ? "jf-thread-choice-sent" : undefined} data-quick-go={quick && go || undefined} role="status" title={quick ? `Sent “${sent}”` : undefined}>
       {quick ? "Sent" : `Sent “${sent}”`}
     </span>
   ) : (
     <button
       type="button"
       className={quick ? "jf-thread-choice-button jf-thread-choice-submit" : "jf-choices-submit"}
+      data-quick-go={quick && go || undefined}
       disabled={pending !== null || (!go && steps.length === 0)}
       aria-busy={pending !== null}
       aria-label={quick && pending === null ? submitLabel : undefined}
@@ -462,7 +458,15 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     </section>
   );
   return (
-    <ThreadControl name="choices" label="Your next move" count={options.length} icon="MessageCircle" title={`Your next move · ${options.length} ${oneStep ? "step" : options.length === 1 ? "option" : "options"}`} quickActions={quickActions}>
+    <ThreadControl
+      name="choices"
+      label="Your next move"
+      count={options.length}
+      icon="MessageCircle"
+      title={`Your next move · ${options.length} ${oneStep ? "step" : options.length === 1 ? "option" : "options"}`}
+      quickActions={quickActions}
+      sideAction={!quickActions && go ? submit(true) : undefined}
+    >
       {content}
     </ThreadControl>
   );
@@ -522,6 +526,12 @@ function GroupedChoices({
   );
   const text = combinedReply(groups, picks);
   const busy = pending || sent !== null;
+  const goGroups = groups.filter((group) => group.mode === "go");
+  const goIndex = goGroups.length === 1 ? groups.indexOf(goGroups[0]!) : -1;
+  // Other selected answers stay in the picker for review before sending.
+  const quickGoText = goIndex === -1 || Object.keys(picks).some((index) => Number(index) !== goIndex)
+    ? ""
+    : combinedReply(groups, { [goIndex]: picks[goIndex] ?? "all" });
   const pick = (index: number, n: number) =>
     setPicks((current) => {
       const group = groups[index]!;
@@ -541,27 +551,46 @@ function GroupedChoices({
       else copy[index] = "all";
       return copy;
     });
-  const send = async () => {
-    if (locked.current || !text) return;
+  const send = async (answer: string, quick = false) => {
+    if (locked.current || !answer) return;
     locked.current = true;
     setPending(true);
     setError(null);
     try {
-      await rpc.call("thread_reply", { threadId, text });
+      await rpc.call("thread_reply", { threadId, text: answer });
       notifyReplyChoiceSent(threadId);
       if (mounted.current) {
-        setSent(text);
+        setSent(answer);
         setPending(false);
       }
     } catch {
       if (mounted.current) {
         locked.current = false;
         setPending(false);
-        setError("Reply could not be sent. Press Send to retry.");
+        const message = quick ? "Reply could not be sent. Press Go to retry." : "Reply could not be sent. Press Send to retry.";
+        setError(message);
+        if (quick) toast.error(message);
       }
     }
   };
-  return (
+  const quickGo = !quickGoText ? null : sent !== null ? (
+    <span className="jf-thread-choice-sent" role="status" title={`Sent “${sent}”`}>Sent</span>
+  ) : (
+    <button
+      type="button"
+      className="jf-thread-choice-button jf-thread-choice-submit"
+      disabled={pending}
+      aria-busy={pending}
+      title={quickGoText.split("\n").join(" · ")}
+      onClick={() => void send(quickGoText, true)}
+    >
+      {pending ? "Sending…" : "Go"}
+    </button>
+  );
+  const count = groups.reduce((total, group) => total + group.options.length, 0);
+  const goNeedsPicker = goGroups.length > 0 && !quickGoText;
+  const label = goNeedsPicker ? "Go options" : "Your next move";
+  const content = (
     <section ref={sectionRef} className="jf-choices" aria-label="Reply choices" data-mode="grouped" data-full={listHidden || undefined}>
       <div className="jf-choices-heading">
         <Icon name="MessageCircle" className="size-3.5" />
@@ -622,7 +651,7 @@ function GroupedChoices({
         ) : (
           <>
             {text ? <span className="jf-choices-preview">{text.split("\n").join(" · ")}</span> : null}
-            <button type="button" className="jf-choices-submit" disabled={pending || !text} aria-busy={pending} onClick={() => void send()}>
+            <button type="button" className="jf-choices-submit" disabled={pending || !text} aria-busy={pending} onClick={() => void send(text)}>
               {pending ? "Sending…" : "Send"}
             </button>
           </>
@@ -634,5 +663,18 @@ function GroupedChoices({
         </p>
       )}
     </section>
+  );
+  return (
+    <ThreadControl
+      name="choices"
+      label={label}
+      shortLabel={goNeedsPicker ? label : undefined}
+      count={count}
+      icon="MessageCircle"
+      title={goNeedsPicker ? label : `${label} · ${count} options`}
+      sideAction={goGroups.length ? quickGo : undefined}
+    >
+      {content}
+    </ThreadControl>
   );
 }

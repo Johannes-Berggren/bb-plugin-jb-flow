@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { DecisionChips, REPEATED_LIST_ATTR, repeatedList } from "./decision-choices";
+import { nextMoves } from "./decisions";
 import { ThreadControl, ThreadControls } from "./thread-controls";
 
 afterEach(cleanup);
@@ -502,7 +503,9 @@ it("shows one compact panel at a time and restores the message without losing se
   expect(document.activeElement).toBe(prs);
   expect(slot.queryByRole("region")).toBeNull();
 
-  fireEvent.click(choices);
+  const goOptions = slot.getByRole("button", { name: "Go options" });
+  expect(slot.queryByRole("button", { name: "Go" })).toBeNull();
+  fireEvent.click(goOptions);
   expect(slot.getByRole("radio", { name: /Leave them open/ }).getAttribute("aria-checked")).toBe("true");
   expect(slot.getByRole("checkbox", { name: /Move the deal/ }).getAttribute("aria-checked")).toBe("true");
   expect(reply).not.toHaveBeenCalled();
@@ -532,6 +535,74 @@ it("puts the single Go action in the compact row and keeps the step in the trans
   expect(reply).toHaveBeenCalledExactlyOnceWith({ threadId: "t1", text: "go" });
   slot.lifecycle.unmount();
   row.remove();
+});
+
+it.each([
+  { picked: [], label: "Go", expected: "go" },
+  { picked: [2, 4], label: "Go with 2, 4", expected: "go 2,4" },
+])("keeps $label in the compact row for a four-step path forward", async ({ picked, label, expected }) => {
+  const groups = nextMoves([
+    "**Goal:** Tidy the project. **Done:** Reviewed the open work. **Next:** Carry out the cleanup.",
+    "",
+    "> [!TIP]",
+    "> **Path forward:** Carry out the cleanup.",
+    "> 1. Update the examples.",
+    "> 2. Check the tests.",
+    "> 3. Draft the changelog.",
+    "> 4. Review the docs.",
+    ">",
+    "> Reply **go** for all, or **go 1,3**.",
+  ].join("\n"));
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: () => <ThreadControls><DecisionChips threadId="t1" updatedAt={1} idle /></ThreadControls> },
+    {},
+    { rpc: { decision_options: () => ({ ...groups[0], groups }), thread_reply: reply } },
+  );
+  const disclosure = await slot.findByRole("button", { name: "Your next move · 4 options" });
+  expect(slot.queryByRole("region")).toBeNull();
+  if (picked.length) {
+    fireEvent.click(disclosure);
+    for (const n of picked) fireEvent.click(slot.getByRole("checkbox", { name: new RegExp(`^Step ${n}:`) }));
+    fireEvent.click(disclosure);
+  }
+  expect(slot.queryByRole("checkbox")).toBeNull();
+  const go = slot.getByRole("button", { name: label });
+  fireEvent.click(go);
+  fireEvent.click(go);
+  await slot.findByRole("status");
+  expect(reply).toHaveBeenCalledExactlyOnceWith({ threadId: "t1", text: expected });
+  slot.lifecycle.unmount();
+});
+
+it("offers compact Go for a named path forward alongside a numbered decision", async () => {
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: () => <ThreadControls><DecisionChips threadId="t1" updatedAt={1} idle /></ThreadControls> },
+    {},
+    { rpc: { decision_options: () => ({ ...decisionNeeded, groups: [pathForward, decisionNeeded] }), thread_reply: reply } },
+  );
+  const go = await slot.findByRole("button", { name: "Go" });
+  expect(go.title).toBe("Path forward: go");
+  expect(slot.queryByRole("region")).toBeNull();
+  fireEvent.click(go);
+  await slot.findByRole("status");
+  expect(reply).toHaveBeenCalledExactlyOnceWith({ threadId: "t1", text: "Path forward: go" });
+  slot.lifecycle.unmount();
+});
+
+it("opens the picker when a reply offers more than one path forward", async () => {
+  const second = { ...pathForward, title: "Docs: check the examples", label: "Docs" };
+  const reply = vi.fn();
+  const slot = renderSlot(
+    { component: () => <ThreadControls><DecisionChips threadId="t1" updatedAt={1} idle /></ThreadControls> },
+    {},
+    { rpc: { decision_options: () => ({ ...second, groups: [pathForward, second] }), thread_reply: reply } },
+  );
+  fireEvent.click(await slot.findByRole("button", { name: "Go options" }));
+  expect(slot.getAllByRole("button", { name: "Go with all" })).toHaveLength(2);
+  expect(reply).not.toHaveBeenCalled();
+  slot.lifecycle.unmount();
 });
 
 it("puts a lone numbered reply in the compact row without an extra Send button", async () => {

@@ -262,7 +262,8 @@
 }
 
 @container (width < 375px) {
-  .jf-thread-choice-inline {
+  .jf-thread-choice-inline:not(:has(> [data-quick-go])),
+  .jf-thread-choice-inline > :not([data-quick-go]) {
     display: none;
   }
 }

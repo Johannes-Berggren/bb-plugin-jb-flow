@@ -323,9 +323,11 @@ styling. Reduced-motion preferences disable decorative animation.
 ### Compact thread controls
 
 Reply choices, **Status**, and the PR count share one row above the composer.
-A lone reply, such as **Go**, is available directly. Lists of two or three
-choices show numbered buttons when the row has space. The transcript keeps
-the full wording.
+**Go** is available directly for a path forward of any length, including in
+narrow panes. It runs the selected steps, or all steps when none are selected.
+**Go options** opens the picker when there are separate paths or other selected
+answers to review together. Lists of two or three choices show numbered buttons
+when the row has space. The transcript keeps the full wording.
 Open **Your next move** for the full list, or to pick several from a single-choice
 list. Panels start closed and open one at a time. Each panel scrolls within
 its own height limit. Close a panel by pressing its button again or pressing
