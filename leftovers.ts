@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { listEnvironmentPages } from "./thread-list";
 import { z } from "zod";
 import { ghBin } from "./gh";
 
@@ -51,7 +52,7 @@ export function createLeftovers(bb: BbPluginApi) {
   /** bb's old worktree root, from before worktrees moved into the plugin's host data. */
   const LEGACY_ROOT = join(BB_HOME, "worktrees");
   async function scan(): Promise<LeftoverReport> {
-    const environments = await bb.sdk.environments.list({ limit: 1000 });
+    const environments = await listEnvironmentPages(bb);
     const worktrees = environments.filter(
       (environment) => environment.isWorktree && environment.path && environment.lifecycle?.phase !== "destroyed",
     );
