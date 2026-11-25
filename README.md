@@ -322,8 +322,12 @@ styling. Reduced-motion preferences disable decorative animation.
 
 ### Compact thread controls
 
-**Your next move**, **Status**, and the PR count share one row above the
-composer. Panels start closed and open one at a time. Each panel scrolls within
+Reply choices, **Status**, and the PR count share one row above the composer.
+A lone reply, such as **Go**, is available directly. Lists of two or three
+choices show numbered buttons when the row has space. The transcript keeps
+the full wording.
+Open **Your next move** for the full list, or to pick several from a single-choice
+list. Panels start closed and open one at a time. Each panel scrolls within
 its own height limit. Close a panel by pressing its button again or pressing
 Escape inside it. Closing **Your next move** restores its content in the
 transcript and keeps your selections. From the PR panel, **Open in side panel**

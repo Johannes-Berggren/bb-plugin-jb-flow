@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent, RefObject } from "react";
 import { useRpc, useSettings } from "@get-bb/plugin-sdk/app";
+import { toast } from "sonner";
 import type { rpcContract } from "./server";
 import type { DecisionGroup, DecisionMode, DecisionOption } from "./decisions";
 import { CALLOUT_ATTR } from "./callouts";
@@ -227,13 +228,14 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   const ticking = go || multi;
   // One step to run: nothing to tick, only Go.
   const oneStep = go && options.length === 1;
+  const directOnly = open !== null && options.length === 1;
   const mode = go ? "go" : multi ? "multi" : "choice";
   const steps = [...picked].sort((a, b) => a - b);
   // Every step ticked is the same as none: "go".
   const goText = steps.length && steps.length < options.length ? `go ${steps.join(",")}` : "go";
   const sendText = steps.join(",");
   const busy = pending !== null || sent !== null;
-  const reply = async (text: string) => {
+  const reply = async (text: string, quick = false) => {
     if (locked.current) return;
     locked.current = true;
     setPending(text);
@@ -249,13 +251,13 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
       if (mounted.current) {
         locked.current = false;
         setPending(null);
-        setError(
-          go
-            ? "Reply could not be sent. Press Go to retry."
-            : multi
-              ? "Reply could not be sent. Press Send to retry."
-              : "Reply could not be sent. Choose an option to retry.",
-        );
+        const message = go
+          ? "Reply could not be sent. Press Go to retry."
+          : multi && !directOnly
+            ? "Reply could not be sent. Press Send to retry."
+            : "Reply could not be sent. Choose an option to retry.";
+        setError(message);
+        if (quick) toast.error(message);
       }
     }
   };
@@ -264,11 +266,69 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     setSeveral(on);
     setPicked(on && first !== undefined ? [first] : []);
   };
-  const onChoiceClick = (event: MouseEvent<HTMLButtonElement>, n: number) => {
+  const onChoiceClick = (event: MouseEvent<HTMLButtonElement>, n: number, quick = false) => {
     // ⌘/Ctrl-click starts picking several instead of sending this one.
     if (event.metaKey || event.ctrlKey) pickSeveral(true, n);
-    else void reply(String(n));
+    else void reply(String(n), quick);
   };
+  const submitLabel = go
+    ? goText === "go" ? "Go" : `Go with ${steps.join(", ")}`
+    : steps.length ? `Send ${steps.join(", ")}` : "Send";
+  const compactSubmitLabel = go ? "Go" : "Send";
+  const submit = (quick = false) => sent !== null ? (
+    <span className={quick ? "jf-thread-choice-sent" : undefined} role="status" title={quick ? `Sent “${sent}”` : undefined}>
+      {quick ? "Sent" : `Sent “${sent}”`}
+    </span>
+  ) : (
+    <button
+      type="button"
+      className={quick ? "jf-thread-choice-button jf-thread-choice-submit" : "jf-choices-submit"}
+      disabled={pending !== null || (!go && steps.length === 0)}
+      aria-busy={pending !== null}
+      aria-label={quick && pending === null ? submitLabel : undefined}
+      title={quick ? oneStep ? options[0]!.text : submitLabel : undefined}
+      onClick={() => void reply(go ? goText : sendText, quick)}
+    >
+      {pending !== null ? "Sending…" : quick ? compactSubmitLabel : submitLabel}
+    </button>
+  );
+  if (directOnly && oneStep) {
+    return <div className="jf-thread-choice-actions">{submit(true)}</div>;
+  }
+  const tickInline = ticking && !directOnly;
+  const replyNoun = go ? "Step" : tickInline ? "Option" : "Reply";
+  const quickActions = options.length <= 3 ? (
+    <>
+      {options.map((option) => {
+        const label = `${option.text}${option.recommended ? " (recommended)" : ""}`;
+        return (
+          <button
+            key={option.n}
+            type="button"
+            className="jf-thread-choice-button"
+            data-recommended={option.recommended}
+            data-selected={tickInline ? picked.includes(option.n) : sent === String(option.n) || pending === String(option.n)}
+            aria-pressed={tickInline ? picked.includes(option.n) : undefined}
+            aria-label={`${replyNoun} ${option.n}: ${label}`}
+            title={label}
+            disabled={busy}
+            onClick={(event) => {
+              if (directOnly) void reply(String(option.n), true);
+              else if (tickInline) toggle(option.n);
+              else onChoiceClick(event, option.n, true);
+            }}
+          >
+            {option.n}
+          </button>
+        );
+      })}
+      {tickInline && submit(true)}
+      {!tickInline && sent !== null && <span className="jf-choices-confirmation" role="status">Reply {sent} sent</span>}
+    </>
+  ) : undefined;
+  if (directOnly) {
+    return <div className="jf-thread-choice-actions">{quickActions}</div>;
+  }
   // Arrows, Home/End move between options; a digit ticks that option, or moves to it when a click sends.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -386,29 +446,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
       </div>
       {ticking && (
         <div className="jf-choices-actions">
-          {sent !== null ? (
-            <span role="status">Sent “{sent}”</span>
-          ) : go ? (
-            <button
-              type="button"
-              className="jf-choices-submit"
-              disabled={pending !== null}
-              aria-busy={pending !== null}
-              onClick={() => void reply(goText)}
-            >
-              {pending !== null ? "Sending…" : goText === "go" ? "Go" : `Go with ${steps.join(", ")}`}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="jf-choices-submit"
-              disabled={pending !== null || steps.length === 0}
-              aria-busy={pending !== null}
-              onClick={() => void reply(sendText)}
-            >
-              {pending !== null ? "Sending…" : steps.length ? `Send ${steps.join(", ")}` : "Send"}
-            </button>
-          )}
+          {submit()}
         </div>
       )}
       {error && (
@@ -424,7 +462,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     </section>
   );
   return (
-    <ThreadControl name="choices" label="Your next move" count={options.length} icon="MessageCircle" title={`Your next move · ${options.length} ${oneStep ? "step" : "options"}`}>
+    <ThreadControl name="choices" label="Your next move" count={options.length} icon="MessageCircle" title={`Your next move · ${options.length} ${oneStep ? "step" : options.length === 1 ? "option" : "options"}`} quickActions={quickActions}>
       {content}
     </ThreadControl>
   );
