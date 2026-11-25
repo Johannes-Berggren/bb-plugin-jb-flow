@@ -62,6 +62,71 @@
   color: var(--muted-foreground);
 }
 
+.jf-thread-control-entry,
+.jf-thread-choice-actions {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.jf-thread-choice-button,
+.jf-thread-choice-sent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  padding-inline: 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.jf-thread-choice-button {
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jf-thread-choice-button:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.jf-thread-choice-button[data-recommended="true"] {
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
+  color: var(--primary);
+}
+
+.jf-thread-choice-button[data-selected="true"],
+.jf-thread-choice-submit {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.jf-thread-choice-submit:hover:not(:disabled),
+.jf-thread-choice-button[data-selected="true"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 85%, var(--foreground));
+}
+
+.jf-thread-choice-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.jf-thread-choice-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.jf-thread-choice-sent {
+  color: var(--muted-foreground);
+}
+
 .jf-thread-control-panel {
   grid-row: 2;
   grid-column: 1 / -1;
@@ -97,6 +162,26 @@
   }
 
   .jf-thread-control-caret {
+    display: none;
+  }
+}
+
+@container (min-width: 375px) {
+  .jf-thread-control-entry[data-quick-actions] > .jf-thread-control-toggle {
+    padding-inline: 5px;
+  }
+
+  .jf-thread-control-entry[data-quick-actions] > .jf-thread-control-toggle > :not(.jf-thread-control-caret) {
+    display: none;
+  }
+
+  .jf-thread-control-entry[data-quick-actions] .jf-thread-control-caret {
+    display: block;
+  }
+}
+
+@container (width < 375px) {
+  .jf-thread-choice-inline {
     display: none;
   }
 }

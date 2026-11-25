@@ -44,7 +44,7 @@ export function ThreadControls({ children }: { children: ReactNode }) {
 }
 
 export function ThreadControl({
-  name, label, count, icon, children, tone, title,
+  name, label, count, icon, children, tone, title, quickActions,
 }: {
   name: Control;
   label: string;
@@ -53,6 +53,7 @@ export function ThreadControl({
   children: ReactNode;
   tone?: string;
   title?: string;
+  quickActions?: ReactNode;
 }) {
   const controls = useContext(ControlsContext);
   const close = controls?.close;
@@ -69,8 +70,7 @@ export function ThreadControl({
     controls.close(name);
     trigger.current?.focus();
   };
-  return (
-    <>
+  const toggle = (
       <button
         ref={trigger}
         id={buttonId}
@@ -88,6 +88,15 @@ export function ThreadControl({
         {count !== undefined && <span className="jf-thread-control-count">{count}</span>}
         <Icon name={open ? "ChevronUp" : "ChevronDown"} className="jf-thread-control-caret size-3" />
       </button>
+  );
+  return (
+    <>
+      {quickActions ? (
+        <div className="jf-thread-control-entry" data-quick-actions={!open || undefined}>
+          {!open && <div className="jf-thread-choice-actions jf-thread-choice-inline">{quickActions}</div>}
+          {toggle}
+        </div>
+      ) : toggle}
       <div
         id={id}
         className="jf-thread-control-panel"

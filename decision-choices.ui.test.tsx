@@ -512,6 +512,68 @@ it("shows one compact panel at a time and restores the message without losing se
   row.remove();
 });
 
+it("puts the single Go action in the compact row and keeps the step in the transcript", async () => {
+  const row = nextStepsMessage();
+  const callout = row.querySelector("blockquote")!;
+  callout.innerHTML = "<p>[!TIP]<br>Path forward: check the records</p><ol><li>Check the records</li></ol><p>Reply go to run it.</p>";
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: () => <ThreadControls><DecisionChips threadId="t1" updatedAt={1} idle /></ThreadControls> },
+    {},
+    { rpc: { decision_options: () => ({ mode: "go", options: [{ n: 1, text: "Check the records", recommended: false }] }), thread_reply: reply } },
+  );
+  const go = await slot.findByRole("button", { name: "Go" });
+  expect(go.getAttribute("title")).toBe("Check the records");
+  expect(slot.queryByRole("button", { name: /Your next move/ })).toBeNull();
+  expect(callout.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  fireEvent.click(go);
+  fireEvent.click(go);
+  await slot.findByRole("status");
+  expect(reply).toHaveBeenCalledExactlyOnceWith({ threadId: "t1", text: "go" });
+  slot.lifecycle.unmount();
+  row.remove();
+});
+
+it("puts a lone numbered reply in the compact row without an extra Send button", async () => {
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: () => <ThreadControls><DecisionChips threadId="t1" updatedAt={1} idle /></ThreadControls> },
+    {},
+    { rpc: { decision_options: () => ({ mode: "multi", options: [pathForward.options[0]] }), thread_reply: reply } },
+  );
+  const choice = await slot.findByRole("button", { name: /Reply 1:/ });
+  expect(slot.getAllByRole("button")).toEqual([choice]);
+  fireEvent.click(choice);
+  await slot.findByRole("status");
+  expect(reply).toHaveBeenCalledExactlyOnceWith({ threadId: "t1", text: "1" });
+  slot.lifecycle.unmount();
+});
+
+it.each([
+  { mode: "choice", pick: /Reply 2:/, submit: null, expected: "2" },
+  { mode: "go", pick: /Step 2:/, submit: "Go with 2", expected: "go 2" },
+  { mode: "multi", pick: /Option 2:/, submit: "Send 2", expected: "2" },
+] as const)("offers three $mode options directly while preserving the reply behavior", async ({ mode, pick, submit, expected }) => {
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: () => <ThreadControls><DecisionChips threadId="t1" updatedAt={1} idle /></ThreadControls> },
+    {},
+    { rpc: { decision_options: () => ({ mode, options: pathForward.options }), thread_reply: reply } },
+  );
+  const second = await slot.findByRole("button", { name: pick });
+  expect(second.textContent).toBe("2");
+  expect(slot.queryByRole("region", { name: "Reply choices" })).toBeNull();
+  fireEvent.click(second);
+  if (submit) {
+    expect(second.getAttribute("aria-pressed")).toBe("true");
+    expect(reply).not.toHaveBeenCalled();
+    fireEvent.click(slot.getByRole("button", { name: submit }));
+  }
+  await slot.findByRole("status");
+  expect(reply).toHaveBeenCalledExactlyOnceWith({ threadId: "t1", text: expected });
+  slot.lifecycle.unmount();
+});
+
 it.each([
   ["li:nth-child(2)", "Leave them open for free until Friday"],
   ["li:nth-child(2)", "<code>Leave them open  for free</code>"],
