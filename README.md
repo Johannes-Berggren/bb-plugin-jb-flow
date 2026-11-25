@@ -343,6 +343,11 @@ over 6 hours old, or there is none), a call-out at the top of the report says wh
 button, and the old report is dimmed (Blocked stays readable). When it's current, the caption says "up to date" and a
 small refresh icon in the header does the same.
 
+In compact mode, the closed **Status** control shows one line from the report.
+It leads with a blocker, then current work or an actionable next step, then
+what was done. An older report shows its age and has an **Update status**
+button next to the preview. The preview still opens the full report.
+
 If the report ends with numbered **Next steps** (the built-in prompt asks for a recommended path forward in a callout),
 they appear in **Your next move** (see Decision buttons), and a **Doing now** line shows what the
 agent is already doing. **Auto-prompt** in its footer (with a count, or "off") opens a menu of everything that will message the thread on

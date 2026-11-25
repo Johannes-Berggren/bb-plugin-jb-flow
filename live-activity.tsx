@@ -11,6 +11,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useBranchPr } from "./branch-pr";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
+import { toast } from "sonner";
 import { Icon } from "@/components/ui/icon";
 import { usePortalScopeProps } from "@/lib/portal-scope";
 import "./live-activity.css";
@@ -553,7 +554,8 @@ export function ActivityCard({
   onClearGoal?: () => Promise<void>;
 }) {
   const shared = useMonitorCollapse();
-  const compact = useThreadControl("status") !== null;
+  const statusOpen = useThreadControl("status");
+  const compact = statusOpen !== null;
   // Inside Catch up the card starts collapsed so the thread gets the room; opening it
   // there is for this card only and leaves the device preference alone.
   const cardRef = useRef<HTMLElement>(null);
@@ -569,6 +571,7 @@ export function ActivityCard({
   const [clearing, setClearing] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const requestInFlight = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [togglingContinue, setTogglingContinue] = useState(false);
   const detailsId = useId();
@@ -605,15 +608,19 @@ export function ActivityCard({
   const canRequest = !active && !!onRequestStatus;
   const outdated = canRequest && outdatedReason !== null;
   const requestStatus = async () => {
-    if (!onRequestStatus) return;
+    if (!onRequestStatus || requestInFlight.current) return;
+    requestInFlight.current = true;
     setRequesting(true);
     setStatusError(null);
     try {
       await onRequestStatus();
     } catch (cause) {
       const reason = cause instanceof Error && cause.message ? cause.message.slice(0, 160) : "";
-      setStatusError(`Could not request status${reason ? `: ${reason}` : ""}. Try again.`);
+      const message = `Could not request status${reason ? `: ${reason}` : ""}. Try again.`;
+      setStatusError(message);
+      if (statusOpen === false) toast.error(message);
     } finally {
+      requestInFlight.current = false;
       setRequesting(false);
     }
   };
@@ -638,9 +645,39 @@ export function ActivityCard({
             : goal
               ? "Ready to continue"
               : "Agent idle"));
-  const label = !connected ? "Reconnecting"
-    : active ? (phase === "working" ? "Agent working" : title)
-      : outdated ? "Status out of date" : "Status";
+  const report = monitor?.report;
+  const blocker = report?.blocked.trim();
+  const next = report?.next.trim();
+  const savedHeadline = ([
+    ["Blocked", blocker && !/^(?:none|nothing|no|no blockers?|not blocked|n\/?a|-)[.!]?$/i.test(blocker) ? blocker : undefined],
+    ["Doing now", report?.doingNow],
+    ["Next", next && !/^(?:nothing (?:pending|left|else|to do)|no (?:next|further) steps?|all done)[.!]?$/i.test(next) ? next : undefined],
+    ["Done", report?.done],
+    ["Goal", goal?.objective || report?.goal],
+    ["Last reply", monitor?.latest],
+  ] as const).find(([, text]) => !!text);
+  const [label, preview]: readonly [string, string?] = !connected ? ["Reconnecting"]
+    : active ? (phase === "working" ? ["Working", primary?.description || action.title] : [title])
+      : savedHeadline ?? [monitor === undefined ? "Status" : "No report"];
+  const reportHours = Math.floor((reportAge ?? 0) / 3_600_000);
+  const badge = connected && !active && report && age
+    ? reportHours >= 24 ? `${Math.floor(reportHours / 24)}d old` : reportHours >= 6 ? `${reportHours}h old` : "Stale"
+    : undefined;
+  const compactTitle = `Status · ${label}${preview ? `: ${preview}` : ""}${badge ? ` · ${badge}` : ""}`;
+  const updateButton = connected && outdated && monitor !== undefined ? (
+    <button
+      type="button"
+      className="jf-thread-control-side-action"
+      disabled={requesting}
+      aria-label={requesting ? "Requesting status" : "Update status"}
+      aria-busy={requesting}
+      title={`Update status · ${outdatedReason}`}
+      onClick={requestStatus}
+    >
+      <Icon name="RotateCcw" className={requesting ? "size-3.5 motion-safe:animate-spin" : "size-3.5"} />
+      <span className="jf-thread-control-side-action-label">Update</span>
+    </button>
+  ) : undefined;
   const content = (
     <section
       ref={cardRef}
@@ -702,7 +739,7 @@ export function ActivityCard({
             aria-label="Refresh status"
             title="Ask the agent for a fresh status report"
           >
-            <Icon name="RefreshCw" className="size-3.5" />
+            <Icon name="RotateCcw" className="size-3.5" />
           </button>
         )}
         {!compact && (
@@ -745,7 +782,7 @@ export function ActivityCard({
                   onClick={requestStatus}
                   title="Ask the agent for a fresh status report"
                 >
-                  <Icon name={requesting ? "spinner" : "RefreshCw"} className="size-3.5" />
+                  <Icon name="RotateCcw" className={requesting ? "size-3.5 motion-safe:animate-spin" : "size-3.5"} />
                   {requesting ? "Requesting…" : "Update status"}
                 </button>
               </div>
@@ -1071,7 +1108,20 @@ export function ActivityCard({
       </div>
     </section>
   );
-  return <ThreadControl name="status" label={label} icon="Activity">{content}</ThreadControl>;
+  return (
+    <ThreadControl
+      name="status"
+      label={label}
+      preview={preview}
+      badge={badge}
+      title={compactTitle}
+      tone={label === "Blocked" ? "text-amber-600" : undefined}
+      icon="Activity"
+      sideAction={updateButton}
+    >
+      {content}
+    </ThreadControl>
+  );
 }
 
 type Wakeups = {

@@ -44,7 +44,7 @@ export function ThreadControls({ children }: { children: ReactNode }) {
 }
 
 export function ThreadControl({
-  name, label, count, icon, children, tone, title, quickActions,
+  name, label, count, icon, children, tone, title, quickActions, preview, badge, sideAction,
 }: {
   name: Control;
   label: string;
@@ -54,6 +54,9 @@ export function ThreadControl({
   tone?: string;
   title?: string;
   quickActions?: ReactNode;
+  preview?: string;
+  badge?: string;
+  sideAction?: ReactNode;
 }) {
   const controls = useContext(ControlsContext);
   const close = controls?.close;
@@ -76,6 +79,8 @@ export function ThreadControl({
         id={buttonId}
         type="button"
         className={`jf-thread-control-toggle ${tone ?? ""}`}
+        data-control={name}
+        data-preview={!!preview || undefined}
         aria-expanded={open}
         aria-controls={id}
         aria-label={title}
@@ -85,16 +90,20 @@ export function ThreadControl({
       >
         <Icon name={icon} className="size-3.5" />
         <span className="jf-thread-control-label">{label}</span>
+        {name === "choices" && <span className="jf-thread-control-short-label" aria-hidden="true">Choices</span>}
+        {preview && <span className="jf-thread-control-preview">{preview}</span>}
         {count !== undefined && <span className="jf-thread-control-count">{count}</span>}
+        {badge && <span className="jf-thread-control-badge">{badge}</span>}
         <Icon name={open ? "ChevronUp" : "ChevronDown"} className="jf-thread-control-caret size-3" />
       </button>
   );
   return (
     <>
-      {quickActions ? (
-        <div className="jf-thread-control-entry" data-quick-actions={!open || undefined}>
-          {!open && <div className="jf-thread-choice-actions jf-thread-choice-inline">{quickActions}</div>}
+      {quickActions || sideAction ? (
+        <div className="jf-thread-control-entry" data-quick-actions={!!quickActions && !open || undefined}>
+          {!open && quickActions && <div className="jf-thread-choice-actions jf-thread-choice-inline">{quickActions}</div>}
           {toggle}
+          {!open && sideAction}
         </div>
       ) : toggle}
       <div

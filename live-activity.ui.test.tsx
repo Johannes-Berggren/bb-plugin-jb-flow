@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { MONITOR_COLLAPSE_KEY } from "./monitor-collapse";
+import { ThreadControls } from "./thread-controls";
 import type { useSdk } from "@get-bb/plugin-sdk/app";
 import {
   ActivityCard,
@@ -698,6 +699,73 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
   expect(current.getByRole("button", { name: "Refresh status" })).toBeTruthy();
   expect(current.getByText(/up to date/)).toBeTruthy();
   current.lifecycle.unmount();
+});
+
+it("shows the blocker and age of a 300-hour-old report and lets you refresh or expand independently", async () => {
+  let finish!: () => void;
+  const request = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+  const now = savedMonitor.report.capturedAt + 300 * 3_600_000;
+  const slot = renderSlot(
+    {
+      component: () => (
+        <ThreadControls>
+          <ActivityCard
+            data={{ ...data, activeBackgroundCommands: [], pendingTodos: null }}
+            running={false}
+            startedAt={null}
+            now={now}
+            updatedAt={now}
+            connected
+            monitor={savedMonitor}
+            onRequestStatus={request}
+          />
+        </ThreadControls>
+      ),
+    },
+    {},
+  );
+  const headline = slot.getByRole("button", { name: "Status · Blocked: Waiting for feedback · 12d old" });
+  expect(headline.textContent).toContain("12d old");
+  expect(slot.queryByRole("region", { name: "Agent activity" })).toBeNull();
+  expect(request).not.toHaveBeenCalled();
+  const refresh = slot.getByRole("button", { name: "Update status" });
+  fireEvent.click(refresh);
+  fireEvent.click(refresh);
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(headline.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => finish());
+  fireEvent.click(headline);
+  expect(slot.getByRole("region", { name: "Agent activity" }).textContent).toContain("Review the design");
+  expect(slot.getAllByRole("button", { name: "Update status" })).toHaveLength(1);
+  slot.lifecycle.unmount();
+});
+
+it.each([
+  { next: "Review the design", label: "Next: Review the design" },
+  { next: "Nothing pending.", label: "Done: Built the view" },
+])("shows $label with no blocker or refresh action on a fresh report", ({ next, label }) => {
+  const slot = renderSlot(
+    {
+      component: () => (
+        <ThreadControls>
+          <ActivityCard
+            data={{ ...data, activeBackgroundCommands: [], pendingTodos: null }}
+            running={false}
+            startedAt={null}
+            now={61000}
+            updatedAt={61000}
+            connected
+            monitor={{ ...savedMonitor, report: { ...savedMonitor.report, blocked: "No blockers", next } }}
+            onRequestStatus={async () => {}}
+          />
+        </ThreadControls>
+      ),
+    },
+    {},
+  );
+  expect(slot.getByRole("button", { name: `Status · ${label}` })).toBeTruthy();
+  expect(slot.queryByRole("button", { name: "Update status" })).toBeNull();
+  slot.lifecycle.unmount();
 });
 
 it("shows auto-prompt in a menu and switches continue-after-limit from there", async () => {
