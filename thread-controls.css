@@ -1,0 +1,102 @@
+.jf-thread-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, max-content)) minmax(0, 1fr);
+  gap: 0 4px;
+  align-items: center;
+  min-inline-size: 0;
+  container-type: inline-size;
+}
+
+.jf-thread-controls:empty {
+  display: none;
+}
+
+.jf-thread-control-toggle {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-inline-size: 0;
+  min-block-size: 32px;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.jf-thread-control-toggle:hover,
+.jf-thread-control-toggle[aria-expanded="true"] {
+  border-color: var(--border);
+  background: var(--accent);
+}
+
+.jf-thread-control-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.jf-thread-control-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jf-thread-control-toggle > svg,
+.jf-thread-control-count {
+  flex: none;
+}
+
+.jf-thread-control-count {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.jf-thread-control-caret {
+  color: var(--muted-foreground);
+}
+
+.jf-thread-control-panel {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  min-inline-size: 0;
+  max-block-size: min(34dvh, 18rem, max(64px, calc((var(--jf-control-pane-height, 100dvh) - 176px) * 0.43)));
+  margin-block-start: 4px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.jf-thread-control-panel[hidden] {
+  display: none;
+}
+
+.jf-thread-control-panel .jf-choices-list {
+  max-height: none;
+  overflow: visible;
+}
+
+.jf-thread-control-panel .jf-choices-heading > :is(svg, .jf-choices-title) {
+  display: none;
+}
+
+.jf-thread-control-panel .jf-pr-panel {
+  padding: 4px 2px;
+}
+
+@container (max-width: 400px) {
+  .jf-thread-control-toggle {
+    gap: 4px;
+    padding-inline: 4px;
+  }
+
+  .jf-thread-control-caret {
+    display: none;
+  }
+}

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { DecisionChips, REPEATED_LIST_ATTR, repeatedList } from "./decision-choices";
+import { ThreadControl, ThreadControls } from "./thread-controls";
 
 afterEach(cleanup);
 const options = [
@@ -455,6 +456,59 @@ it("hides a fully repeated Next steps callout while both titled lists show, pres
   expect(timestamp!.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
   slot.lifecycle.unmount();
   expect(row.querySelectorAll(`[${REPEATED_LIST_ATTR}]`)).toHaveLength(0);
+  row.remove();
+});
+
+it("shows one compact panel at a time and restores the message without losing selected replies", async () => {
+  const row = nextStepsMessage();
+  const callout = row.querySelector("blockquote")!;
+  const reply = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    {
+      component: () => (
+        <ThreadControls>
+          <DecisionChips threadId="t1" updatedAt={1} idle />
+          <ThreadControl name="status" label="Status out of date" icon="Activity">Report details</ThreadControl>
+          <ThreadControl name="prs" label="8 PRs" icon="GitPullRequest">Pull request details</ThreadControl>
+        </ThreadControls>
+      ),
+    },
+    {},
+    {
+      rpc: {
+        decision_options: () => ({ mode: "go", options: pathForward.options, groups: [decisionNeeded, pathForward] }),
+        thread_reply: reply,
+      },
+    },
+  );
+  const choices = await slot.findByRole("button", { name: "Your next move · 5 options" });
+  const status = slot.getByRole("button", { name: "Status out of date" });
+  const prs = slot.getByRole("button", { name: "8 PRs" });
+  expect(slot.queryByRole("region")).toBeNull();
+  expect(callout.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+
+  fireEvent.click(choices);
+  expect(callout.hasAttribute(REPEATED_LIST_ATTR)).toBe(true);
+  fireEvent.click(slot.getByRole("radio", { name: /Leave them open/ }));
+  fireEvent.click(slot.getByRole("checkbox", { name: /Move the deal/ }));
+  fireEvent.click(status);
+  expect(slot.queryByRole("region", { name: "Reply choices" })).toBeNull();
+  expect(callout.hasAttribute(REPEATED_LIST_ATTR)).toBe(false);
+  expect(slot.getByRole("region", { name: "Status out of date" })).toBeTruthy();
+  fireEvent.click(prs);
+  expect(slot.queryByRole("region", { name: "Status out of date" })).toBeNull();
+  expect(slot.getByRole("region", { name: "8 PRs" })).toBeTruthy();
+  fireEvent.keyDown(slot.getByRole("region", { name: "8 PRs" }), { key: "Escape" });
+  expect(document.activeElement).toBe(prs);
+  expect(slot.queryByRole("region")).toBeNull();
+
+  fireEvent.click(choices);
+  expect(slot.getByRole("radio", { name: /Leave them open/ }).getAttribute("aria-checked")).toBe("true");
+  expect(slot.getByRole("checkbox", { name: /Move the deal/ }).getAttribute("aria-checked")).toBe("true");
+  expect(reply).not.toHaveBeenCalled();
+  fireEvent.click(slot.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(reply).toHaveBeenCalledWith({ threadId: "t1", text: "Decision needed: 2\nPath forward: go 3" }));
+  slot.lifecycle.unmount();
   row.remove();
 });
 

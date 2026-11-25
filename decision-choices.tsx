@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent, RefObject } from "react";
 import { useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
@@ -7,6 +7,7 @@ import { CALLOUT_ATTR } from "./callouts";
 import { Icon } from "@/components/ui/icon";
 import "./decision-choices.css";
 import { notifyReplyChoiceSent } from "./next-in-now";
+import { ThreadControl, useThreadControl } from "./thread-controls";
 
 export function DecisionChips({
   threadId,
@@ -118,7 +119,7 @@ function useHideRepeatedList(
   enabled: boolean,
 ) {
   const [visibility, setVisibility] = useState<"original" | "lists" | "section">("original");
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled || groups.every(({ options }) => options.length === 0)) return;
     const scope = messageScope(section.current);
     if (!scope) return;
@@ -159,6 +160,7 @@ const recommendedOf = (options: readonly DecisionOption[]) => options.filter((op
 function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number | null }) {
   const rpc = useRpc<typeof rpcContract>();
   const hideRepeated = useSettings().values?.hideRepeatedChoices !== false;
+  const open = useThreadControl("choices");
   const sectionRef = useRef<HTMLElement>(null);
   const [move, setMove] = useState<{ mode?: DecisionMode; options: DecisionOption[]; groups?: DecisionGroup[] }>({ options: [] });
   // "Pick several": a one-number decision switched to ticking.
@@ -206,9 +208,16 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     () => move.groups?.length ? move.groups : [{ mode: move.mode ?? "choice", title: "", label: "", options: move.options }],
     [move],
   );
-  const visibility = useHideRepeatedList(sectionRef, groups, hideRepeated);
+  const visibility = useHideRepeatedList(sectionRef, groups, hideRepeated && open !== false);
   const listHidden = visibility !== "original";
-  if (grouped) return <GroupedChoices key={shown.current} sectionRef={sectionRef} threadId={threadId} groups={grouped} listHidden={listHidden} />;
+  if (grouped) {
+    const count = grouped.reduce((total, group) => total + group.options.length, 0);
+    return (
+      <ThreadControl name="choices" label="Your next move" count={count} icon="MessageCircle" title={`Your next move · ${count} options`}>
+        <GroupedChoices key={shown.current} sectionRef={sectionRef} threadId={threadId} groups={grouped} listHidden={listHidden} />
+      </ThreadControl>
+    );
+  }
   if (!options.length) return null;
   const title = visibility === "section" ? groups[0]?.title : undefined;
   // A go-list: tick steps, then Go sends "go" (all) or "go 1,3".
@@ -278,7 +287,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     event.preventDefault();
     rows[target]?.focus();
   };
-  return (
+  const content = (
     <section ref={sectionRef} className="jf-choices" aria-label="Reply choices" data-mode={mode} data-full={listHidden || undefined}>
       <div className="jf-choices-heading">
         <Icon name="MessageCircle" className="size-3.5" />
@@ -413,6 +422,11 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
         </span>
       )}
     </section>
+  );
+  return (
+    <ThreadControl name="choices" label="Your next move" count={options.length} icon="MessageCircle" title={`Your next move · ${options.length} ${oneStep ? "step" : "options"}`}>
+      {content}
+    </ThreadControl>
   );
 }
 
