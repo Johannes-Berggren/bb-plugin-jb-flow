@@ -230,6 +230,8 @@ export function ThreadRow({
           href={thread.href}
           {...split.splitProps}
           onPointerDown={(event) => {
+            // A finger gesture on the row scrolls the sidebar. Touch users can move threads from the menu.
+            if (event.pointerType === "touch") return;
             split.splitProps.onPointerDown?.(event);
             drag.start(thread, event);
           }}
