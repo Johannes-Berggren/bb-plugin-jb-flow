@@ -85,7 +85,7 @@ export function useSectionDrag(onMove: (key: string, target: string, after: bool
   const [dragging, setDragging] = useState<SectionDragState | null>(null);
   const start = useCallback(
     (key: string, event: ReactPointerEvent<HTMLElement>) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey) return;
+      if (event.pointerType === "touch" || event.button !== 0 || event.metaKey || event.ctrlKey) return;
       const origin = { x: event.clientX, y: event.clientY };
       let active = false;
       let over: string | null = null;

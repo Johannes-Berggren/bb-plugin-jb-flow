@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { DragContext, DROP_ATTR, SECTION_ATTR, useSectionDrag, useThreadDrag } from "./drag";
 import type { Lane } from "./lanes";
 
 vi.mock("sonner", async (importOriginal) => ({ ...(await importOriginal<typeof import("sonner")>()), toast: vi.fn() }));
 const { toast } = await import("sonner");
-const { ThreadRow } = await import("./thread-row");
+const { GroupHeader, ThreadRow } = await import("./thread-row");
 
 const NOW = Date.now();
 
@@ -109,6 +110,68 @@ function mount(threads: PluginSidebarThread[], overrides: Partial<Handlers> = {}
 }
 
 const three = () => [thread("a"), thread("b"), thread("c")];
+
+describe("Triage pointer gestures", () => {
+  afterEach(cleanup);
+
+  it.each([
+    { pointerType: "touch", shouldDrag: false },
+    { pointerType: "mouse", shouldDrag: true },
+  ])("uses the expected drag behavior for $pointerType", ({ pointerType, shouldDrag }) => {
+    const moveThread = vi.fn();
+    const moveSection = vi.fn();
+    const slot = renderSlot({
+      component: () => {
+        const threadDrag = useThreadDrag(moveThread);
+        const sectionDrag = useSectionDrag(moveSection);
+        return (
+          <DragContext.Provider value={threadDrag}>
+            <nav>
+              <GroupHeader
+                title="Active"
+                count={1}
+                collapsed={false}
+                onToggle={() => {}}
+                onDragStart={(event) => sectionDrag.start("active", event)}
+              />
+              <Rows
+                threads={[thread("a")]}
+                handlers={{ onSnooze: () => {}, onTag: () => {}, onToggleFocus: undefined, onSetDue: undefined }}
+              />
+              <section {...{ [DROP_ATTR]: "later", [SECTION_ATTR]: "later" }}>Later</section>
+              {threadDrag.dragging && <span>Dragging thread</span>}
+              {sectionDrag.dragging && <span>Dragging section</span>}
+            </nav>
+          </DragContext.Provider>
+        );
+      },
+    }, {});
+    const target = slot.getByText("Later");
+    const hitTest = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+    const dragAcrossSections = (source: HTMLElement, indicator: string) => {
+      fireEvent.pointerDown(source, { pointerType, button: 0, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(source, { pointerType, clientX: 0, clientY: 50 });
+      const dragging = slot.queryByText(indicator) !== null;
+      fireEvent.pointerUp(source, { pointerType, button: 0, clientX: 0, clientY: 50 });
+      if (dragging) fireEvent.click(document.body);
+      expect(dragging).toBe(shouldDrag);
+    };
+    try {
+      dragAcrossSections(slot.getByRole("link"), "Dragging thread");
+      dragAcrossSections(slot.getByRole("button", { name: "Active" }), "Dragging section");
+      if (shouldDrag) {
+        expect(moveThread).toHaveBeenCalledExactlyOnceWith("a", "later");
+        expect(moveSection).toHaveBeenCalledExactlyOnceWith("active", "later", true);
+      } else {
+        expect(moveThread).not.toHaveBeenCalled();
+        expect(moveSection).not.toHaveBeenCalled();
+      }
+    } finally {
+      document.elementFromPoint = hitTest;
+    }
+  });
+});
 
 describe("Thread row keys", () => {
   beforeEach(() => vi.mocked(toast).mockClear());
